@@ -301,11 +301,11 @@
   // agent's tools returned (learned) take precedence.
   var CATALOG = {
     directory: { name: "Service Directory", icon: "🗂️", color: "#64748B", provider: "Allowance", path: "" },
-    "acme-weather": { name: "Acme Weather", icon: "🌤️", color: "#3AA0E0", provider: "Acme Corp", path: "/api/weather", pricing: "$0.05 per call", permissions: ["Pay up to $0.05 per call to Acme Weather"] },
-    "acme-news": { name: "Acme News", icon: "📰", color: "#6E7BF2", provider: "Acme Corp", path: "/api/news", pricing: "$0.10 per call", permissions: ["Pay up to $0.10 per call to Acme News"] },
-    "acme-stocks": { name: "Acme Stocks", icon: "📈", color: "#2F9E5B", provider: "Acme Corp", path: "/api/stock", pricing: "$0.15 per call", permissions: ["Pay up to $0.15 per call to Acme Stocks"] },
-    "acme-pizza": { name: "Acme Pizza", icon: "🍕", color: "#F08A24", provider: "Acme Corp", path: "/pizza", pricing: "$18.50 per order", permissions: ["Pay up to $18.50 per order to Acme Pizza"] },
-    "acme-bounties": { name: "Acme Bounties", icon: "💼", color: "#9B5BFA", provider: "Acme Corp", path: "/agent-work", pricing: "Free · pays you", permissions: ["Find, claim and submit paid tasks"] },
+    "acme-weather": { name: "Acme Weather", icon: "🌤️", color: "#3AA0E0", provider: "Acme APIs", path: "/api/weather", pricing: "$0.05 per call", permissions: ["Pay up to $0.05 per call to Acme Weather", "Look up weather for cities you ask about"] },
+    "acme-news": { name: "Acme News", icon: "📰", color: "#5B6B7F", provider: "Acme APIs", path: "/api/news", pricing: "$0.10 per call", permissions: ["Pay up to $0.10 per call to Acme News", "Read headlines for you"] },
+    "acme-stocks": { name: "Acme Stocks", icon: "📈", color: "#2F9E5B", provider: "Acme APIs", path: "/api/stock", pricing: "$0.15 per call", permissions: ["Pay up to $0.15 per call to Acme Stocks", "Look up quotes for symbols you ask about"] },
+    "acme-pizza": { name: "Acme Pizza", icon: "🍕", color: "#E5523A", provider: "Acme APIs", path: "/pizza", pricing: "$18.50 per order", permissions: ["Pay up to $18.50 per order to Acme Pizza", "Place orders on your behalf"] },
+    "acme-bounties": { name: "Acme Bounties", icon: "💼", color: "#9B5BFA", provider: "Acme APIs", path: "/agent-work", pricing: "Free (you earn $0.50–$0.75 per task)", permissions: ["Claim and submit Acme bounties", "Receive bounty payouts into your wallet"] },
   };
   var DEFAULT_SERVICES = { researcher: ["acme-weather", "acme-news", "acme-stocks"], shopper: [], "claude-desktop": ["acme-bounties", "acme-weather"] };
 
@@ -430,7 +430,7 @@
     });
     return out;
   }
-  /** get_service output: first line "🍕 Acme Pizza (acme-pizza) by Acme Corp", then fields, "Permissions:" bullets, "Docs:". */
+  /** get_service output: first line "🍕 Acme Pizza (acme-pizza) by Acme APIs", then fields, "Permissions:" bullets, "Docs:". */
   function parseServiceDoc(r) {
     var lines = str(r).split("\n");
     var m = (lines[0] || "").match(/^(.+?) \(([A-Za-z0-9._-]{1,64})\)(?: by (.+))?$/);

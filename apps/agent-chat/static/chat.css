@@ -116,7 +116,8 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 * { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text) 22%, transparent) transparent; }
-html, body { height: 100%; margin: 0; }
+/* The app is a fixed full-height shell; only inner panes scroll. */
+html, body { height: 100%; margin: 0; overflow: hidden; }
 body {
   background: var(--bg);
   color: var(--text);
@@ -304,7 +305,7 @@ svg.i { width: 1em; height: 1em; flex: none; display: inline-block; vertical-ali
 .banner a { color: inherit; font-weight: 600; white-space: nowrap; }
 
 /* body */
-.body { position: relative; min-height: 0; display: grid; }
+.body { position: relative; min-height: 0; display: grid; overflow: hidden; /* clips the off-screen details panel */ }
 .scroll { overflow-y: auto; overflow-x: hidden; min-height: 0; scroll-behavior: auto; }
 .thread { --mask: var(--bg); max-width: 880px; margin: 0 auto; padding: 14px 28px 26px; display: flex; flex-direction: column; min-height: 100%; }
 .thread > .it:first-child { margin-top: auto; }
