@@ -41,8 +41,11 @@ agents, events) and the mock facilitator's `/admin/*` always require `X-Owner-Ke
 `OWNER_API_KEY` from the environment, else one generated into `DATA_DIR/owner-key.json` by
 `npm run setup` (services generate it on first start if missing). Owner-side clients read the same
 file: the dashboard's Vite proxy injects the header server-side (the key never reaches the browser),
-the notifier, the demo's auto-approver, `setup` and `reset` send it. `/v1/health` and the SSE/agent
-endpoints do not need it. Reason (Phase 3 verifier): with open owner endpoints, a prompt-injected
+the notifier, the demo's auto-approver, `setup` and `reset` send it. `/v1/health` and the agent (Bearer token) endpoints do not need it;
+the SSE stream `/v1/events` is owner data and does need it (the dashboard proxy and notifier send
+it). The dashboard dev server restricts file serving to its own directory so `.data/` is never
+served, and the MCP `fetch_url` tool drops any `X-Owner-Key`/`Authorization` header the model
+supplies and refuses dev-server internal routes (`/@fs/`). Reason (Phase 3 verifier): with open owner endpoints, a prompt-injected
 agent could approve its own payments or unfreeze itself through a generic fetch tool. The MCP
 `fetch_url` tool additionally refuses the wallet-service origin outright.
 
@@ -121,7 +124,7 @@ The ledger persists to `DATA_DIR/ledger.json` so restarts keep balances. `npm ru
 | POST | `/v1/approvals/:id/approve` · `/deny` | `{ by:"telegram"\|"dashboard"\|"auto" }` → `{ approval }` |
 | GET | `/v1/receipts?agentId=&limit=` | `{ receipts }` (all agents) |
 | GET | `/v1/events/recent?limit=100` | `{ events: WalletEvent[] }` |
-| GET | `/v1/events` | **SSE**. `event: <type>` + `data: <WalletEvent JSON>`; `: ping` every 15 s. |
+| GET | `/v1/events` | **SSE** (owner key required). `event: <type>` + `data: <WalletEvent JSON>`; `: ping` every 15 s. |
 | GET | `/v1/summary` | `SummaryResponse` |
 | GET | `/v1/health` | `{ ok, chainMode, facilitatorUrl, telegramConnected }` |
 | POST | `/v1/notifier/status` | `{ connected: boolean }` (notifier reports presence; feeds `telegramConnected`) |

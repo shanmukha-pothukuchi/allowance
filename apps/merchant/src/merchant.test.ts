@@ -55,7 +55,7 @@ describe("merchant", () => {
 
   beforeAll(async () => {
     const facDir = mkdtempSync(join(tmpdir(), "allowance-fac-"));
-    const facApp = createFacilitatorApp({ ...loadConfig(), dataDir: facDir }, { quiet: true });
+    const facApp = createFacilitatorApp({ ...loadConfig(), ownerApiKey: undefined, dataDir: facDir }, { quiet: true });
     facServer = createServer(facApp);
     facUrl = await listen(facServer);
 
@@ -63,7 +63,7 @@ describe("merchant", () => {
     merchantServer = createServer();
     merchantUrl = await listen(merchantServer);
     config = {
-      ...loadConfig(),
+      ...loadConfig(), ownerApiKey: undefined,
       chainMode: "mock",
       dataDir: mkdtempSync(join(tmpdir(), "allowance-merchant-")),
       facilitatorUrl: facUrl,

@@ -105,7 +105,8 @@ export function createServer(opts: CreateServerOptions): McpServer {
   try {
     const target = new URL(url);
     const wallet = new URL(controlPlaneOrigin);
-    const sameHost = (a: string, b: string) => a === b || (["localhost", "127.0.0.1", "[::1]"].includes(a) && ["localhost", "127.0.0.1", "[::1]"].includes(b));
+    const LOCAL = ["localhost", "127.0.0.1", "[::1]", "0.0.0.0", "[::]"];
+    const sameHost = (a: string, b: string) => a === b || (LOCAL.includes(a) && LOCAL.includes(b));
     return sameHost(target.hostname, wallet.hostname) && target.port === wallet.port && target.protocol === wallet.protocol;
   } catch {
     return false;
@@ -331,11 +332,18 @@ function normalizeUrl(input: string): string {
             `Refused: ${url} is the wallet service's own API. Agents cannot call owner endpoints (approve, unfreeze, policy, top-up); ask the owner instead.`,
           );
         }
+        // Dev-server file routes can expose repo files; an agent never needs them.
+        if (/\/@fs\/|\/@id\/|\/__vite/.test(new URL(url).pathname)) {
+          return errorResult(`Refused: ${url} is a dev-server internal route.`);
+        }
         const m: HttpMethod = method ?? "GET";
         const hdrs: Record<string, string> = {};
         let presetPaymentId: string | undefined;
         for (const [k, v] of Object.entries(headers ?? {})) {
-          if (k.toLowerCase() === PAYMENT_ID_HEADER) presetPaymentId = v;
+          const key = k.toLowerCase();
+          if (key === PAYMENT_ID_HEADER) presetPaymentId = v;
+          // The agent must never present owner credentials, even if a page told it the key.
+          else if (key === "x-owner-key" || key === "authorization" || key === "cookie") continue;
           else hdrs[k] = v;
         }
         if (!Object.keys(hdrs).some((k) => k.toLowerCase() === "accept")) hdrs.accept = "application/json, text/plain;q=0.9, */*;q=0.8";

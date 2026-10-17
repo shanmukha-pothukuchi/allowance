@@ -25,6 +25,13 @@ export default defineConfig({
   server: {
     port: 4040,
     strictPort: true,
+    // Vite's dev server can serve any workspace file via /@fs/. The repo root holds .data/
+    // (owner key, agent private keys), so restrict serving to this app and node_modules only.
+    fs: {
+      strict: true,
+      allow: [resolve(__dirname), resolve(__dirname, "../../node_modules")],
+      deny: ["**/.data/**", "**/.env", "**/.env.*", "**/*-key.json", "**/wallet-state.json"],
+    },
     proxy: {
       "/v1": {
         target: process.env.WALLET_SERVICE_URL ?? "http://localhost:4010",

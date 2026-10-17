@@ -81,6 +81,10 @@ describe("fetch_url", () => {
     const alt = wallet.url.replace("127.0.0.1", "localhost").replace("localhost", "127.0.0.1");
     const r2 = await mcp.call("fetch_url", { url: `${alt}/v1/summary` });
     expect(r2.isError).toBe(true);
+    // dev-server file routes are refused on any host
+    const r3 = await mcp.call("fetch_url", { url: `${merchant.url}/@fs/etc/passwd` });
+    expect(r3.isError).toBe(true);
+    expect(textOf(r3)).toMatch(/dev-server/);
   });
 
   it("returns free responses as-is with status", async () => {

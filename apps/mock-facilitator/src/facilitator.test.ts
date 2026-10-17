@@ -69,7 +69,7 @@ function x402Body(req: ReturnType<typeof requirements>, payload: unknown) {
 
 describe("mock facilitator", () => {
   const dataDir = mkdtempSync(join(tmpdir(), "allowance-fac-"));
-  const config = { ...loadConfig(), dataDir };
+  const config = { ...loadConfig(), ownerApiKey: undefined, dataDir };
   let server: Server;
   let url: string;
 
