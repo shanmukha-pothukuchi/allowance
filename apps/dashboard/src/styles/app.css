@@ -58,6 +58,7 @@
   animation: pulse 1.8s infinite;
 }
 .live-reconnecting .live-dot,
+.live-offline .live-dot,
 .live-connecting .live-dot {
   background: var(--warn);
   animation: blink 1s infinite;

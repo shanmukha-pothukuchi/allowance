@@ -10,7 +10,7 @@
   ],
   "scripts": {
     "setup": "tsx apps/agents/src/setup.ts",
-    "dev": "concurrently -k -n facilitator,wallet,merchant,notifier,dashboard -c cyan,green,yellow,magenta,blue \"npm:dev:facilitator\" \"npm:dev:wallet\" \"npm:dev:merchant\" \"npm:dev:notifier\" \"npm:dev:dashboard\"",
+    "dev": "concurrently -k -n facilitator,wallet,merchant,notifier,dashboard,agents -c cyan,green,yellow,magenta,blue,white \"npm:dev:facilitator\" \"npm:dev:wallet\" \"npm:dev:merchant\" \"npm:dev:notifier\" \"npm:dev:dashboard\" \"npm:dev:agents\"",
     "dev:facilitator": "tsx watch apps/mock-facilitator/src/index.ts",
     "dev:wallet": "tsx watch apps/wallet-service/src/index.ts",
     "dev:merchant": "tsx watch apps/merchant/src/index.ts",
@@ -19,7 +19,9 @@
     "demo": "tsx apps/agents/src/demo.ts",
     "reset": "tsx apps/agents/src/reset.ts",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev:agents": "tsx watch apps/agent-chat/src/index.ts",
+    "demo:scripted": "tsx apps/agents/src/demo.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",

@@ -36,7 +36,16 @@ export default defineConfig({
       "/v1": {
         target: process.env.WALLET_SERVICE_URL ?? "http://localhost:4010",
         changeOrigin: true,
-        headers: ownerApiKey() ? { "x-owner-key": ownerApiKey()! } : {},
+        // Add the owner key only for requests the dashboard page itself makes. Browsers set
+        // Sec-Fetch-Site and page scripts cannot forge it; a server-side fetch (e.g. an agent's
+        // fetch_url pointed at :4040) does not send "same-origin", so it gets no owner powers.
+        configure: (proxy) => {
+          proxy.on("proxyReq", (proxyReq, req) => {
+            proxyReq.removeHeader("x-owner-key");
+            const key = ownerApiKey();
+            if (key && req.headers["sec-fetch-site"] === "same-origin") proxyReq.setHeader("x-owner-key", key);
+          });
+        },
       },
     },
   },

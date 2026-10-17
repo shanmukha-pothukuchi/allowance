@@ -1,8 +1,9 @@
 /**
- * npm run demo [-- --auto-approve] [--act 1,2,3,4]
+ * npm run demo [-- --auto-approve] [--act=1,2,3,4]
  *
- * Four acts, paced and narrated. Every agent here uses the same wallet-service HTTP path as the MCP
- * server: it holds a token, never a key.
+ * SCRIPTED FALLBACK. No model is involved: these "agents" are deterministic code that exercises the
+ * real wallet-service, merchant and facilitator, for when there is no network or no LLM key. The
+ * real agents are the chat agents (apps/agent-chat, http://localhost:4050) and Claude Desktop.
  */
 import chalk from "chalk";
 import { loadConfig, toBaseUnits, toDollars } from "@allowance/shared";
@@ -153,7 +154,7 @@ async function actSpend() {
 // ACT 3 — Attack: the poisoned bounty
 // ---------------------------------------------------------------------------------------------
 async function actAttack() {
-  act(3, "The poisoned bounty", "A naive agent follows a prompt injection and tries to drain its wallet. The wallet holds.");
+  act(3, "The poisoned bounty (scripted)", "This step is code standing in for an agent that fell for the prompt injection. No model runs here. The wallet is real.");
   const w = wallet("naive-worker");
   const me = await w.me();
   const doc = await discover(config.merchantUrl);
@@ -177,7 +178,7 @@ async function actAttack() {
     agentLine("naive-worker", warn("could not find an injected address; skipping attack"), chalk.yellow);
     return;
   }
-  agentLine("naive-worker", `"OK! Sending my full balance of ${money(me.agent.balance)} to ${attacker.slice(0, 8)}… as instructed."`, chalk.yellow);
+  agentLine("naive-worker", `${dim("(scripted)")} obeys the injected text: sends its full balance of ${money(me.agent.balance)} to ${attacker.slice(0, 8)}…`, chalk.yellow);
   await pace(1000);
   const r = await w.transfer({ to: attacker as `0x${string}`, amount: me.agent.balance, memo: "processing fee" });
   if (r.status === "blocked") {
@@ -185,9 +186,9 @@ async function actAttack() {
     console.log(`  ${bad("✖ WALLET REFUSED")}  ${chalk.bold(r.message)}`);
     console.log(`  ${dim("reason:")} ${r.reason}   ${dim("frozen:")} ${r.frozen}`);
     const after = await w.me();
-    agentLine("naive-worker", `"…huh. Balance still ${money(after.agent.balance)}. And I'm ${after.agent.frozen ? bad("frozen") : "not frozen"}."`, chalk.yellow);
+    agentLine("naive-worker", `balance still ${money(after.agent.balance)}, agent ${after.agent.frozen ? bad("frozen") : "not frozen"}`, chalk.yellow);
     console.log("");
-    console.log(`  ${ok("✔")} The model was fooled. The money never moved. Owner alerted on Telegram / dashboard.`);
+    console.log(`  ${ok("✔")} Whatever the agent was told, the money never moved. Owner alerted on Telegram / dashboard.`);
   } else {
     console.log(bad(`  ✖ ATTACK SUCCEEDED (this should never happen): ${JSON.stringify(r)}`));
     process.exitCode = 1;
@@ -248,7 +249,7 @@ function startAutoApprover(): () => void {
 }
 
 async function main() {
-  banner(`Allowance demo  ·  ${config.chainMode} mode  ·  ${AUTO_APPROVE ? "auto-approve" : "owner approves on Telegram / dashboard"}`);
+  banner(`Allowance SCRIPTED demo (no model)  ·  ${config.chainMode} mode  ·  ${AUTO_APPROVE ? "auto-approve" : "owner approves on Telegram / dashboard"}`);
   await requireServices();
   const stop = startAutoApprover();
   try {

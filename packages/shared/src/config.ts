@@ -68,8 +68,35 @@ export interface AppConfig {
   x402FacilitatorUrl: string;
   merchantPrivateKey?: `0x${string}`;
   ownerApiKey?: string;
+  /** Agent chat server (apps/agent-chat). Binds to localhost by default: whoever can reach it can instruct agents. */
+  agentChatPort: number;
+  agentChatHost: string;
+  agentChatUrl: string;
+  /** OpenAI-compatible chat-completions endpoint for the chat agents (default: NRP managed LLMs). */
+  llm: LlmSettings;
   network: typeof BASE_SEPOLIA_NETWORK;
   usdcAddress: typeof USDC_BASE_SEPOLIA;
+}
+
+export interface LlmSettings {
+  baseUrl: string;
+  apiKey?: string;
+  model: string;
+  /** Extra JSON merged into every chat-completions body, e.g. {"chat_template_kwargs":{"enable_thinking":false}}. */
+  extraBody?: Record<string, unknown>;
+}
+
+export const NRP_LLM_BASE_URL = "https://ellm.nrp-nautilus.io/v1";
+
+function parseJsonObject(raw: string | undefined): Record<string, unknown> | undefined {
+  if (!raw) return undefined;
+  try {
+    const v = JSON.parse(raw) as unknown;
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined;
+  } catch {
+    console.warn("[config] LLM_EXTRA_BODY is not a JSON object; ignoring it");
+    return undefined;
+  }
 }
 
 export function loadConfig(): AppConfig {
@@ -99,6 +126,15 @@ export function loadConfig(): AppConfig {
       chainMode === "mock" ? facilitatorUrl : (env.X402_FACILITATOR_URL ?? "https://x402.org/facilitator"),
     merchantPrivateKey: (env.MERCHANT_PRIVATE_KEY as `0x${string}` | undefined) || undefined,
     ownerApiKey: env.OWNER_API_KEY || readOwnerKeyFile(resolve(repoRoot, env.DATA_DIR ?? ".data")),
+    agentChatPort: Number(env.AGENT_CHAT_PORT ?? 4050),
+    agentChatHost: env.AGENT_CHAT_HOST ?? "127.0.0.1",
+    agentChatUrl: env.AGENT_CHAT_URL ?? `http://localhost:${Number(env.AGENT_CHAT_PORT ?? 4050)}`,
+    llm: {
+      baseUrl: (env.LLM_BASE_URL || NRP_LLM_BASE_URL).replace(/\/+$/, ""),
+      apiKey: env.LLM_API_KEY || undefined,
+      model: env.LLM_MODEL || "qwen3",
+      extraBody: parseJsonObject(env.LLM_EXTRA_BODY),
+    },
     network: BASE_SEPOLIA_NETWORK,
     usdcAddress: USDC_BASE_SEPOLIA,
   };

@@ -55,6 +55,10 @@ beforeAll(async () => {
     x402FacilitatorUrl: facilitator.url,
     network: "eip155:84532",
     usdcAddress: USDC_BASE_SEPOLIA,
+    agentChatPort: 0,
+    agentChatHost: "127.0.0.1",
+    agentChatUrl: "",
+    llm: { baseUrl: "http://127.0.0.1:1", model: "test" },
   });
   for (const level of ["log", "warn", "error"] as const) {
     vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {

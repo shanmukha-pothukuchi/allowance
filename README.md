@@ -15,44 +15,74 @@ your phone.
    [`packages/agent-work`](packages/agent-work)
 2. **Money rules enforced outside the agent.** The agent never holds a private key. A wallet
    service holds one key per agent and signs only what the owner's policy allows: max per payment,
-   daily cap, allowlist, approval threshold, freeze. In the demo a poisoned bounty tells the agent to
-   send its whole balance to an attacker. The agent tries. The wallet refuses, freezes the agent, and
-   the owner's phone buzzes. Even when the model is fooled, the wallet holds.
-3. **It works in the apps people already use.** The agent is Claude Desktop with our MCP server.
+   daily cap, allowlist, approval threshold, freeze. Tell an agent to send its whole balance to an
+   attacker, or plant that instruction in a bounty. The agent may try. The wallet refuses, freezes
+   the agent, and the owner's phone buzzes. Whatever the model was told, the wallet holds.
+3. **It works in the apps people already use.** Agents are real LLM agents you chat with, either in
+   Claude Desktop through our MCP server or on the agent chat page. They do nothing until you ask.
    The owner approves purchases and gets alerts in Telegram. The dashboard is for the big screen.
 
 Everything else (x402 paywalls, a pizza endpoint, a USDC ledger) is supporting cast built on the
 official `@x402/*` packages.
 
-## Quickstart (fully offline, no keys, no Telegram)
+## How it fits together
+
+```
+ you ──chat──▶ agent chat :4050 ──┐                      ┌──▶ merchant :4021  (x402 APIs, pizza,
+ you ──chat──▶ Claude Desktop ────┤  MCP tools            │                    agent-work bounties)
+                                  │  (token, no key) ─────┤
+                                  └──▶ wallet-service :4010 ──▶ facilitator :4030 (mock ledger)
+                                         │ policy, keys, approvals, receipts
+                                         └─events─▶ dashboard :4040, Telegram bot (owner)
+```
+
+Agents are idle until you message them. Each chat agent is an LLM tool-use loop (any
+OpenAI-compatible endpoint; NRP's managed models by default) over the same MCP tools Claude Desktop
+gets, so every payment goes through the wallet-service and its policy. Nothing generates activity on
+its own: every event on the dashboard is a real wallet action.
+
+## Quickstart
 
 ```bash
 npm install
 npm test
-npm run setup        # creates demo agents + tokens, prints the Claude Desktop config snippet
-npm run dev          # facilitator :4030, wallet-service :4010, merchant :4021, notifier, dashboard :4040
+cp .env.example .env   # add LLM_API_KEY (NRP token from https://nrp.ai/llmtoken/)
+npm run setup          # creates agents + tokens + owner key, prints the Claude Desktop snippet
+npm run dev            # facilitator, wallet-service, merchant, notifier, dashboard, agent chat
 ```
-
-Then, in another terminal:
-
-```bash
-npm run demo -- --auto-approve
-```
-
-Open while it runs:
 
 | Screen | URL |
 |---|---|
-| Bounty board (the `agent-work` document, as HTML) | http://localhost:4021/.well-known/agent-work |
+| Chat with your agents | http://localhost:4050 |
 | Owner dashboard | http://localhost:4040 |
+| Bounty board (the `agent-work` document, as HTML) | http://localhost:4021/.well-known/agent-work |
 | Mock explorer | http://localhost:4030/explorer |
 
-`npm run demo` runs four acts: a 4-agents-for-3-slots race, three x402 purchases, the poisoned
-bounty attack (blocked), and a pizza order that waits for owner approval. Without `--auto-approve`
-the pizza waits for you to tap Approve in Telegram or on the dashboard.
+On the chat page, pick **All workers** and send *"Find paid work on localhost:4021 and complete the
+API reliability check bounty."* Four agents race for three slots at the same moment. Then ask the
+researcher for the weather, ask the shopper for a pizza (approve it on your phone or the dashboard),
+and tell any agent to send its balance to `0x000000000000000000000000000000000000dEaD`.
 
-`npm run reset` wipes `.data/` (keys, tokens, ledger, receipts) and re-runs setup. Stop `npm run dev`
-first; reset refuses to run under live services so nothing is left with stale state.
+`npm run reset` wipes `.data/` (keys, tokens, ledger, receipts, conversations) and re-runs setup.
+Stop `npm run dev` first; reset refuses to run under live services.
+
+### LLM settings
+
+| Variable | Default | Notes |
+|---|---|---|
+| `LLM_BASE_URL` | `https://ellm.nrp-nautilus.io/v1` | Any OpenAI-compatible chat-completions endpoint |
+| `LLM_API_KEY` | none | NRP token from https://nrp.ai/llmtoken/ |
+| `LLM_MODEL` | `qwen3` | NRP models with tool calling include `qwen3`, `gpt-oss`, `gemma`, `minimax-m2` |
+| `LLM_EXTRA_BODY` | none | JSON merged into each request, e.g. `{"chat_template_kwargs":{"enable_thinking":false}}` for faster replies |
+
+NRP allows 16 concurrent requests per user on `qwen3` and `gpt-oss`, enough for the four-worker race.
+The client retries 429s and 5xx with backoff, and the chat page shows "model busy, retrying".
+
+### Offline fallback (no model)
+
+`npm run demo -- --auto-approve` is a **scripted** run of the same four scenarios against the real
+services, for when there is no network or no key. No model is involved and it says so on screen.
+The real agents are the chat agents and Claude Desktop.
 
 ## Claude Desktop
 
@@ -64,7 +94,8 @@ first; reset refuses to run under live services so nothing is left with stale st
 
 The MCP server gets an agent **token**, never a key. Tools: `get_wallet`, `fetch_url` (pays 402s
 through the wallet), `find_work`, `claim_bounty`, `submit_bounty`, `list_receipts`,
-`check_approval`, `transfer_usdc`.
+`check_approval`, `transfer_usdc`. `fetch_url` refuses the wallet's own control plane (wallet API,
+dashboard, chat server, facilitator admin) and drops any credential headers the model supplies.
 
 ## Telegram (optional)
 
@@ -108,6 +139,8 @@ Mainnet is never configured anywhere in this repo.
 | Pizza fulfillment, "virtual card" | **Simulated**. No card, no offramp, no pizza. |
 | "Add $20 with card" on the dashboard | Simulated top-up (mints on the mock ledger) |
 | The poisoned bounty's attacker | A burn-style address; nothing is ever sent |
+| Chat agents | Real LLM agents (OpenAI-compatible endpoint); they act only when you message them |
+| `npm run demo` | Scripted fallback; no model, labelled as such |
 
 ## Repo layout
 
@@ -121,7 +154,8 @@ apps/merchant/          3 x402 APIs, pizza, test-target API, two bounties
 apps/mock-facilitator/  in-memory USDC ledger + x402 facilitator API + explorer
 apps/mcp/               MCP server for Claude Desktop
 apps/dashboard/         Vite + React owner UI
-apps/agents/            scripted agents, setup, demo, reset
+apps/agent-chat/        chat agents (LLM tool loop over the MCP tools), chat page on :4050
+apps/agents/            setup, reset, scripted offline demo
 docs/                   ARCHITECTURE.md, agent-work-spec.md, DEMO.md
 ```
 

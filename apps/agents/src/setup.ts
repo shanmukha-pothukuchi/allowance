@@ -144,7 +144,11 @@ async function main() {
   console.log(chalk.bold("Claude Desktop → claude_desktop_config.json:"));
   console.log(JSON.stringify(snippet, null, 2));
   console.log("");
-  console.log(chalk.dim("Next: npm run dev   then   npm run demo -- --auto-approve"));
+  console.log(chalk.bold("Chat with your agents: ") + config.agentChatUrl + chalk.dim("  (after npm run dev)"));
+  if (!config.llm.apiKey && /nrp-nautilus\.io/.test(config.llm.baseUrl)) {
+    console.log(chalk.yellow("  LLM_API_KEY is not set. Get an NRP token at https://nrp.ai/llmtoken/ and add LLM_API_KEY=... to .env"));
+  }
+  console.log(chalk.dim("Next: npm run dev. Scripted offline fallback (no model): npm run demo -- --auto-approve"));
 }
 
 async function reissueViaHttp(name: string): Promise<CreateAgentResponse> {

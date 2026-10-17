@@ -11,6 +11,7 @@ const STATUS_LABEL: Record<DashboardState["connection"], string> = {
   connecting: "connecting",
   live: "live",
   reconnecting: "reconnecting",
+  offline: "offline",
   demo: "demo data",
 };
 
@@ -55,8 +56,11 @@ export function TopBar({ state, onToggleDetails }: Props) {
         </div>
       </div>
 
-      {state.offlineFallback && (
-        <div className="banner banner-warn">Wallet service offline &mdash; showing demo data</div>
+      {state.connection === "offline" && (
+        <div className="banner banner-warn">Wallet service is not reachable. Start it with npm run dev. Retrying every 2 seconds.</div>
+      )}
+      {state.connection === "demo" && (
+        <div className="banner banner-warn">Demo data (?mock=1): nothing on this screen is real.</div>
       )}
       {state.lastError && <div className="banner banner-warn">{state.lastError}</div>}
       {frozen.length > 0 && (

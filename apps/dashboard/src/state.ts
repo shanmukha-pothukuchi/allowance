@@ -121,15 +121,30 @@ function patchAgent(agents: AgentPublic[], id: string | undefined, patch: Partia
   return agents.map((a) => (a.id === id ? { ...a, ...patch } : a));
 }
 
+const approvalIdOf = (e: WalletEvent): string | undefined => e.approval?.id ?? e.receipt?.approvalId;
+
+/**
+ * One feed line per payment: a settlement replaces its own "is paying" row, and an owner decision
+ * replaces its "Approve?" row. Used for live events and for the initial snapshot alike.
+ */
+export function collapseFeed(newestFirst: WalletEvent[]): WalletEvent[] {
+  const settled = new Set<string>();
+  const decided = new Set<string>();
+  for (const e of newestFirst) {
+    if (e.type === "payment.settled" && e.receipt) settled.add(e.receipt.id);
+    if ((e.type === "approval.approved" || e.type === "approval.denied") && approvalIdOf(e)) decided.add(approvalIdOf(e)!);
+  }
+  return newestFirst.filter((e) => {
+    if (e.type === "payment.signed" && e.receipt && settled.has(e.receipt.id)) return false;
+    if (e.type === "payment.needs_approval" && approvalIdOf(e) && decided.has(approvalIdOf(e)!)) return false;
+    return true;
+  });
+}
+
 /** Apply one wallet event to the state. Idempotent on event id. */
 export function applyEvent(state: DashboardState, e: WalletEvent): DashboardState {
   if (state.events.some((x) => x.id === e.id)) return state;
-  // A settlement supersedes its own "is paying" row so the feed shows one line per payment.
-  const superseded = e.type === "payment.settled" && e.receipt ? e.receipt.id : undefined;
-  const kept = superseded
-    ? state.events.filter((x) => !(x.type === "payment.signed" && x.receipt?.id === superseded))
-    : state.events;
-  let next: DashboardState = { ...state, events: [e, ...kept].slice(0, MAX_FEED) };
+  let next: DashboardState = { ...state, events: collapseFeed([e, ...state.events]).slice(0, MAX_FEED) };
 
   if (e.receipt) next.receipts = upsertReceipt(next.receipts, e.receipt);
 
@@ -193,7 +208,7 @@ export function reducer(state: DashboardState, action: Action): DashboardState {
         totals: totalsFrom(action.summary),
         approvals: sortNewest(action.approvals.filter((a) => a.status === "pending")),
         receipts: sortNewest(action.receipts).slice(0, MAX_RECEIPTS),
-        events: sortNewestEvents(action.events).slice(0, MAX_FEED),
+        events: collapseFeed(sortNewestEvents(action.events)).slice(0, MAX_FEED),
         lastError: undefined,
       };
     case "summary":

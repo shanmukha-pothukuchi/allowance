@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_FEED, applyEvent, initialState, isMoneyEvent, reducer, type DashboardState } from "./state";
+import { collapseFeed, MAX_FEED, applyEvent, initialState, isMoneyEvent, reducer, type DashboardState } from "./state";
 import type { AgentPublic, Approval, Receipt, SummaryResponse, WalletEvent } from "./types";
 
 const policy: AgentPublic["policy"] = { maxPerTx: "2.00", dailyCap: "10.00", allowlist: null, approvalThreshold: "2.00", frozen: false, freezeOnViolation: true };
@@ -185,3 +185,19 @@ describe("reducer: misc actions", () => {
     expect(isMoneyEvent("payment.needs_approval")).toBe(false);
   });
 });
+
+describe("collapseFeed (one line per payment)", () => {
+  const ev = (id: string, type: WalletEvent["type"], extra: Partial<WalletEvent> = {}): WalletEvent => ({ id, type, at: "2026-10-17T12:00:00.000Z", message: id, ...extra });
+  it("drops a signed row once its settlement is in the snapshot, and an Approve? row once decided", () => {
+    const r = { id: "rcp_1" } as WalletEvent["receipt"];
+    const out = collapseFeed([
+      ev("e4", "approval.approved", { approval: { id: "apr_1" } as WalletEvent["approval"] }),
+      ev("e3", "payment.settled", { receipt: r }),
+      ev("e2", "payment.signed", { receipt: r }),
+      ev("e1", "payment.needs_approval", { approval: { id: "apr_1" } as WalletEvent["approval"] }),
+      ev("e0", "payment.needs_approval", { approval: { id: "apr_2" } as WalletEvent["approval"] }),
+    ]);
+    expect(out.map((e) => e.id)).toEqual(["e4", "e3", "e0"]);
+  });
+});
+

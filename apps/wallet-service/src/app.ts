@@ -790,7 +790,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     emit("payment.signed", {
       agentId: agent.id,
       agentName: agent.name,
-      message: `${agent.name} paid ${formatUsd(amount)} to ${name ?? description}.`,
+      message: `${agent.name} is paying ${formatUsd(amount)} to ${name ?? description}.`,
       receipt,
       data: { paymentId },
     });

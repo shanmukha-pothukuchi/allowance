@@ -17,7 +17,7 @@ export type {
   Hex,
 } from "@allowance/shared";
 
-export type ConnectionStatus = "connecting" | "live" | "reconnecting" | "demo";
+export type ConnectionStatus = "connecting" | "live" | "reconnecting" | "offline" | "demo";
 
 /** All event types, in one place, so the SSE client can subscribe to each named event. */
 export const EVENT_TYPES = [

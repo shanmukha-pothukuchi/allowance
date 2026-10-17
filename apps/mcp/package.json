@@ -5,7 +5,9 @@
   "type": "module",
   "description": "MCP server that lets Claude Desktop spend and earn USDC through the Allowance wallet-service",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./server": "./src/server.ts",
+    "./test-stubs": "./src/test-stubs.ts"
   },
   "scripts": {
     "start": "tsx src/index.ts",

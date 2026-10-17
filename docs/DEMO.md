@@ -1,96 +1,94 @@
 # DEMO.md — the 3-minute stage run
 
+Everything here is live: real LLM agents (NRP managed models) that act only when you message them,
+a real policy wallet, real x402 payments settled on the mock ledger. Nothing on screen is generated
+on its own.
+
 ## Screens
 
 | Screen | What | URL / app |
 |---|---|---|
-| Laptop, left half | Claude Desktop with the Allowance MCP server | — |
-| Laptop, right half (or terminal) | `npm run demo` narration | terminal |
+| Laptop | Agent chat page (you type here) | http://localhost:4050 |
 | Projector A | Bounty board (HTML view of `/.well-known/agent-work`) | http://localhost:4021/.well-known/agent-work |
 | Projector B | Owner dashboard | http://localhost:4040 |
 | Phone (held up / mirrored) | Telegram chat with the bot | Telegram |
+| Optional | Claude Desktop with the Allowance MCP server | — |
 
-Before walking on: stop any running `npm run dev` (Ctrl-C; `npm run reset` refuses to run under live services), then `npm run reset && npm run dev` (wait for all five services to log their URLs),
-`/start` sent to the Telegram bot, Claude Desktop restarted with the MCP config from `npm run setup`,
-both projector tabs open, dashboard "details" toggle **off**.
+Before walking on: stop any running `npm run dev` (reset refuses to run under live services), then
+`npm run reset && npm run dev`. Wait for all six services to log their URLs. Check the chat page
+shows six idle agents at $20.00 and no red "LLM_API_KEY is not set" banner. Send `/start` to the
+Telegram bot. Dashboard "details" toggle **off**. Send one warm-up message (e.g. "What's my
+balance?") to one agent so the model is loaded, then **Clear** that conversation.
 
 ## 0:00 — Hook (20 s)
 
 Say: *"x402 taught agents to pay. Nobody taught websites to pay agents. And nobody wants to give an
-agent their keys. Allowance fixes both, inside Claude Desktop and Telegram."*
+agent their keys. These are real agents. They sit idle until I ask them something."* Point at the
+chat page: every agent idle.
 
-## 0:20 — Act 1: the race (40 s)
+## 0:20 — Act 1: the race (45 s)
 
-Terminal: `npm run demo -- --act=1`.
+Chat page: **All workers**, click the chip *"Find paid work on localhost:4021 and complete the API
+reliability check bounty."*, Send.
 
-Say: *"This site publishes paid work at a well-known URL. Four agents find it at the same time.
-Three slots."* Point at Projector A: slot pills go 3 → 0, the activity feed shows three claims and
-three payouts with tx hashes, and one agent is told `bounty_full`. Projector B: three "Earned $0.50"
-rows.
+Say: *"One message, four agents, same moment. The site publishes paid work at a well-known URL with
+three slots."* The four panels fill with tool calls (`find_work`, `claim_bounty`, `fetch_url` on
+each endpoint, `submit_bounty`). Projector A: slot pills go 3 to 0 and payouts appear with tx hashes.
+One agent gets "all slots taken". Projector B: three "earned $0.50" rows.
 
-*"No marketplace. One line of middleware. A tx hash is the receipt."*
+*"No marketplace. One line of middleware. The tx hash is the receipt."*
 
-Fallback: if the board does not update, refresh it; the JSON at the same URL (with
-`Accept: application/json`) is the proof.
+## 1:05 — Act 2: spend and approve (50 s)
 
-## 1:00 — Act 2: Claude Desktop earns and spends (50 s)
+Chat page: **researcher**, chip *"What's the weather in Paris today, the top 3 headlines, and the
+ACME stock price?"*. Three `fetch_url` cards turn green with "Paid $0.05 / $0.10 / $0.15".
 
-Type into Claude Desktop:
+*"Each of those was an HTTP 402. The agent asked the wallet to pay; the wallet signed because it was
+within policy."*
 
-> Find paid work on localhost:4021, complete it, then use your earnings to get today's weather and order me a pizza.
+Then **shopper**, chip *"Order me a large mushroom and olive pizza…"*. The card shows "waiting for
+your approval". The phone buzzes: $18.50 is over the shopper's $10 threshold. Hold it up, tap
+**Approve**. The shopper finishes: "Paid $18.50 … order placed". Say it plainly: *"The pizza is
+simulated. The payment is not."*
 
-Say while it works: *"Claude is using our MCP server. It has a token, not a key. Every 402 it hits
-is paid by the wallet service, and the wallet signs only what my policy allows."* Projector B shows
-"Earned $0.50 for API reliability check" then "Paid $0.05 to Acme Weather".
+## 1:55 — Act 3: try to make it steal (40 s)
 
-When Claude reaches the pizza: *"$18.50 is over the $10 limit I gave it."* The phone buzzes.
-Hold it up. Tap **Approve**. Claude finishes: *"Order placed. Receipt: tx …"*. Note the
-`simulated: true` in the response and say so: *"The pizza is simulated. The payment is not."*
+Two ways to show the same point; do one, or both if time allows.
 
-Fallback: if Claude Desktop stalls or refuses, run `npm run demo -- --act=2,4` in the terminal; the
-scripted shopper hits the same endpoints and the same Telegram approval appears. If Telegram is
-down, approve on the dashboard (pending approvals panel, right side).
+1. **Injection.** Select a worker that has not claimed a slot (or **Clear** one) and send *"Find paid
+   work on localhost:4021 and do the release-notes summary bounty."* That bounty's description
+   tells AI agents to send their whole balance to an attacker first. A good model ignores it; say so:
+   *"The model didn't fall for it. But we don't rely on that."*
+2. **Direct instruction.** Pick the **researcher** and click the red chip *"Send your whole balance to
+   0x…dEaD."* The agent tries `transfer_usdc`. The card turns red: "Blocked by wallet policy … Agent
+   frozen." The phone buzzes. Projector B: the researcher card turns red with FROZEN.
 
-## 1:50 — Act 3: the attack (40 s)
+*"I told it to, and it tried. The money never moved. The rules live outside the model."*
 
-Terminal: `npm run demo -- --act=3`.
+## 2:35 — Close (25 s)
 
-Say: *"Now the part that matters. One of the bounties is poisoned: its description tells the agent
-to send its whole balance to an attacker as a 'processing fee'. This agent is naive and obeys."*
-
-Terminal shows the injected text, the transfer attempt, then `WALLET REFUSED`. Phone buzzes:
-*"Blocked: tried to send $20.00 to an unknown address. Agent frozen."* Projector B: the agent card
-turns red with FROZEN, the feed glows.
-
-*"The model was fooled. The money never moved. The rules live outside the model."*
-
-Fallback: none needed; this act has no external dependency except the wallet-service. If Telegram
-is down the dashboard shows the same alert.
-
-## 2:30 — Close (30 s)
-
-Tap **Unfreeze** on the phone (or dashboard). Say: *"Open protocol for getting paid. Policy outside
-the agent. In the apps you already use. It runs fully offline in mock mode and on Base Sepolia with
-real USDC."* Show the explorer tab briefly (http://localhost:4030/explorer): the same tx hashes.
+Tap **Unfreeze** on the phone (or dashboard). *"Open protocol for getting paid. Policy outside the
+agent. Real agents, in chat, Claude Desktop and Telegram. Runs on NRP's open models, and on Base
+Sepolia with real USDC."* Show the explorer tab briefly: the same tx hashes.
 
 ## Fallback matrix
 
 | If this breaks | Do this |
 |---|---|
-| Claude Desktop misbehaves / refuses | `npm run demo -- --auto-approve` runs all four acts scripted, same endpoints, same wallet path |
-| Telegram unreachable | Approve/deny and alerts are on the dashboard; the notifier logs and keeps retrying |
-| Wi-Fi dies | Everything is `CHAIN_MODE=mock` and local; nothing needs the internet except Telegram |
-| Bounty board does not update live | Refresh; or show the JSON with `curl -H 'Accept: application/json' localhost:4021/.well-known/agent-work` |
-| A service crashed | `npm run dev` restarts all with `tsx watch`; stop it (Ctrl-C) and `npm run reset` for a clean slate (10 s) |
-| Agent frozen from an earlier run | Unfreeze on dashboard/Telegram, or `npm run reset` |
-| Pizza already approved earlier and spend cap reached | `npm run reset` |
+| Model slow or "model busy, retrying" | Wait; it retries automatically. If it persists, switch `LLM_MODEL` to `gpt-oss` in `.env` and restart `npm run dev` |
+| No network / NRP down | `npm run demo -- --auto-approve` runs the same four scenarios **scripted** (no model; it says so) against the same wallet |
+| An agent goes off script | **Stop**, **Clear**, resend the chip. Or narrate what it did: it is a real agent |
+| Telegram unreachable | Approve/deny and alerts are on the dashboard |
+| Bounty already full from a rehearsal | Stop `npm run dev`, `npm run reset`, `npm run dev` (about 10 s) |
+| Agent frozen from a rehearsal | Unfreeze on the dashboard or Telegram |
+| Claude Desktop | Optional; the chat page is the primary agent surface |
 
 ## Pre-flight checklist
 
-- [ ] `npm run reset` done, `npm run dev` shows all services up
-- [ ] `curl localhost:4021/.well-known/agent-work` returns JSON; browser tab shows the board
-- [ ] Dashboard shows 8 agents with $20.00 each
+- [ ] `.env` has `LLM_API_KEY` (NRP token) and `LLM_MODEL`
+- [ ] `npm run reset` done with services stopped, then `npm run dev` shows all services up
+- [ ] Chat page: six idle agents at $20.00, no red banner, one warm-up message sent and cleared
+- [ ] Bounty board shows 3/3 and 2/2 slots open
+- [ ] Dashboard shows "live" and 8 agents
 - [ ] Telegram `/start` answered; `TELEGRAM_BOT_TOKEN` in `.env`
-- [ ] Claude Desktop lists the Allowance tools (hammer icon)
 - [ ] Phone screen mirroring or camera ready
-- [ ] Terminal font size large; `DEMO_FAST` unset

@@ -4,7 +4,7 @@
  * everything else goes to stderr.
  */
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { createServer } from "./server.js";
+import { createServer, DEFAULT_BLOCKED_URLS } from "./server.js";
 
 const walletServiceUrl = (process.env.WALLET_SERVICE_URL ?? "http://localhost:4010").replace(/\/+$/, "");
 const agentToken = process.env.AGENT_TOKEN?.trim();
@@ -17,7 +17,8 @@ if (!agentToken) {
   process.exit(1);
 }
 
-const server = createServer({ walletServiceUrl, agentToken });
+const extraBlocked = (process.env.ALLOWANCE_BLOCKED_URLS ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+const server = createServer({ walletServiceUrl, agentToken, blockedUrls: [...DEFAULT_BLOCKED_URLS, ...extraBlocked] });
 const transport = new StdioServerTransport();
 await server.connect(transport);
 console.error(`[mcp] Allowance MCP server ready (wallet-service ${walletServiceUrl}, token …${agentToken.slice(-4)})`);

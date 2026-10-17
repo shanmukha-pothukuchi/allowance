@@ -24,6 +24,8 @@ export interface CreateServerOptions {
   approvalWaitMs?: number;
   /** Log sink; defaults to stderr (stdout is reserved for MCP frames). */
   log?: (msg: string) => void;
+  /** URL prefixes fetch_url refuses (in addition to walletServiceUrl). Defaults to DEFAULT_BLOCKED_URLS. */
+  blockedUrls?: string[];
 }
 
 type HttpMethod = "GET" | "POST";
@@ -44,13 +46,66 @@ const UNTRUSTED_NOTE =
 /** Internal header Claude can pass to fetch_url to link a pre-signed PAYMENT-SIGNATURE to its wallet payment id. */
 const PAYMENT_ID_HEADER = "x-allowance-payment-id";
 
-let controlPlaneOrigin = "http://localhost:4010";
+/**
+ * Local control-plane URLs an agent must never reach through fetch_url: the wallet-service itself,
+ * the dashboard (its dev proxy adds the owner key), the agent chat server, and the facilitator's
+ * admin routes. Entries are URL prefixes; localhost aliases are treated as the same host.
+ */
+export const DEFAULT_BLOCKED_URLS = ["http://localhost:4040", "http://localhost:4050", "http://localhost:4030/admin"];
+
+interface BlockedTarget {
+  protocol: string;
+  host: string;
+  port: string;
+  pathPrefix: string;
+}
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "0.0.0.0", "[::]"]);
+function effectivePort(u: URL): string {
+  return u.port || (u.protocol === "https:" ? "443" : "80");
+}
+function canonicalHost(h: string): string {
+  return LOCAL_HOSTS.has(h.toLowerCase()) ? "localhost" : h.toLowerCase();
+}
+function toBlockedTarget(raw: string): BlockedTarget | null {
+  try {
+    const u = new URL(raw);
+    return { protocol: u.protocol, host: canonicalHost(u.hostname), port: effectivePort(u), pathPrefix: u.pathname.replace(/\/+$/, "") };
+  } catch {
+    return null;
+  }
+}
+export function isBlockedUrl(url: string, targets: BlockedTarget[]): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  const host = canonicalHost(u.hostname);
+  const port = effectivePort(u);
+  const path = decodeURIComponent(u.pathname).replace(/\/{2,}/g, "/");
+  return targets.some(
+    (t) =>
+      t.protocol === u.protocol &&
+      t.host === host &&
+      t.port === port &&
+      (t.pathPrefix === "" || path === t.pathPrefix || path.startsWith(t.pathPrefix + "/")),
+  );
+}
+
+/** Headers the model may never set: credentials and browser-provenance headers the dashboard proxy trusts. */
+function isForbiddenHeader(name: string): boolean {
+  const k = name.toLowerCase();
+  return k === "x-owner-key" || k === "authorization" || k === "cookie" || k === "host" || k.startsWith("sec-") || k.startsWith("x-forwarded-") || k === "origin";
+}
 
 export function createServer(opts: CreateServerOptions): McpServer {
   const approvalWaitMs = opts.approvalWaitMs ?? 45_000;
   const log = opts.log ?? ((m: string) => console.error(`[mcp] ${m}`));
   const doFetch: FetchLike = opts.fetch ?? globalThis.fetch;
-  controlPlaneOrigin = opts.walletServiceUrl;
+  const blockedTargets = [opts.walletServiceUrl, ...(opts.blockedUrls ?? DEFAULT_BLOCKED_URLS)]
+    .map(toBlockedTarget)
+    .filter((t): t is BlockedTarget => t !== null);
   const wallet = new WalletClient({ baseUrl: opts.walletServiceUrl, token: opts.agentToken, fetch: doFetch });
 
   const pending = new Map<string, PendingPayment>();
@@ -101,18 +156,7 @@ export function createServer(opts: CreateServerOptions): McpServer {
   }
 
   /** Accept "localhost:4021", "localhost:4021/api/x", or a full URL. */
-  function isControlPlaneUrl(url: string): boolean {
-  try {
-    const target = new URL(url);
-    const wallet = new URL(controlPlaneOrigin);
-    const LOCAL = ["localhost", "127.0.0.1", "[::1]", "0.0.0.0", "[::]"];
-    const sameHost = (a: string, b: string) => a === b || (LOCAL.includes(a) && LOCAL.includes(b));
-    return sameHost(target.hostname, wallet.hostname) && target.port === wallet.port && target.protocol === wallet.protocol;
-  } catch {
-    return false;
-  }
-}
-function normalizeUrl(input: string): string {
+  function normalizeUrl(input: string): string {
     const s = input.trim();
     if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return s;
     return `http://${s}`;
@@ -327,9 +371,9 @@ function normalizeUrl(input: string): string {
         const url = normalizeUrl(rawUrl);
         // Never let a web page or bounty steer this tool at the wallet's own owner API. The agent
         // has dedicated wallet tools; owner actions (approve, unfreeze, policy) are not its to take.
-        if (isControlPlaneUrl(url)) {
+        if (isBlockedUrl(url, blockedTargets)) {
           return errorResult(
-            `Refused: ${url} is the wallet service's own API. Agents cannot call owner endpoints (approve, unfreeze, policy, top-up); ask the owner instead.`,
+            `Refused: ${url} is part of the wallet's own control plane. Agents cannot call owner endpoints (approve, unfreeze, policy, top-up); ask the owner instead.`,
           );
         }
         // Dev-server file routes can expose repo files; an agent never needs them.
@@ -342,8 +386,8 @@ function normalizeUrl(input: string): string {
         for (const [k, v] of Object.entries(headers ?? {})) {
           const key = k.toLowerCase();
           if (key === PAYMENT_ID_HEADER) presetPaymentId = v;
-          // The agent must never present owner credentials, even if a page told it the key.
-          else if (key === "x-owner-key" || key === "authorization" || key === "cookie") continue;
+          // The agent must never present owner credentials or browser-provenance headers.
+          else if (isForbiddenHeader(key)) continue;
           else hdrs[k] = v;
         }
         if (!Object.keys(hdrs).some((k) => k.toLowerCase() === "accept")) hdrs.accept = "application/json, text/plain;q=0.9, */*;q=0.8";

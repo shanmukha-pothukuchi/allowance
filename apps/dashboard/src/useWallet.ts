@@ -54,18 +54,21 @@ export function useWallet(): { state: DashboardState; actions: WalletActions } {
 
     (async () => {
       let adapter: WalletAdapter;
-      let fallback = false;
       if (mockRequested()) {
+        // Only on explicit request (?mock=1). Never a silent fallback: fake activity on the
+        // owner's screen would be worse than an honest "offline".
         adapter = createMockAdapter();
-      } else if (await walletServiceReachable()) {
-        adapter = createHttpAdapter();
       } else {
-        adapter = createMockAdapter();
-        fallback = true;
+        while (!(await walletServiceReachable())) {
+          if (cancelled) return;
+          dispatch({ type: "connection", status: "offline" });
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+        adapter = createHttpAdapter();
       }
       if (cancelled) return;
       adapterRef.current = adapter;
-      if (adapter.kind === "mock") dispatch({ type: "connection", status: "demo", offlineFallback: fallback });
+      if (adapter.kind === "mock") dispatch({ type: "connection", status: "demo" });
 
       try {
         await loadAll(adapter);

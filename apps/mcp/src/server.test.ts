@@ -81,6 +81,14 @@ describe("fetch_url", () => {
     const alt = wallet.url.replace("127.0.0.1", "localhost").replace("localhost", "127.0.0.1");
     const r2 = await mcp.call("fetch_url", { url: `${alt}/v1/summary` });
     expect(r2.isError).toBe(true);
+    // the dashboard (its proxy adds the owner key), the chat server and facilitator admin are refused too
+    for (const u of ["http://localhost:4040/v1/approvals/apr_x/approve", "http://127.0.0.1:4050/api/agents", "http://localhost:4030/admin/mint", "http://localhost:4030//admin/mint", "http://localhost:4030/%61dmin/mint"]) {
+      const r = await mcp.call("fetch_url", { url: u, method: "POST", body: {} });
+      expect(r.isError, u).toBe(true);
+    }
+    // ...but the facilitator's public explorer is fine to read
+    const { isBlockedUrl } = await import("./server.js");
+    expect(isBlockedUrl("http://localhost:4030/explorer", [{ protocol: "http:", host: "localhost", port: "4030", pathPrefix: "/admin" }])).toBe(false);
     // dev-server file routes are refused on any host
     const r3 = await mcp.call("fetch_url", { url: `${merchant.url}/@fs/etc/passwd` });
     expect(r3.isError).toBe(true);
