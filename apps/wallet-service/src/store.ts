@@ -174,11 +174,14 @@ export function normalizePolicy(base: Policy, patch: Partial<Policy> | undefined
     const origins = Array.isArray(p.allowlist.origins) ? p.allowlist.origins : [];
     for (const a of addresses) if (typeof a !== "string" || !isAddress(a)) throw new Error(`allowlist address is not a 0x address: ${String(a)}`);
     const normOrigins = origins.map((o) => {
+      let origin = "";
       try {
-        return new URL(String(o)).origin;
+        origin = new URL(String(o)).origin;
       } catch {
-        throw new Error(`allowlist origin is not a URL origin: ${String(o)}`);
+        /* fallthrough */
       }
+      if (!origin || origin === "null") throw new Error(`allowlist origin must be a full URL origin like http://host:port, got: ${String(o)}`);
+      return origin;
     });
     p.allowlist = { addresses: addresses.map((a) => getAddress(a)), origins: normOrigins };
   } else {

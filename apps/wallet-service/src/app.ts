@@ -96,7 +96,10 @@ export interface LedgerTx {
   from: string;
   to: string;
   amountBaseUnits: string;
+  kind?: string;
 }
+const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
+const MAX_TIMEOUT_SECONDS = 3600;
 export type LookupTx = (txHash: string) => Promise<LedgerTx | null | "unavailable">;
 
 /** Live implementation: fetch the URL (no body), expect 402 + PAYMENT-REQUIRED, compare. */
@@ -128,7 +131,8 @@ export function liveVerifyChallenge(fetchImpl: typeof fetch = fetch): VerifyChal
         a.network === requirements.network &&
         String(a.asset).toLowerCase() === String(requirements.asset).toLowerCase() &&
         String(a.payTo).toLowerCase() === String(requirements.payTo).toLowerCase() &&
-        String(a.amount) === String(requirements.amount),
+        String(a.amount) === String(requirements.amount) &&
+        Number(a.maxTimeoutSeconds) === Number(requirements.maxTimeoutSeconds),
     );
     return match ? { ok: true } : { ok: false, reason: "the site did not ask for this payTo/amount" };
   };
@@ -150,7 +154,7 @@ export function liveLookupTx(facilitatorUrl: string, fetchImpl: typeof fetch = f
         headers: { accept: "application/json" },
         signal: AbortSignal.timeout(3000),
       });
-      if (res.status === 404) return null;
+      if (res.status >= 400 && res.status < 500) return null; // 404, malformed param, etc.
       if (!res.ok) return "unavailable";
       const tx = (await res.json()) as LedgerTx;
       return tx && tx.hash ? tx : null;
@@ -211,6 +215,23 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
   const verifyChallenge: VerifyChallenge = deps.verifyChallenge ?? liveVerifyChallenge();
   const lookupTx: LookupTx = deps.lookupTx ?? (config.chainMode === "mock" ? liveLookupTx(config.facilitatorUrl) : async () => "unavailable");
   let seeded = config.chainMode !== "mock";
+  /** Approvals being settled right now. Claimed synchronously so two concurrent approve calls
+   *  (double-tap, Telegram + dashboard, retries) can never settle the same approval twice. */
+  const deciding = new Set<string>();
+
+
+  /** Look up an agent-reported tx hash. Mock mode fails closed (503) when the ledger is unreachable;
+   *  chain mode has no lookup and returns "skip" (documented gap). */
+  async function requireTx(hash: unknown): Promise<LedgerTx | "skip"> {
+    if (typeof hash !== "string" || !TX_HASH_RE.test(hash)) throw new HttpError(400, "invalid_request", "txHash must be a 0x-prefixed 32-byte hex hash");
+    const tx = await lookupTx(hash);
+    if (tx === null) throw new HttpError(400, "tx_not_found", "The ledger has no such transaction");
+    if (tx === "unavailable") {
+      if (config.chainMode === "mock") throw new HttpError(503, "ledger_unavailable", "The ledger is not reachable; retry shortly");
+      return "skip";
+    }
+    return tx;
+  }
 
   /** Spend is counted at signing time. A "failed" report from the agent does NOT un-count an x402
    *  spend: the signed authorization is still valid until validBefore, so trusting the agent here
@@ -371,7 +392,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
   function expireApprovals(): void {
     const now = Date.now();
     for (const approval of store.state.approvals) {
-      if (approval.status !== "pending") continue;
+      if (approval.status !== "pending" || deciding.has(approval.id)) continue;
       if (now - new Date(approval.createdAt).getTime() < APPROVAL_TTL_MS) continue;
       approval.status = "expired";
       approval.decidedAt = nowIso();
@@ -681,6 +702,10 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     if (!/^\d+$/.test(String(requirements.amount)) || !isAddress(String(requirements.payTo))) {
       throw new HttpError(400, "invalid_request", "Payment requirements have an invalid amount or payTo");
     }
+    const mts = Number(requirements.maxTimeoutSeconds);
+    if (!Number.isInteger(mts) || mts < 1 || mts > MAX_TIMEOUT_SECONDS) {
+      throw new HttpError(400, "invalid_request", `maxTimeoutSeconds must be an integer between 1 and ${MAX_TIMEOUT_SECONDS}`);
+    }
     const amount = BigInt(requirements.amount);
     const to = getAddress(requirements.payTo);
     const origin = originOf(body.url) || undefined;
@@ -784,9 +809,8 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     }
     const who = receipt.counterparty.name ?? receipt.description;
     if (settle.success && settle.transaction) {
-      const tx = await lookupTx(settle.transaction);
-      if (tx === null) throw new HttpError(400, "tx_not_found", "The ledger has no such transaction");
-      if (tx !== "unavailable") {
+      const tx = await requireTx(settle.transaction);
+      if (tx !== "skip") {
         const okTx =
           tx.from.toLowerCase() === agent.address.toLowerCase() &&
           tx.to.toLowerCase() === receipt.counterparty.address.toLowerCase() &&
@@ -972,12 +996,15 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     }
     if (!body?.txHash || typeof body.txHash !== "string") throw new HttpError(400, "invalid_request", "`txHash` is required");
     if (!body.from || typeof body.from.origin !== "string") throw new HttpError(400, "invalid_request", "`from.origin` is required");
-    if (store.state.receipts.some((r) => r.kind === "earn" && r.txHash?.toLowerCase() === body.txHash!.toLowerCase())) {
-      throw new HttpError(409, "duplicate_tx", "That payout was already recorded");
+    // The payer's transfer receipt legitimately shares the hash; an earn receipt or any receipt of this agent does not.
+    if (store.state.receipts.some((r) => r.txHash?.toLowerCase() === String(body.txHash).toLowerCase() && (r.kind === "earn" || r.agentId === agent.id))) {
+      throw new HttpError(409, "duplicate_tx", "That transaction was already recorded");
     }
-    const tx = await lookupTx(body.txHash);
-    if (tx === null) throw new HttpError(400, "tx_not_found", "The ledger has no such transaction");
-    if (tx !== "unavailable") {
+    const tx = await requireTx(body.txHash);
+    if (tx !== "skip") {
+      if (tx.kind === "mint" || tx.from.toLowerCase() === "0x0000000000000000000000000000000000000000") {
+        throw new HttpError(400, "tx_mismatch", "That transaction is a mint, not a payout");
+      }
       if (tx.to.toLowerCase() !== agent.address.toLowerCase() || String(tx.amountBaseUnits) !== amount.toString()) {
         throw new HttpError(400, "tx_mismatch", "That transaction does not pay this agent that amount");
       }
@@ -1147,16 +1174,25 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     expireApprovals();
     const approval = store.approvalById(String(req.params.id));
     if (!approval) throw new HttpError(404, "approval_not_found", `No approval ${String(req.params.id)}`);
-    if (approval.status !== "pending") throw new HttpError(409, "approval_not_pending", `Approval is already ${approval.status}`);
+    if (approval.status !== "pending" || deciding.has(approval.id)) {
+      throw new HttpError(409, "approval_not_pending", `Approval is already ${deciding.has(approval.id) ? "being decided" : approval.status}`);
+    }
     const by = decidedBy(req.body?.by);
-    res.json({ approval: await settleApproval(approval, by) });
+    deciding.add(approval.id);
+    try {
+      res.json({ approval: await settleApproval(approval, by) });
+    } finally {
+      deciding.delete(approval.id);
+    }
   });
 
   router.post("/approvals/:id/deny", ownerAuth, (req, res) => {
     expireApprovals();
     const approval = store.approvalById(String(req.params.id));
     if (!approval) throw new HttpError(404, "approval_not_found", `No approval ${String(req.params.id)}`);
-    if (approval.status !== "pending") throw new HttpError(409, "approval_not_pending", `Approval is already ${approval.status}`);
+    if (approval.status !== "pending" || deciding.has(approval.id)) {
+      throw new HttpError(409, "approval_not_pending", `Approval is already ${deciding.has(approval.id) ? "being decided" : approval.status}`);
+    }
     const by = decidedBy(req.body?.by);
     approval.status = "denied";
     approval.decidedAt = nowIso();

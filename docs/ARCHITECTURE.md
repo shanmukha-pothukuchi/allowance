@@ -140,6 +140,14 @@ Semantics:
   (`400 tx_not_found` / `tx_mismatch`); `/earnings` requires `to` = agent with the exact amount and
   rejects a tx hash recorded twice (`409 duplicate_tx`). In chain mode these checks are skipped
   (documented gap).
+- **One decision per approval.** `/approve` claims the approval synchronously (in-memory set) before
+  any await; concurrent approve/deny calls on the same id get `409 approval_not_pending`. The expiry
+  sweep skips approvals being decided. One approval can never settle twice.
+- Agent-reported tx hashes must match `^0x[0-9a-f]{64}$` (`400 invalid_request`); a facilitator 4xx
+  is treated as not found; if the ledger is unreachable in mock mode the report is refused with
+  `503 ledger_unavailable` (fail closed). Mints/top-ups are never accepted as earnings.
+- `/v1/pay` requires `maxTimeoutSeconds` to be an integer in 1..3600 and the live challenge to
+  carry the same value, so an agent cannot obtain a decades-valid authorization.
 - `/v1/health` reports `seeded` (mock mode: whether starting balances have been minted). The demo
   waits for it.
 - **Balance check** happens before policy (`insufficient_balance` block does not freeze). If the 402

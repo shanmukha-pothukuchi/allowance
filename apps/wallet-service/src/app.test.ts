@@ -439,6 +439,58 @@ describe("x402 payments", () => {
   });
 });
 
+describe("hardening (Phase 3 verifier findings)", () => {
+  it("settles a transfer approval exactly once under concurrent approve calls", async () => {
+    const { agent, token } = await createAgent("double-tap", { maxPerTx: "10.00", approvalThreshold: "1.00", dailyCap: "50.00" });
+    const to = "0x7777777777777777777777777777777777777777";
+    const req = await api("POST", "/v1/transfer", { to, amount: "5.00" }, token);
+    expect(req.status).toBe(202);
+    const approvalId = req.body.approvalId as string;
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () => api("POST", `/v1/approvals/${approvalId}/approve`, { by: "dashboard" })),
+    );
+    const statuses = results.map((r) => r.status).sort();
+    expect(statuses).toEqual([200, 409, 409, 409, 409]);
+    const outs = facilitator.txs.filter((t) => t.from.toLowerCase() === agent.address.toLowerCase() && t.to.toLowerCase() === to);
+    expect(outs).toHaveLength(1);
+    expect(facilitator.balances.get(getAddress(agent.address))).toBe(toBaseUnits("15.00"));
+    expect((await api("GET", "/v1/me", undefined, token)).body.agent.spentToday).toBe("5.00");
+    // deny after the fact is also refused
+    expect((await api("POST", `/v1/approvals/${approvalId}/deny`, { by: "dashboard" })).status).toBe(409);
+  });
+
+  it("rejects malformed tx hashes, mints-as-earnings, and bogus challenge timeouts", async () => {
+    const { agent, token } = await createAgent("strict", { approvalThreshold: "1.00" });
+    const pay = await api("POST", "/v1/pay", { paymentRequired: paymentRequired("0.05"), url: `${MERCHANT}/api/weather` }, token);
+    expect(pay.status).toBe(200);
+    for (const bad of ["%E0%A4%A", "0x1234", "not-a-hash", 42]) {
+      const r = await api("POST", `/v1/payments/${pay.body.paymentId}/settled`, { settleResponse: { success: true, transaction: bad, network: "eip155:84532" } }, token);
+      expect(r.status, String(bad)).toBe(400);
+      const e = await api("POST", "/v1/earnings", { amount: "100.00", txHash: bad, from: { origin: MERCHANT } }, token);
+      expect(e.status, String(bad)).toBe(400);
+    }
+    // the agent's own starting-balance mint is not an earning
+    const mintTx = facilitator.txs.find((t) => t.kind === "mint" && t.to.toLowerCase() === agent.address.toLowerCase())!;
+    const asEarning = await api("POST", "/v1/earnings", { amount: "20.00", txHash: mintTx.hash, from: { origin: MERCHANT } }, token);
+    expect([400, 409]).toContain(asEarning.status);
+    expect((await api("GET", "/v1/me", undefined, token)).body.agent.earnedToday).toBe("0.00");
+    // a 32-year authorization window is refused
+    const pr = paymentRequired("0.05");
+    pr.accepts[0].maxTimeoutSeconds = 1e9;
+    const longLived = await api("POST", "/v1/pay", { paymentRequired: pr, url: `${MERCHANT}/api/weather` }, token);
+    expect(longLived.status).toBe(400);
+  });
+
+  it("refuses scheme-less allowlist origins instead of storing \"null\"", async () => {
+    const { agent } = await createAgent("origins", {});
+    const r = await api("PATCH", `/v1/agents/${agent.id}/policy`, { allowlist: { addresses: [], origins: ["localhost:4021"] } });
+    expect(r.status).toBe(400);
+    const ok = await api("PATCH", `/v1/agents/${agent.id}/policy`, { allowlist: { addresses: [], origins: ["http://localhost:4021/"] } });
+    expect(ok.status).toBe(200);
+    expect(ok.body.agent.policy.allowlist.origins).toEqual(["http://localhost:4021"]);
+  });
+});
+
 describe("transfers", () => {
   it("settles an allowed transfer through the facilitator", async () => {
     const { agent, token } = await createAgent("sender", { maxPerTx: "5.00", approvalThreshold: "5.00" });
@@ -508,12 +560,11 @@ describe("earnings, topups, summary", () => {
   it("records earnings and top-ups", async () => {
     const { agent, token } = await createAgent("earner", {});
     // A payout is a ledger tx to the agent; the wallet checks it before believing the agent.
-    const mintRes = await fetch(`${facilitator.url}/admin/mint`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ to: agent.address, amount: "0.50" }),
-    });
-    const payoutTx = ((await mintRes.json()) as { txHash: string }).txHash;
+    // A real payout: another funded wallet settles $0.50 to the earner through the facilitator.
+    const { token: payerToken } = await createAgent("bounty-payer", { maxPerTx: "5.00", approvalThreshold: "5.00", allowlist: null });
+    const payout = await api("POST", "/v1/transfer", { to: agent.address, amount: "0.50", memo: "bounty" }, payerToken);
+    expect(payout.status).toBe(200);
+    const payoutTx = payout.body.receipt.txHash as string;
     const earnBody = { amount: "0.50", txHash: payoutTx, description: "Bounty: API reliability check", from: { origin: MERCHANT, name: "Acme" }, bountyId: "api-reliability-check" };
     const forged = await api("POST", "/v1/earnings", { ...earnBody, txHash: "0x" + "cd".repeat(32) }, token);
     expect(forged.status).toBe(400);

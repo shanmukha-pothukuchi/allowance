@@ -51,7 +51,8 @@ Open while it runs:
 bounty attack (blocked), and a pizza order that waits for owner approval. Without `--auto-approve`
 the pizza waits for you to tap Approve in Telegram or on the dashboard.
 
-`npm run reset` wipes `.data/` (keys, tokens, ledger, receipts) and re-runs setup.
+`npm run reset` wipes `.data/` (keys, tokens, ledger, receipts) and re-runs setup. Stop `npm run dev`
+first; reset refuses to run under live services so nothing is left with stale state.
 
 ## Claude Desktop
 
@@ -100,6 +101,8 @@ Mainnet is never configured anywhere in this repo.
 | Settlement in mock mode | Simulated: in-memory ledger, fake but well-formed tx hashes, local explorer |
 | Settlement in `base-sepolia` mode | Real testnet USDC; coded, untested here |
 | Policy engine, approvals, freeze, receipts, tokens | Real |
+| Origin allowlist | Real, and verified: the wallet re-fetches the 402 and signs only what the site actually demands |
+| Checks on agent-reported settlements and bounty payouts | Real in mock mode (looked up on the ledger); skipped in `base-sepolia` mode |
 | Telegram approvals and alerts | Real (grammy, long polling) |
 | Pizza fulfillment, "virtual card" | **Simulated**. No card, no offramp, no pizza. |
 | "Add $20 with card" on the dashboard | Simulated top-up (mints on the mock ledger) |
