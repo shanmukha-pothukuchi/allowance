@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { getAddress, verifyTypedData } from "viem";
 import { decodePaymentSignatureHeader } from "@x402/core/http";
 import { TRANSFER_WITH_AUTHORIZATION_TYPES } from "@allowance/wallet";
@@ -479,6 +480,47 @@ describe("hardening (Phase 3 verifier findings)", () => {
     pr.accepts[0].maxTimeoutSeconds = 1e9;
     const longLived = await api("POST", "/v1/pay", { paymentRequired: pr, url: `${MERCHANT}/api/weather` }, token);
     expect(longLived.status).toBe(400);
+  });
+
+  it("records one earning even when the same payout is reported concurrently", async () => {
+    const { agent, token } = await createAgent("earner-race", {});
+    const { token: payerToken } = await createAgent("earner-race-payer", { maxPerTx: "5.00", approvalThreshold: "5.00", allowlist: null });
+    const payout = await api("POST", "/v1/transfer", { to: agent.address, amount: "0.25" }, payerToken);
+    expect(payout.status).toBe(200);
+    const body = { amount: "0.25", txHash: payout.body.receipt.txHash, description: "Bounty", from: { origin: MERCHANT } };
+    const results = await Promise.all(Array.from({ length: 5 }, () => api("POST", "/v1/earnings", body, token)));
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409, 409, 409, 409]);
+    expect((await api("GET", "/v1/me", undefined, token)).body.agent.earnedToday).toBe("0.25");
+  });
+
+  it("refuses a string maxTimeoutSeconds (would concatenate into a never-expiring authorization)", async () => {
+    const { token } = await createAgent("stringy", { approvalThreshold: "1.00" });
+    const pr = paymentRequired("0.05");
+    (pr.accepts[0] as { maxTimeoutSeconds: unknown }).maxTimeoutSeconds = "300";
+    const r = await api("POST", "/v1/pay", { paymentRequired: pr, url: `${MERCHANT}/api/weather` }, token);
+    expect(r.status).toBe(400);
+  });
+
+  it("requires X-Owner-Key on owner endpoints when a key is configured", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "allowance-ownerkey-"));
+    const w = createApp({ ...baseConfig, dataDir: dir, ownerApiKey: "ok_test" }, { store: openStore(dir), settlement: wallet.settlement });
+    const srv = await new Promise<Server>((resolve) => {
+      const s = w.app.listen(0, "127.0.0.1", () => resolve(s));
+    });
+    const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+    try {
+      const open = await fetch(`${base}/v1/agents`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "x" }) });
+      expect(open.status).toBe(401);
+      const keyed = await fetch(`${base}/v1/agents`, { method: "POST", headers: { "content-type": "application/json", "x-owner-key": "ok_test" }, body: JSON.stringify({ name: "x" }) });
+      expect(keyed.status).toBe(201);
+      const summary = await fetch(`${base}/v1/summary`);
+      expect(summary.status).toBe(401);
+      // health stays open so the dashboard can detect the service
+      expect((await fetch(`${base}/v1/health`)).status).toBe(200);
+    } finally {
+      w.close();
+      await new Promise((r) => srv.close(() => r(null)));
+    }
   });
 
   it("refuses scheme-less allowlist origins instead of storing \"null\"", async () => {

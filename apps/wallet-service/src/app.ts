@@ -16,7 +16,7 @@ import {
   signTransferAuthorization,
 } from "@allowance/wallet";
 import type { Settlement } from "@allowance/wallet";
-import {
+import { ownerHeaders,
   BASE_SEPOLIA_NETWORK,
   USDC_BASE_SEPOLIA,
   containsSecret,
@@ -218,6 +218,8 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
   /** Approvals being settled right now. Claimed synchronously so two concurrent approve calls
    *  (double-tap, Telegram + dashboard, retries) can never settle the same approval twice. */
   const deciding = new Set<string>();
+  /** Payout tx hashes currently being recorded as earnings (same claim-before-await pattern). */
+  const recordingTx = new Set<string>();
 
 
   /** Look up an agent-reported tx hash. Mock mode fails closed (503) when the ledger is unreachable;
@@ -513,7 +515,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
   async function mint(agent: StoredAgent, dollars: string): Promise<{ txHash: Hex; balance: string }> {
     const res = await fetch(`${config.facilitatorUrl.replace(/\/+$/, "")}/admin/mint`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...ownerHeaders(config) },
       body: JSON.stringify({ to: agent.address, amount: dollars }),
     });
     if (!res.ok) throw new Error(`facilitator mint failed (${res.status})`);
@@ -703,9 +705,10 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
       throw new HttpError(400, "invalid_request", "Payment requirements have an invalid amount or payTo");
     }
     const mts = Number(requirements.maxTimeoutSeconds);
-    if (!Number.isInteger(mts) || mts < 1 || mts > MAX_TIMEOUT_SECONDS) {
+    if (typeof requirements.maxTimeoutSeconds !== "number" || !Number.isInteger(mts) || mts < 1 || mts > MAX_TIMEOUT_SECONDS) {
       throw new HttpError(400, "invalid_request", `maxTimeoutSeconds must be an integer between 1 and ${MAX_TIMEOUT_SECONDS}`);
     }
+    requirements.maxTimeoutSeconds = mts; // coerced once; the signer adds it to `now`
     const amount = BigInt(requirements.amount);
     const to = getAddress(requirements.payTo);
     const origin = originOf(body.url) || undefined;
@@ -997,17 +1000,24 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     if (!body?.txHash || typeof body.txHash !== "string") throw new HttpError(400, "invalid_request", "`txHash` is required");
     if (!body.from || typeof body.from.origin !== "string") throw new HttpError(400, "invalid_request", "`from.origin` is required");
     // The payer's transfer receipt legitimately shares the hash; an earn receipt or any receipt of this agent does not.
-    if (store.state.receipts.some((r) => r.txHash?.toLowerCase() === String(body.txHash).toLowerCase() && (r.kind === "earn" || r.agentId === agent.id))) {
+    const hashKey = String(body.txHash).toLowerCase();
+    if (recordingTx.has(hashKey) || store.state.receipts.some((r) => r.txHash?.toLowerCase() === hashKey && (r.kind === "earn" || r.agentId === agent.id))) {
       throw new HttpError(409, "duplicate_tx", "That transaction was already recorded");
     }
-    const tx = await requireTx(body.txHash);
-    if (tx !== "skip") {
-      if (tx.kind === "mint" || tx.from.toLowerCase() === "0x0000000000000000000000000000000000000000") {
-        throw new HttpError(400, "tx_mismatch", "That transaction is a mint, not a payout");
+    recordingTx.add(hashKey); // claimed synchronously so concurrent reports of one payout cannot all pass
+    try {
+      const tx = await requireTx(body.txHash);
+      if (tx !== "skip") {
+        if (tx.kind === "mint" || tx.from.toLowerCase() === "0x0000000000000000000000000000000000000000") {
+          throw new HttpError(400, "tx_mismatch", "That transaction is a mint, not a payout");
+        }
+        if (tx.to.toLowerCase() !== agent.address.toLowerCase() || String(tx.amountBaseUnits) !== amount.toString()) {
+          throw new HttpError(400, "tx_mismatch", "That transaction does not pay this agent that amount");
+        }
       }
-      if (tx.to.toLowerCase() !== agent.address.toLowerCase() || String(tx.amountBaseUnits) !== amount.toString()) {
-        throw new HttpError(400, "tx_mismatch", "That transaction does not pay this agent that amount");
-      }
+    } catch (err) {
+      recordingTx.delete(hashKey); // release the claim so a corrected report can succeed
+      throw err;
     }
     const fromAddress = body.from.address && isAddress(body.from.address) ? getAddress(body.from.address) : ("0x0000000000000000000000000000000000000000" as Address);
     const receipt = newReceipt({
@@ -1024,6 +1034,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
       settledAt: nowIso(),
     });
     store.save();
+    recordingTx.delete(hashKey);
     emit("earning.received", {
       agentId: agent.id,
       agentName: agent.name,

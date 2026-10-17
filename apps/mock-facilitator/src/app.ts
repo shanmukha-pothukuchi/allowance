@@ -121,6 +121,14 @@ export function createFacilitatorApp(config: AppConfig, opts: FacilitatorAppOpti
     res.json({ balances: ledger.allBalances() });
   });
 
+  // /admin/* moves money without a signature, so it is owner-only when a key is configured.
+  app.use("/admin", (req, res, next) => {
+    if (config.ownerApiKey && req.header("x-owner-key") !== config.ownerApiKey) {
+      return res.status(401).json({ error: "unauthorized", message: "X-Owner-Key required for /admin endpoints" });
+    }
+    next();
+  });
+
   app.post("/admin/mint", (req, res) => {
     const { to, amount, memo } = (req.body ?? {}) as { to?: string; amount?: string; memo?: string };
     if (!to || !isAddress(to)) return badRequest(res, "`to` must be an address");

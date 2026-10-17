@@ -90,6 +90,26 @@ describe("mock facilitator", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
+  it("gates /admin/* behind X-Owner-Key when a key is configured", async () => {
+    const keyed = createFacilitatorApp({ ...config, dataDir: mkdtempSync(join(tmpdir(), "allowance-fac-key-")), ownerApiKey: "ok_test" }, { quiet: true });
+    const srv = await new Promise<Server>((resolve) => {
+      const s = keyed.listen(0, () => resolve(s));
+    });
+    const a = srv.address();
+    const base = `http://127.0.0.1:${typeof a === "object" && a ? a.port : 0}`;
+    try {
+      const open = await fetch(`${base}/admin/mint`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ to: payer.address, amount: "1.00" }) });
+      expect(open.status).toBe(401);
+      const ok = await fetch(`${base}/admin/mint`, { method: "POST", headers: { "content-type": "application/json", "x-owner-key": "ok_test" }, body: JSON.stringify({ to: payer.address, amount: "1.00" }) });
+      expect(ok.status).toBe(200);
+      // read-only and x402 endpoints stay open
+      expect((await fetch(`${base}/supported`)).status).toBe(200);
+      expect((await fetch(`${base}/balance/${payer.address}`)).status).toBe(200);
+    } finally {
+      await new Promise<void>((resolve) => srv.close(() => resolve()));
+    }
+  });
+
   it("GET /supported advertises exact on eip155:84532", async () => {
     const s = (await (await fetch(`${url}/supported`)).json()) as { kinds: unknown[]; signers: Record<string, string[]> };
     expect(s.kinds).toEqual([{ x402Version: 2, scheme: "exact", network: "eip155:84532" }]);

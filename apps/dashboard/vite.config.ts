@@ -1,5 +1,20 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+// Owner endpoints need X-Owner-Key. The dev proxy injects it server-side so the key never ships
+// to the browser bundle. Source: OWNER_API_KEY env, else <repo>/.data/owner-key.json (written by
+// `npm run setup`).
+function ownerApiKey(): string | undefined {
+  if (process.env.OWNER_API_KEY) return process.env.OWNER_API_KEY;
+  try {
+    const file = resolve(__dirname, "../..", process.env.DATA_DIR ?? ".data", "owner-key.json");
+    return (JSON.parse(readFileSync(file, "utf8")) as { ownerApiKey?: string }).ownerApiKey;
+  } catch {
+    return undefined;
+  }
+}
 
 // The dashboard talks to the wallet-service only, always via relative /v1 URLs.
 // In dev, Vite proxies /v1 to the wallet-service; SSE (/v1/events) streams through
@@ -14,6 +29,7 @@ export default defineConfig({
       "/v1": {
         target: process.env.WALLET_SERVICE_URL ?? "http://localhost:4010",
         changeOrigin: true,
+        headers: ownerApiKey() ? { "x-owner-key": ownerApiKey()! } : {},
       },
     },
   },

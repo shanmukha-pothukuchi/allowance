@@ -80,7 +80,7 @@ export async function signTransferAuthorization(
     to: getAddress(requirements.payTo),
     value: requirements.amount,
     validAfter: "0",
-    validBefore: String(now + requirements.maxTimeoutSeconds),
+    validBefore: String(now + Number(requirements.maxTimeoutSeconds)),
     nonce: opts.nonce ?? randomNonce(),
   };
   const signature = await account.signTypedData({

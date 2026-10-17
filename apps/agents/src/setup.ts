@@ -11,11 +11,13 @@
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import chalk from "chalk";
-import { loadConfig, DEFAULT_POLICY } from "@allowance/shared";
+import { loadConfig, DEFAULT_POLICY, ensureOwnerKey } from "@allowance/shared";
 import type { CreateAgentRequest, CreateAgentResponse, Policy, AgentPublic } from "@allowance/shared";
 import { readTokens, writeTokens, tokensPath, type TokenFile } from "./lib/tokens.js";
 
 const config = loadConfig();
+// Owner endpoints always need a key; generate one on first setup (services and the dashboard read it).
+if (!config.ownerApiKey) config.ownerApiKey = ensureOwnerKey(config.dataDir);
 const merchantOrigin = config.merchantUrl;
 
 interface Seed {

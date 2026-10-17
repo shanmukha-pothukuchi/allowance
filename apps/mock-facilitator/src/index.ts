@@ -1,4 +1,4 @@
-import { loadConfig } from "@allowance/shared";
+import { ensureOwnerKey, loadConfig } from "@allowance/shared";
 import { createFacilitatorApp } from "./app.js";
 
 export { createFacilitatorApp, type FacilitatorApp, type FacilitatorAppOptions, MOCK_FACILITATOR_SIGNER } from "./app.js";
@@ -12,6 +12,7 @@ if (isMain) {
   if (config.chainMode !== "mock") {
     console.warn(`[facilitator] CHAIN_MODE=${config.chainMode}: the mock facilitator is only used in mock mode, starting anyway`);
   }
+  if (!config.ownerApiKey) config.ownerApiKey = ensureOwnerKey(config.dataDir);
   const app = createFacilitatorApp(config);
   app.listen(config.facilitatorPort, () => {
     console.log(

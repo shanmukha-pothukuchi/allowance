@@ -1,4 +1,5 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 
 export type ChainMode = "mock" | "base-sepolia";
@@ -97,7 +98,7 @@ export function loadConfig(): AppConfig {
     x402FacilitatorUrl:
       chainMode === "mock" ? facilitatorUrl : (env.X402_FACILITATOR_URL ?? "https://x402.org/facilitator"),
     merchantPrivateKey: (env.MERCHANT_PRIVATE_KEY as `0x${string}` | undefined) || undefined,
-    ownerApiKey: env.OWNER_API_KEY || undefined,
+    ownerApiKey: env.OWNER_API_KEY || readOwnerKeyFile(resolve(repoRoot, env.DATA_DIR ?? ".data")),
     network: BASE_SEPOLIA_NETWORK,
     usdcAddress: USDC_BASE_SEPOLIA,
   };
@@ -106,4 +107,39 @@ export function loadConfig(): AppConfig {
 /** Explorer link for a tx hash in the active mode. */
 export function explorerTxUrl(txHash: string, chainMode: ChainMode, facilitatorUrl: string): string {
   return chainMode === "mock" ? `${facilitatorUrl}/tx/${txHash}` : `https://sepolia.basescan.org/tx/${txHash}`;
+}
+
+/**
+ * Owner API key. Owner endpoints (approve, unfreeze, policy, top-up, facilitator /admin/*) must
+ * never be callable by an agent that can fetch arbitrary URLs, so a key is always required:
+ * `OWNER_API_KEY` from the environment, else one generated into `DATA_DIR/owner-key.json` by
+ * `npm run setup` (or by a service on first start). Owner-side clients (dashboard proxy, notifier,
+ * demo, setup) read the same file.
+ */
+export function ownerKeyPath(dataDir: string): string {
+  return resolve(dataDir, "owner-key.json");
+}
+
+export function readOwnerKeyFile(dataDir: string): string | undefined {
+  try {
+    const j = JSON.parse(readFileSync(ownerKeyPath(dataDir), "utf8")) as { ownerApiKey?: string };
+    return j.ownerApiKey || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Create the owner key file if it does not exist; returns the key. */
+export function ensureOwnerKey(dataDir: string): string {
+  const existing = readOwnerKeyFile(dataDir);
+  if (existing) return existing;
+  mkdirSync(dataDir, { recursive: true });
+  const ownerApiKey = `ok_${randomBytes(24).toString("hex")}`;
+  writeFileSync(ownerKeyPath(dataDir), JSON.stringify({ ownerApiKey }, null, 2) + "\n", { mode: 0o600 });
+  return ownerApiKey;
+}
+
+/** Headers for owner-side HTTP calls. */
+export function ownerHeaders(config: Pick<AppConfig, "ownerApiKey">): Record<string, string> {
+  return config.ownerApiKey ? { "x-owner-key": config.ownerApiKey } : {};
 }

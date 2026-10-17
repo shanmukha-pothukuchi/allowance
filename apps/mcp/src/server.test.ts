@@ -71,6 +71,18 @@ describe("get_wallet", () => {
 });
 
 describe("fetch_url", () => {
+  it("refuses to fetch the wallet service's own owner API (prompt-injection guard)", async () => {
+    for (const path of ["/v1/approvals/apr_x/approve", "/v1/agents/agt_x/unfreeze", "/v1/summary"]) {
+      const r = await mcp.call("fetch_url", { url: `${wallet.url}${path}`, method: "POST", body: { by: "dashboard" } });
+      expect(r.isError, path).toBe(true);
+      expect(textOf(r)).toMatch(/Refused.*owner endpoints/);
+    }
+    // the same host via 127.0.0.1 vs localhost is also refused
+    const alt = wallet.url.replace("127.0.0.1", "localhost").replace("localhost", "127.0.0.1");
+    const r2 = await mcp.call("fetch_url", { url: `${alt}/v1/summary` });
+    expect(r2.isError).toBe(true);
+  });
+
   it("returns free responses as-is with status", async () => {
     const r = await mcp.call("fetch_url", { url: `${merchant.url}/free` });
     expect(r.isError).toBeFalsy();

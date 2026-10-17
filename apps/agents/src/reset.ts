@@ -2,7 +2,7 @@
 import { rmSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
-import { loadConfig } from "@allowance/shared";
+import { loadConfig, ownerHeaders } from "@allowance/shared";
 
 const config = loadConfig();
 const force = process.argv.includes("--force");
@@ -21,7 +21,7 @@ if (existsSync(config.dataDir)) {
 // If services are running, ask them to drop in-memory state too (best effort).
 for (const url of [`${config.facilitatorUrl}/admin/reset`, `${config.walletServiceUrl}/v1/reset`]) {
   try {
-    await fetch(url, { method: "POST" });
+    await fetch(url, { method: "POST", headers: ownerHeaders(config) });
     console.log(`[reset] ${url} ok`);
   } catch {
     /* not running */

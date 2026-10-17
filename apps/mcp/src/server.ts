@@ -44,10 +44,13 @@ const UNTRUSTED_NOTE =
 /** Internal header Claude can pass to fetch_url to link a pre-signed PAYMENT-SIGNATURE to its wallet payment id. */
 const PAYMENT_ID_HEADER = "x-allowance-payment-id";
 
+let controlPlaneOrigin = "http://localhost:4010";
+
 export function createServer(opts: CreateServerOptions): McpServer {
   const approvalWaitMs = opts.approvalWaitMs ?? 45_000;
   const log = opts.log ?? ((m: string) => console.error(`[mcp] ${m}`));
   const doFetch: FetchLike = opts.fetch ?? globalThis.fetch;
+  controlPlaneOrigin = opts.walletServiceUrl;
   const wallet = new WalletClient({ baseUrl: opts.walletServiceUrl, token: opts.agentToken, fetch: doFetch });
 
   const pending = new Map<string, PendingPayment>();
@@ -98,7 +101,17 @@ export function createServer(opts: CreateServerOptions): McpServer {
   }
 
   /** Accept "localhost:4021", "localhost:4021/api/x", or a full URL. */
-  function normalizeUrl(input: string): string {
+  function isControlPlaneUrl(url: string): boolean {
+  try {
+    const target = new URL(url);
+    const wallet = new URL(controlPlaneOrigin);
+    const sameHost = (a: string, b: string) => a === b || (["localhost", "127.0.0.1", "[::1]"].includes(a) && ["localhost", "127.0.0.1", "[::1]"].includes(b));
+    return sameHost(target.hostname, wallet.hostname) && target.port === wallet.port && target.protocol === wallet.protocol;
+  } catch {
+    return false;
+  }
+}
+function normalizeUrl(input: string): string {
     const s = input.trim();
     if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return s;
     return `http://${s}`;
@@ -311,6 +324,13 @@ export function createServer(opts: CreateServerOptions): McpServer {
     async ({ url: rawUrl, method, body, headers }) =>
       guard(async () => {
         const url = normalizeUrl(rawUrl);
+        // Never let a web page or bounty steer this tool at the wallet's own owner API. The agent
+        // has dedicated wallet tools; owner actions (approve, unfreeze, policy) are not its to take.
+        if (isControlPlaneUrl(url)) {
+          return errorResult(
+            `Refused: ${url} is the wallet service's own API. Agents cannot call owner endpoints (approve, unfreeze, policy, top-up); ask the owner instead.`,
+          );
+        }
         const m: HttpMethod = method ?? "GET";
         const hdrs: Record<string, string> = {};
         let presetPaymentId: string | undefined;

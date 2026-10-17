@@ -3,13 +3,13 @@
  * its balance is under $100, so bounty payouts never bounce during the demo. Retries for
  * ~15 s while the facilitator boots; logs and gives up quietly if it never appears.
  */
-import { type AppConfig, toBaseUnits, toDollars } from "@allowance/shared";
+import { ownerHeaders, type AppConfig, toBaseUnits, toDollars } from "@allowance/shared";
 
 const MIN_BALANCE = toBaseUnits("100.00");
 const MINT_AMOUNT = "1000.00";
 
 export async function ensureFunded(
-  config: Pick<AppConfig, "chainMode" | "facilitatorUrl">,
+  config: Pick<AppConfig, "chainMode" | "facilitatorUrl" | "ownerApiKey">,
   address: string,
   opts: { attempts?: number; delayMs?: number; log?: (msg: string) => void } = {},
 ): Promise<{ minted: boolean; balance?: string }> {
@@ -29,7 +29,7 @@ export async function ensureFunded(
       }
       const mint = await fetch(`${config.facilitatorUrl}/admin/mint`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...ownerHeaders(config) },
         body: JSON.stringify({ to: address, amount: MINT_AMOUNT, memo: "company treasury seed" }),
       });
       if (!mint.ok) throw new Error(`mint ${mint.status}`);
