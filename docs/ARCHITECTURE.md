@@ -385,3 +385,126 @@ Agent → Wallet: POST /v1/earnings {amount, txHash, …}                       
 - MCP `fetch_url` prefers `resource.description` ("Acme Weather") over `serviceName` for receipts.
 - TypeScript runs via `tsx` everywhere (no build step) except the dashboard (Vite). Module settings:
   ESNext + bundler resolution; workspace packages export `src/index.ts` directly.
+
+## 13. Services (Phase 4 contract)
+
+Agents can only pay **connected services**. The owner connects them, or an agent asks and the owner
+approves (Muse-style connectors). Connected services sit in the agent's context the way skill
+descriptions do; full usage docs are loaded on demand.
+
+### 13.1 Directory (`apps/directory`, port 4060, `DIRECTORY_URL`)
+
+The catalog of services that exist. It is itself a service (`id: "directory"`, kind `directory`)
+that every agent always has. Catalog entries are real, running services only (built from
+`MERCHANT_URL`):
+
+| id | name | kind | baseUrl | maxPrice | notes |
+|---|---|---|---|---|---|
+| `directory` | Service Directory | directory | `{DIRECTORY_URL}` | 0.00 | always available, never listed as "connected" |
+| `acme-weather` | Acme Weather | x402 | `{MERCHANT_URL}/api/weather` | 0.05 | `GET ?city=` |
+| `acme-news` | Acme News | x402 | `{MERCHANT_URL}/api/news` | 0.10 | `GET` |
+| `acme-stocks` | Acme Stocks | x402 | `{MERCHANT_URL}/api/stock` | 0.15 | `GET ?symbol=` |
+| `acme-pizza` | Acme Pizza | x402 | `{MERCHANT_URL}/pizza` | 18.50 | `POST /pizza/order {size, toppings[], address}`; fulfillment simulated |
+| `acme-bounties` | Acme Bounties | agent-work | `{MERCHANT_URL}` | 0.00 | paid tasks at `/.well-known/agent-work`; earning, not paying |
+
+| Method | Path | Response |
+|---|---|---|
+| GET | `/services?q=&category=` | `{ services: ServiceManifest[] }` without `docs` (search matches name, summary, description, provider, category) |
+| GET | `/services/:id` | `ServiceManifest` (with `docs`) · 404 `service_not_found` |
+| GET | `/health` | `{ ok: true, services: n }` |
+| GET | `/` | HTML: the catalog as a page (icon tiles, name, provider, pricing) |
+
+The directory is read-only and unauthenticated (it lists public facts). Agents never call it directly:
+the wallet-service proxies it, so the MCP server only needs `WALLET_SERVICE_URL`.
+
+### 13.2 Wallet-service additions
+
+`StoredAgent.services: ConnectedService[]`; `AgentPublic.services` exposes them. `GET /v1/me` and
+`/v1/summary` include them.
+
+Agent endpoints (Bearer token):
+
+| Method | Path | Body → Response |
+|---|---|---|
+| GET | `/v1/services` | `{ connected: ConnectedService[], directoryUrl }` |
+| GET | `/v1/directory?q=` | `{ services: (ServiceManifest & { connected: boolean })[] }` (no docs) |
+| GET | `/v1/directory/:id` | `ServiceManifest & { connected: boolean }` (with docs; custom connected services return their own docs) |
+| POST | `/v1/services/requests` | `ServiceRequest` → `200 { status:"connected", service }` if already connected · `202 { status:"needs_approval", approvalId, service, message }` · `404 service_not_found` · `400 invalid_request` |
+
+Owner endpoints (`X-Owner-Key`):
+
+| Method | Path | Body → Response |
+|---|---|---|
+| GET | `/v1/directory?q=` · `/v1/directory/:id` | as above, `connected` omitted; plus `connectedAgents: string[]` (agent ids) |
+| POST | `/v1/agents/:id/services` | `{ serviceId }` → `{ agent }` (owner connects directly, `connectedBy:"owner"`) |
+| DELETE | `/v1/agents/:id/services/:serviceId` | → `{ agent }` |
+
+Service approvals reuse the approval machinery: `Approval.kind = "service"`, `service` (the grant),
+`reason`, `paymentId: ""`, `amount` = the service `maxPrice`. Approve/deny/wait/expiry/one-decision
+rules are identical to payments. `/v1/approvals/:id/wait` returns `{ status:"approved", service }`
+for service approvals (no `paymentHeader`, no `receipt`). The wallet fetches the manifest from the
+directory itself; the agent only sends an id. Custom proposals (`custom`) are validated (http(s)
+`baseUrl`, `maxPrice` ≤ the agent's `maxPerTx`, name ≤ 60 chars, summary ≤ 200) and shown to the
+owner flagged `source:"agent"`; on approval they are connected with the agent's docs.
+
+Events: `service.requested` (with `approval`; the notifier and dashboard treat it like
+`payment.needs_approval`), `service.connected` (`data.service`, `data.connectedBy`),
+`service.disconnected`. `approval.approved` / `approval.denied` fire for service approvals too.
+Messages: `"shopper wants to connect Acme Pizza."`, `"Acme Pizza connected to shopper."`.
+
+**Policy.** An x402 payment is allowlisted if `to` is in `allowlist.addresses`, or its origin is in
+`allowlist.origins`, or its URL starts with the `baseUrl` of a connected x402 service (path-boundary
+match after URL normalization). When allowed via an origin or a service, the wallet re-fetches the
+402 and checks payTo/amount/asset/network/maxTimeoutSeconds (§6). When allowed via a service, the
+amount must also be ≤ that service's `maxPrice` (`service_cap` block, no freeze). If a payment is not
+allowlisted and its URL matches a directory service the agent has not connected, the block reason is
+`service_not_connected` with message `"Acme Pizza is not connected for shopper. Ask the owner with
+request_service."` and the agent is **not** frozen. Unknown destinations stay `not_allowlisted` and
+freeze. `allowlist: null` still means unrestricted. Setup gives every agent
+`allowlist: { addresses: [], origins: [] }` and default services:
+
+| Agent | Default services |
+|---|---|
+| researcher | acme-weather, acme-news, acme-stocks |
+| shopper | none (the demo: it asks for Acme Pizza) |
+| worker-1..4, naive-worker | acme-bounties |
+| claude-desktop | acme-bounties, acme-weather |
+
+### 13.3 MCP tools (shared by Claude Desktop and chat agents)
+
+| Tool | Input | Does |
+|---|---|---|
+| `list_services` | `{}` | Connected services: icon, name, id, one-line summary, pricing. Says the directory is always available. |
+| `get_service` | `{ service_id }` | Full manifest + docs (directory or custom). Says whether it is connected. |
+| `search_services` | `{ query? }` | Directory search; marks connected ones; says how to request others. |
+| `request_service` | `{ service_id?, custom?, reason }` | `POST /v1/services/requests`; on 202 waits ≤ approval wait (45 s) on `/wait`; returns "Connected Acme Pizza." / "Waiting for the owner to approve connecting Acme Pizza. Approval id apr_… — call check_approval to resume." / denied. Logs `service request needs approval apr_…; waiting` (the chat server keys on `needs approval apr_`). |
+| `check_approval` | `{ approval_id }` | Also resolves service approvals ("Owner connected Acme Pizza."). |
+
+`fetch_url` on a `service_not_connected` block returns a non-freezing, non-scary message telling
+the model to call `request_service` with the matching service id.
+
+### 13.4 Agent chat additions (`apps/agent-chat`)
+
+- System prompt gains a "Your services" block rebuilt each run from `GET /v1/services`:
+  `- 🌤️ Acme Weather (acme-weather): <summary> · <pricing>`, then: *"Before using a service, call
+  get_service for how to call it. If you need something you don't have, search_services and
+  request_service; your owner approves."*
+- `GET /api/agents` agent summaries gain `avatar: { emoji, color, label }` (from
+  `@allowance/shared/avatars`) and `services: { id, name, icon, color }[]` (from the wallet poll),
+  and `lastMessage: { kind, text, at } | null` for the conversation list.
+- Group sends tag the user log entry: `{ kind:"user", …, groupId }` (same `groupId` for every member
+  of one broadcast) so the UI renders a group thread with one user bubble per broadcast.
+- `LogEntry` tool entries are unchanged; the UI derives cards from tool names (`fetch_url` paid →
+  receipt card, `request_service` → connection card, `transfer_usdc` blocked → blocked card).
+
+### 13.5 Approval embed (dashboard ↔ chat)
+
+The dashboard serves a focused approval view at `http://localhost:4040/?approval=<id>&embed=1`
+(minimal chrome, transparent background, sized to its content; payment or service card with Approve
+/ Deny). It runs inside the dashboard origin, so its requests carry the owner key via the proxy; the
+chat server stays unprivileged. On decision it posts
+`window.parent.postMessage({ type: "allowance:approval", id, status }, "*")` and also on load
+`{ type: "allowance:approval-size", id, height }`. The dashboard dev server sends
+`Content-Security-Policy: frame-ancestors 'self' http://localhost:4050 http://127.0.0.1:4050`.
+The chat page embeds that iframe inline in the thread while an agent is `waiting_approval`; if it
+fails to load (dashboard not running) it shows "Approve on your phone or the dashboard".

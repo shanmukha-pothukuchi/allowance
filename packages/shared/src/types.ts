@@ -48,7 +48,11 @@ export type PolicyBlockReason =
   | "not_allowlisted"
   | "insufficient_balance"
   /** The 402 offered no USDC-on-Base-Sepolia option. Blocks without freezing; no receipt. */
-  | "unsupported_requirements";
+  | "unsupported_requirements"
+  /** The URL belongs to a directory service the agent has not connected. Soft block: no freeze; ask the owner. */
+  | "service_not_connected"
+  /** Over the per-payment cap of the connected service it was paid through. */
+  | "service_cap";
 
 export type PolicyDecision =
   | { outcome: "allow" }
@@ -61,6 +65,8 @@ export interface SpendRequest {
   to: Address;
   /** scheme://host[:port] of the paid resource, if this is an x402 payment. */
   origin?: string;
+  /** Full URL of the paid resource (x402 only). Matched against connected-service base URLs. */
+  url?: string;
 }
 
 // ----------------------------------------------------------------------------
@@ -72,6 +78,8 @@ export interface AgentPublic {
   name: string;
   address: Address;
   policy: Policy;
+  /** Connected services (the directory itself is always available and not listed). */
+  services: ConnectedService[];
   createdAt: IsoDate;
   /** Balance in dollars, from the active ledger (mock or chain). */
   balance: string;
@@ -129,18 +137,88 @@ export type ApprovalStatus = "pending" | "approved" | "denied" | "expired";
 
 export interface Approval {
   id: string;
+  /** "payment" (default when absent) or "service" (connect a service to this agent). */
+  kind?: "payment" | "service";
   agentId: string;
   agentName: string;
+  /** Payment approvals only ("" for service approvals). */
   paymentId: string;
+  /** Payment amount; for service approvals the service's per-payment cap ("0.00" if free). */
   amount: string;
   description: string;
   counterparty: { address: Address; origin?: string; name?: string };
+  /** Service approvals only: what will be connected. */
+  service?: ServiceGrant;
+  /** Service approvals only: why the agent asked (its own words, untrusted). */
+  reason?: string;
   status: ApprovalStatus;
   createdAt: IsoDate;
   decidedAt?: IsoDate;
   /** "telegram" | "dashboard" | "auto" */
   decidedBy?: string;
 }
+
+// ----------------------------------------------------------------------------
+// Services (see docs/ARCHITECTURE.md §13)
+// ----------------------------------------------------------------------------
+
+export type ServiceKind = "x402" | "agent-work" | "directory";
+export type ServiceCategory = "data" | "shopping" | "work" | "tools";
+
+/** A service as listed in the directory. */
+export interface ServiceManifest {
+  /** Stable id, e.g. "acme-pizza". */
+  id: string;
+  name: string;
+  provider: string;
+  /** Single emoji used as the app icon. */
+  icon: string;
+  /** Hex color for the icon tile. */
+  color: string;
+  category: ServiceCategory;
+  kind: ServiceKind;
+  /** One line. This is what agents see in their context, like a skill description. */
+  summary: string;
+  /** A few sentences for humans (directory / dashboard). */
+  description: string;
+  /** URL prefix the agent may pay once connected, e.g. "http://localhost:4021/pizza". */
+  baseUrl: string;
+  /** Human pricing, e.g. "$18.50 per order". "Free" for free services. */
+  pricing: string;
+  /** Largest single payment this service needs, dollars ("0.00" if free). Becomes the connection's cap. */
+  maxPrice: string;
+  /** Human-readable grants shown on the approval card. */
+  permissions: string[];
+  /** Usage docs loaded on demand (like SKILL.md): endpoints, parameters, examples. Plain text. */
+  docs: string;
+  /** "directory" for catalog entries, "agent" for custom services an agent proposed and the owner approved. */
+  source?: "directory" | "agent";
+}
+
+/** Shown on approval cards and stored on the connection. */
+export type ServiceGrant = Pick<ServiceManifest, "id" | "name" | "provider" | "icon" | "color" | "kind" | "summary" | "baseUrl" | "pricing" | "maxPrice" | "permissions" | "source">;
+
+/** A service connected to one agent. */
+export interface ConnectedService extends ServiceGrant {
+  connectedAt: IsoDate;
+  /** "owner" (connected from the dashboard), "approval" (owner approved an agent's request), "default" (setup). */
+  connectedBy: "owner" | "approval" | "default";
+  /** Custom services only: docs the agent wrote when proposing it. */
+  docs?: string;
+}
+
+/** POST /v1/services/requests (agent token). Either a directory id or a custom proposal. */
+export interface ServiceRequest {
+  serviceId?: string;
+  /** Custom service not in the directory (Muse-style "write a connector"). Owner sees it flagged as agent-proposed. */
+  custom?: { name: string; baseUrl: string; summary: string; maxPrice: string; docs?: string };
+  /** The agent's reason, shown to the owner verbatim (untrusted). */
+  reason?: string;
+}
+
+export type ServiceRequestResponse =
+  | { status: "connected"; service: ConnectedService }
+  | { status: "needs_approval"; approvalId: string; service: ServiceGrant; message: string };
 
 // ----------------------------------------------------------------------------
 // Events (SSE stream from wallet-service)
@@ -160,7 +238,10 @@ export type EventType =
   | "approval.denied"
   | "transfer.sent"
   | "earning.received"
-  | "topup";
+  | "topup"
+  | "service.requested"
+  | "service.connected"
+  | "service.disconnected";
 
 export interface WalletEvent {
   id: string;
@@ -275,7 +356,7 @@ export type TransferResponse =
 /** GET /v1/approvals/:id/wait?timeoutMs=45000 (agent token) */
 export type ApprovalWaitResponse =
   | { status: "pending"; approvalId: string }
-  | { status: "denied"; approvalId: string; receipt: Receipt }
+  | { status: "denied"; approvalId: string; receipt?: Receipt; reason?: string }
   | { status: "expired"; approvalId: string }
   | {
       status: "approved";
@@ -285,7 +366,10 @@ export type ApprovalWaitResponse =
       paymentHeader?: string;
       /** For x402 payments: what to retry (url, method, body), so a restarted agent can resume. */
       request?: OriginalRequest;
-      receipt: Receipt;
+      /** Payment approvals only. */
+      receipt?: Receipt;
+      /** Service approvals only: the connection that was made. */
+      service?: ConnectedService;
     };
 
 /** POST /v1/earnings (agent token) — record a bounty payout the agent received. */

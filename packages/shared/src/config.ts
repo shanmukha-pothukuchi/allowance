@@ -68,6 +68,9 @@ export interface AppConfig {
   x402FacilitatorUrl: string;
   merchantPrivateKey?: `0x${string}`;
   ownerApiKey?: string;
+  /** Service directory (apps/directory): the catalog of services agents can connect. */
+  directoryPort: number;
+  directoryUrl: string;
   /** Agent chat server (apps/agent-chat). Binds to localhost by default: whoever can reach it can instruct agents. */
   agentChatPort: number;
   agentChatHost: string;
@@ -126,6 +129,8 @@ export function loadConfig(): AppConfig {
       chainMode === "mock" ? facilitatorUrl : (env.X402_FACILITATOR_URL ?? "https://x402.org/facilitator"),
     merchantPrivateKey: (env.MERCHANT_PRIVATE_KEY as `0x${string}` | undefined) || undefined,
     ownerApiKey: env.OWNER_API_KEY || readOwnerKeyFile(resolve(repoRoot, env.DATA_DIR ?? ".data")),
+    directoryPort: Number(env.DIRECTORY_PORT ?? 4060),
+    directoryUrl: env.DIRECTORY_URL ?? `http://localhost:${Number(env.DIRECTORY_PORT ?? 4060)}`,
     agentChatPort: Number(env.AGENT_CHAT_PORT ?? 4050),
     agentChatHost: env.AGENT_CHAT_HOST ?? "127.0.0.1",
     agentChatUrl: env.AGENT_CHAT_URL ?? `http://localhost:${Number(env.AGENT_CHAT_PORT ?? 4050)}`,
