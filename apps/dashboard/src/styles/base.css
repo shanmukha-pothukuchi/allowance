@@ -1,0 +1,157 @@
+/* Allowance dashboard: tokens, reset, typography. Dark, projector-first. */
+:root {
+  --bg: #0d1016;
+  --surface: #151923;
+  --surface-2: #1c2230;
+  --surface-3: #242c3b;
+  --border: #2a3242;
+  --border-strong: #3a4458;
+
+  --text: #eef2f8;
+  --text-2: #b7c0d1;
+  --muted: #7f8aa3;
+
+  /* one accent for money-in, one for danger; amber only for "waiting on you" */
+  --in: #3fd37f;
+  --in-dim: rgba(63, 211, 127, 0.14);
+  --danger: #ff5a5f;
+  --danger-dim: rgba(255, 90, 95, 0.14);
+  --danger-glow: rgba(255, 90, 95, 0.45);
+  --warn: #f7b955;
+  --warn-dim: rgba(247, 185, 85, 0.14);
+  --live: #3fd37f;
+
+  --radius: 14px;
+  --radius-sm: 9px;
+  --gap: 16px;
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+html {
+  font-size: 18px;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  line-height: 1.35;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+h1,
+h2,
+h3,
+p,
+dl,
+dd,
+dt,
+ol,
+ul {
+  margin: 0;
+}
+
+ol,
+ul {
+  padding: 0;
+  list-style: none;
+}
+
+a {
+  color: var(--text-2);
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.78em;
+  color: var(--text-2);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.earned {
+  color: var(--in);
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.45em 0.9em;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-3);
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  transition: background 120ms, transform 80ms, opacity 120ms;
+}
+.btn:hover {
+  background: #2d3647;
+}
+.btn:active {
+  transform: translateY(1px);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.btn-primary {
+  background: var(--in);
+  border-color: var(--in);
+  color: #06250f;
+}
+.btn-primary:hover {
+  background: #5ae395;
+}
+.btn-danger {
+  background: transparent;
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.btn-danger:hover {
+  background: var(--danger-dim);
+}
+.btn-big {
+  font-size: 1.05rem;
+  padding: 0.6em 1.2em;
+}
+
+/* Scrollbars that do not shout */
+*::-webkit-scrollbar {
+  width: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 10px;
+  border: 2px solid var(--surface);
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}

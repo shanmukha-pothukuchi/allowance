@@ -46,7 +46,9 @@ export type PolicyBlockReason =
   | "max_per_tx"
   | "daily_cap"
   | "not_allowlisted"
-  | "insufficient_balance";
+  | "insufficient_balance"
+  /** The 402 offered no USDC-on-Base-Sepolia option. Blocks without freezing; no receipt. */
+  | "unsupported_requirements";
 
 export type PolicyDecision =
   | { outcome: "allow" }
@@ -217,6 +219,16 @@ export interface PayRequest {
   url: string;
   /** Optional friendly name for the receipt ("Acme Weather"). */
   description?: string;
+  /** Optional: the original request, echoed back by /wait so a restarted agent can resume. */
+  method?: "GET" | "POST";
+  body?: unknown;
+}
+
+/** Echo of the original request, returned by /v1/approvals/:id/wait for approved x402 payments. */
+export interface OriginalRequest {
+  url: string;
+  method?: "GET" | "POST";
+  body?: unknown;
 }
 
 export type PayResponse =
@@ -271,6 +283,8 @@ export type ApprovalWaitResponse =
       paymentId: string;
       /** For x402 payments: header to retry with. Absent for direct transfers. */
       paymentHeader?: string;
+      /** For x402 payments: what to retry (url, method, body), so a restarted agent can resume. */
+      request?: OriginalRequest;
       receipt: Receipt;
     };
 

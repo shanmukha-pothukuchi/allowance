@@ -1,0 +1,17 @@
+{
+  "name": "@allowance/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server that lets Claude Desktop spend and earn USDC through the Allowance wallet-service",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@allowance/shared": "*"
+  }
+}

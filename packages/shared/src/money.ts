@@ -44,3 +44,8 @@ export function parseBaseUnits(s: string | number | bigint): bigint {
   if (!/^\d+$/.test(String(s))) throw new Error(`Invalid base units: ${s}`);
   return BigInt(s);
 }
+
+/** "18.5" | 18.5 | "$18.50" -> "$18.50". Dollar-string input (the API wire format). */
+export function formatDollars(dollars: string | number): string {
+  return formatUsd(toBaseUnits(dollars));
+}

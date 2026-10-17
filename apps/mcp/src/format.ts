@@ -1,0 +1,84 @@
+import { formatUsd, toBaseUnits, type Receipt } from "@allowance/shared";
+
+/** "18.5" -> "$18.50". Falls back to "$<raw>" if the string is not a clean amount. */
+export function usd(dollars: string | number | undefined | null): string {
+  if (dollars === undefined || dollars === null || dollars === "") return "$0.00";
+  try {
+    return formatUsd(toBaseUnits(dollars));
+  } catch {
+    return `$${dollars}`;
+  }
+}
+
+/** "0x12ab34…cd34" style. */
+export function shortHash(hash: string | undefined | null): string {
+  if (!hash) return "(no tx hash yet)";
+  if (hash.length <= 14) return hash;
+  return `${hash.slice(0, 6)}…${hash.slice(-4)}`;
+}
+
+export function shortAddress(addr: string | undefined | null): string {
+  return shortHash(addr);
+}
+
+/** "tx 0x12ab…cd34 (http://localhost:4030/tx/0x…)" */
+export function txRef(txHash?: string, explorerUrl?: string): string {
+  if (!txHash) return "no tx hash yet";
+  return explorerUrl ? `tx ${shortHash(txHash)} (${explorerUrl})` : `tx ${shortHash(txHash)}`;
+}
+
+/** Name to show for the other side of a receipt. */
+export function counterpartyName(r: Receipt): string {
+  return r.counterparty?.name || r.description || r.counterparty?.origin || shortAddress(r.counterparty?.address);
+}
+
+/**
+ * One-line receipt. Examples:
+ *   Paid $0.05 to Acme Weather. Receipt: tx 0x12ab…cd34 (link)
+ *   Earned $0.50 for Bounty: API reliability check. Receipt: tx 0x… (link)
+ *   Sent $1.00 to 0xabcd…1234. Receipt: tx 0x… (link)
+ */
+export function receiptLine(r: Receipt): string {
+  const amount = usd(r.amount);
+  const ref = txRef(r.txHash, r.explorerUrl);
+  switch (r.kind) {
+    case "earn":
+      return `Earned ${amount} for ${r.description || "work"}. Receipt: ${ref}`;
+    case "transfer":
+      return `Sent ${amount} to ${shortAddress(r.counterparty?.address)}${r.description && r.description !== "Transfer" ? ` (${r.description})` : ""}. Receipt: ${ref}`;
+    case "topup":
+      return `Top-up of ${amount}. Receipt: ${ref}`;
+    case "spend":
+    default:
+      return `Paid ${amount} to ${counterpartyName(r)}. Receipt: ${ref}`;
+  }
+}
+
+/** Short status-aware line for list_receipts. */
+export function receiptListLine(r: Receipt): string {
+  const when = r.settledAt ?? r.createdAt;
+  const amount = usd(r.amount);
+  const who = r.kind === "earn" ? r.description : counterpartyName(r);
+  const failed = r.status === "blocked" || r.status === "denied" || r.status === "failed";
+  const verb =
+    r.kind === "earn" ? "earned" : r.kind === "transfer" ? (failed ? "tried to send" : "sent") : r.kind === "topup" ? "top-up" : failed ? "tried to pay" : "paid";
+  const status = r.status === "settled" ? "" : ` [${r.status}${r.reason ? `: ${r.reason}` : ""}]`;
+  const ref = r.txHash ? ` — ${txRef(r.txHash, r.explorerUrl)}` : "";
+  return `${when}  ${verb} ${amount}  ${who}${status}${ref}`;
+}
+
+/** Pretty-print a response body for Claude; truncates big bodies. */
+export function formatBody(text: string, contentType: string | null, maxChars = 20_000): string {
+  let out = text;
+  if (contentType && /json/i.test(contentType)) {
+    try {
+      out = JSON.stringify(JSON.parse(text), null, 2);
+    } catch {
+      /* leave as-is */
+    }
+  }
+  if (out.length > maxChars) {
+    return `${out.slice(0, maxChars)}\n\n… [truncated: ${out.length - maxChars} more characters not shown]`;
+  }
+  return out;
+}

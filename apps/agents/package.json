@@ -1,0 +1,12 @@
+{
+  "name": "@allowance/agents",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "setup": "tsx src/setup.ts",
+    "demo": "tsx src/demo.ts",
+    "reset": "tsx src/reset.ts"
+  }
+}

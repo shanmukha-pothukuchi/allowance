@@ -72,6 +72,7 @@ Verified against installed `@x402/*` 2.28 and a working spike:
 | POST | `/verify` | x402 VerifyRequest → VerifyResponse. Checks: EIP-712 signature valid; `from` balance ≥ value; value ≥ requirements.amount; `to` == payTo; nonce unused; validBefore in future. |
 | POST | `/settle` | x402 SettleRequest → SettleResponse. Re-verifies, consumes nonce, moves balance, returns fake tx hash `0x<keccak>`. Replay → `{ success:false, errorReason:"nonce_already_used" }` (HTTP 200). |
 | GET | `/balance/:address` | `{ address, balanceBaseUnits:"…", balance:"12.34" }` |
+| GET | `/balances` | `{ balances:[{ address, balanceBaseUnits, balance }] }` (explorer) |
 | POST | `/admin/mint` | `{ to, amount:"20.00" }` → `{ txHash, balance }` |
 | POST | `/admin/transfer` | `{ from, to, amount:"1.00", memo? }` → `{ txHash }` (no signature; dev/seed only) |
 | POST | `/admin/reset` | clears ledger and tx log |
@@ -93,9 +94,9 @@ The ledger persists to `DATA_DIR/ledger.json` so restarts keep balances. `npm ru
 | POST | `/v1/pay` | `PayRequest` → `PayResponse`. HTTP 200 approved · 202 needs_approval · 403 blocked. |
 | POST | `/v1/payments/:paymentId/settled` | `SettledRequest` → `{ receipt }` (receipt → `settled` with txHash; or `failed`) |
 | POST | `/v1/transfer` | `TransferRequest` → `TransferResponse`. 200 sent · 202 needs_approval · 403 blocked. |
-| GET | `/v1/approvals/:id/wait?timeoutMs=45000` | long-poll → `ApprovalWaitResponse` (always HTTP 200) |
+| GET | `/v1/approvals/:id/wait?timeoutMs=45000` | long-poll → `ApprovalWaitResponse` (HTTP 200; `404 approval_not_found` for unknown ids or another agent's approval). For approved x402 payments also returns `request: { url, method, body }` echoed from `/v1/pay`, so a restarted agent can resume. |
 | POST | `/v1/earnings` | `EarningRequest` → `{ receipt }` (kind `earn`, status `settled`) |
-| GET | `/v1/receipts?limit=50` | `{ receipts: Receipt[] }` (this agent) |
+| GET | `/v1/receipts?limit=50` | `{ receipts: Receipt[] }` (this agent, newest first) |
 
 ### Owner endpoints (no auth, or `X-Owner-Key`)
 
@@ -126,13 +127,26 @@ Semantics:
   signs EIP-3009 (validBefore = now + maxTimeoutSeconds), creates a `signed` receipt, emits
   `payment.signed`, returns `paymentHeader`. The agent retries the URL, then reports the
   `PAYMENT-RESPONSE` to `/settled`, which emits `payment.settled` with the tx hash.
-- **Balance check** happens before policy (`insufficient_balance` block does not freeze).
+- **Balance check** happens before policy (`insufficient_balance` block does not freeze). If the 402
+  offers no USDC-on-Base-Sepolia option: `403 { error:"unsupported_requirements", status:"blocked",
+  reason:"unsupported_requirements", message, frozen }`, no receipt, no freeze.
+- `Receipt.counterparty.name` is the `description` the agent passed to `/v1/pay` (or the resource
+  description), so receipts read "Paid $0.05 to Acme Weather".
 - `spentToday` = sum of `spend` + `transfer` receipts with status in {signed, settled} created on the
   local calendar day. `earnedToday` = `earn` receipts today.
 - **needs_approval**: payment is parked (`pending_approval` receipt), an `Approval` is created,
   `payment.needs_approval` emitted. Approve → sign now, receipt `signed`, `approval.approved`
   emitted; `/wait` returns `paymentHeader`. Deny → receipt `denied`. Approvals expire after 10 min.
   Spend counts when signed, so an approved payment counts at approval time.
+- **Approve re-checks the hard rules** (frozen, caps, balance) at approval time; if they now fail the
+  approval ends `denied` with that reason. Approval never overrides policy.
+- Expiry emits `approval.denied` with `reason: "expired"` (approval status `expired`).
+- Event `data` fields: `payment.blocked` → `{ frozen, willFreeze, receiptId }`; `agent.frozen` →
+  `{ cause: "policy_violation" | "owner", receiptId? }` (consumers dedupe the pair on `receiptId`);
+  `agent.frozen.reason` is the owner-friendly block sentence; `agent.created` / `policy.updated` →
+  `{ agent: AgentPublic }`. `approval` is always present on `payment.needs_approval`,
+  `approval.approved`, `approval.denied`; `receipt` is always present on `topup`, `payment.*`,
+  `transfer.sent`, `earning.received`.
 - **block**: receipt `blocked` with reason, `payment.blocked` emitted; if
   `policy.freezeOnViolation` and reason ∉ {insufficient_balance, frozen} → agent frozen,
   `agent.frozen` emitted. `message` is owner-friendly, e.g.
@@ -188,11 +202,11 @@ agentWork({
   verify: (bountyId, result, claim) => Promise<{ ok: true } | { ok: false; message: string; details? }>,
   payout: (to, amountBaseUnits, ctx: { bountyId, claimId }) => Promise<{ txHash: Hex; explorerUrl?: string }>,
   basePath?: "/agent-work",
-  onEvent?: (e: { type: "claimed"|"expired"|"submitted"|"rejected"|"paid"|"payout_failed"; … }) => void,
-})  // → express.Router
+  onEvent?: (e: { type: "claimed"|"expired"|"submitted"|"rejected"|"paid"|"payout_failed"; bountyId; claimId?; walletAddress?; at; slots: { total, remaining }; amount?; txHash?; explorerUrl?; message? }) => void,
+})  // → express.Router & { store: BountyStore; doc(): AgentWorkDoc; close(): void }
 ```
 
-Exports also: `discover(url)`, `claim(bounty, walletAddress, agentName?)`, `submit(claim, result)`
+Exports also: `discover(url)`, `claim(bounty, walletAddress, agentName?)`, `submit(claim, result)` (also `submit(claim, walletAddress, result)`)
 client helpers (fetch-based), `encodePayoutResponseHeader`/`decode…`, and `BountyStore` for tests.
 The board HTML polls `/.well-known/agent-work` every 2 s (or SSE at `/agent-work/events`) for live
 slot counts.
@@ -200,7 +214,8 @@ slot counts.
 ## 9. MCP server (`apps/mcp`)
 
 Env: `WALLET_SERVICE_URL`, `AGENT_TOKEN`. Tools: `get_wallet`, `fetch_url`, `find_work`,
-`claim_bounty`, `submit_bounty`, `list_receipts`, `check_approval`. `fetch_url` implements:
+`claim_bounty`, `submit_bounty`, `list_receipts`, `check_approval`, `transfer_usdc` (direct transfer,
+subject to policy; it is the tool a fooled agent reaches for). `fetch_url` implements:
 GET/POST → if 402: decode `PAYMENT-REQUIRED` → `POST /v1/pay` → 200: retry with
 `PAYMENT-SIGNATURE`, report `/settled`, return body + receipt · 202: `/wait` 45 s → approved: retry;
 pending: return approval id · 403: friendly error. `submit_bounty` on 200 posts `/v1/earnings`.
@@ -266,5 +281,13 @@ Agent → Wallet: POST /v1/earnings {amount, txHash, …}                       
 - `insufficient_balance` blocks but does not freeze (not a policy violation).
 - Notifier is a pure SSE client; if Telegram is unavailable the dashboard shows the same approvals.
 - Dashboard consumes wallet-service only; it never talks to the facilitator or merchant.
+- Claiming a `closed` bounty returns `409 bounty_full` (no separate code).
+- A `verify()` that throws is treated as `422 rejected` (claim stays open) so a checker bug never
+  breaks the demo.
+- The merchant's payout in mock mode signs EIP-3009 itself (same path as `packages/wallet`'s
+  adapter); the two can be consolidated later.
+- The official `x402Client` caps payments at $1 by default; our agents never use it (the wallet
+  signs manually), but any script that does must `setSpendControls(false)`.
+- MCP `fetch_url` prefers `resource.description` ("Acme Weather") over `serviceName` for receipts.
 - TypeScript runs via `tsx` everywhere (no build step) except the dashboard (Vite). Module settings:
   ESNext + bundler resolution; workspace packages export `src/index.ts` directly.
