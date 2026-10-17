@@ -181,7 +181,9 @@ export async function createMerchantApp(config: AppConfig, deps: MerchantDeps = 
   });
   app.use((err: Error & { status?: number }, _req: Request, res: Response, _next: NextFunction) => {
     log(`error: ${err.message}`);
-    res.status(err.status ?? 500).json({ error: "internal_error", message: err.message });
+    const status = err.status ?? 500;
+    const code = status === 400 ? "invalid_request" : status === 413 ? "payload_too_large" : status < 500 ? "bad_request" : "internal_error";
+    res.status(status).json({ error: code, message: status < 500 ? "Malformed request body." : "Internal error." });
   });
 
   return app;

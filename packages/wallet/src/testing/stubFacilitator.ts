@@ -54,6 +54,12 @@ export async function startStubFacilitator(): Promise<StubFacilitator> {
     txs.push({ hash, from: "0x0000000000000000000000000000000000000000", to, amountBaseUnits: amount.toString(), kind: "mint" });
     res.json({ txHash: hash, balance: toDollars(balances.get(to)!) });
   });
+  app.get("/tx/:hash", (req, res) => {
+    const tx = txs.find((t) => t.hash.toLowerCase() === String(req.params.hash).toLowerCase());
+    if (!tx) return res.status(404).json({ error: "not_found" });
+    res.json(tx);
+  });
+
   app.post("/settle", async (req, res) => {
     const { paymentPayload, paymentRequirements } = req.body ?? {};
     const fail = (errorReason: string) =>

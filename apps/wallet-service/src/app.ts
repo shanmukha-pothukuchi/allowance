@@ -2,6 +2,7 @@
  * Wallet-service HTTP app (Express 5). Implements docs/ARCHITECTURE.md §6 exactly.
  * `createApp` does not listen; `index.ts` does. Tests mount it on port 0.
  */
+import { decodePaymentRequiredHeader } from "@x402/core/http";
 import express from "express";
 import type { NextFunction, Request, Response } from "express";
 import { EventEmitter } from "node:events";
@@ -51,7 +52,7 @@ import type {
   TransferRequest,
   TransferResponse,
   WalletEvent,
-  X402PaymentRequirements,
+  X402PaymentRequired, X402PaymentRequirements,
 } from "@allowance/shared";
 import {
   MAX_EVENTS,
@@ -74,6 +75,89 @@ const SSE_PING_MS = 15_000;
 export interface AppDeps {
   store?: Store;
   settlement?: Settlement;
+  /**
+   * Re-fetch a 402 challenge and confirm the site really demands `requirements` (payTo, amount,
+   * asset, network). Used when a payment relies on the origin allowlist, so an agent cannot
+   * smuggle an attacker's payTo under a trusted origin. Defaults to a live fetch.
+   */
+  verifyChallenge?: VerifyChallenge;
+  /** Mock mode: look up a tx on the facilitator to confirm agent-reported settlements/earnings. */
+  lookupTx?: LookupTx;
+}
+
+export type VerifyChallenge = (
+  url: string,
+  method: "GET" | "POST" | undefined,
+  requirements: X402PaymentRequirements,
+) => Promise<{ ok: true } | { ok: false; reason: string }>;
+
+export interface LedgerTx {
+  hash: string;
+  from: string;
+  to: string;
+  amountBaseUnits: string;
+}
+export type LookupTx = (txHash: string) => Promise<LedgerTx | null | "unavailable">;
+
+/** Live implementation: fetch the URL (no body), expect 402 + PAYMENT-REQUIRED, compare. */
+export function liveVerifyChallenge(fetchImpl: typeof fetch = fetch): VerifyChallenge {
+  return async (url, method, requirements) => {
+    let res: globalThis.Response;
+    try {
+      res = await fetchImpl(url, {
+        method: method ?? "GET",
+        headers: { accept: "application/json" },
+        redirect: "manual",
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch (err) {
+      return { ok: false, reason: `could not reach ${url}: ${(err as Error).message}` };
+    }
+    if (res.status !== 402) return { ok: false, reason: `${url} answered ${res.status}, not 402` };
+    const header = res.headers.get("PAYMENT-REQUIRED");
+    if (!header) return { ok: false, reason: "402 without PAYMENT-REQUIRED header" };
+    let live: X402PaymentRequired;
+    try {
+      live = decodePaymentRequiredHeader(header) as unknown as X402PaymentRequired;
+    } catch {
+      return { ok: false, reason: "PAYMENT-REQUIRED header did not decode" };
+    }
+    const match = (live.accepts ?? []).some(
+      (a: X402PaymentRequirements) =>
+        a.scheme === requirements.scheme &&
+        a.network === requirements.network &&
+        String(a.asset).toLowerCase() === String(requirements.asset).toLowerCase() &&
+        String(a.payTo).toLowerCase() === String(requirements.payTo).toLowerCase() &&
+        String(a.amount) === String(requirements.amount),
+    );
+    return match ? { ok: true } : { ok: false, reason: "the site did not ask for this payTo/amount" };
+  };
+}
+
+function normalizeOriginForCompare(o: string): string {
+  try {
+    return new URL(o).origin.toLowerCase();
+  } catch {
+    return o.trim().toLowerCase().replace(/\/+$/, "");
+  }
+}
+
+/** Live implementation against the mock facilitator's /tx/:hash. */
+export function liveLookupTx(facilitatorUrl: string, fetchImpl: typeof fetch = fetch): LookupTx {
+  return async (txHash) => {
+    try {
+      const res = await fetchImpl(`${facilitatorUrl.replace(/\/+$/, "")}/tx/${txHash}`, {
+        headers: { accept: "application/json" },
+        signal: AbortSignal.timeout(3000),
+      });
+      if (res.status === 404) return null;
+      if (!res.ok) return "unavailable";
+      const tx = (await res.json()) as LedgerTx;
+      return tx && tx.hash ? tx : null;
+    } catch {
+      return "unavailable";
+    }
+  };
 }
 
 export interface WalletApp {
@@ -124,6 +208,14 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     return event;
   }
 
+  const verifyChallenge: VerifyChallenge = deps.verifyChallenge ?? liveVerifyChallenge();
+  const lookupTx: LookupTx = deps.lookupTx ?? (config.chainMode === "mock" ? liveLookupTx(config.facilitatorUrl) : async () => "unavailable");
+  let seeded = config.chainMode !== "mock";
+
+  /** Spend is counted at signing time. A "failed" report from the agent does NOT un-count an x402
+   *  spend: the signed authorization is still valid until validBefore, so trusting the agent here
+   *  would let it drain the daily cap (found by the Phase 3 verifier). Transfers are settled by
+   *  the wallet itself, so a failed transfer is trustworthy and is not counted. */
   function spentToday(agentId: string): bigint {
     const now = new Date();
     return store.state.receipts
@@ -131,7 +223,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
         (r) =>
           r.agentId === agentId &&
           (r.kind === "spend" || r.kind === "transfer") &&
-          (r.status === "signed" || r.status === "settled") &&
+          (r.status === "signed" || r.status === "settled" || (r.status === "failed" && r.kind === "spend")) &&
           isSameLocalDay(r.createdAt, now),
       )
       .reduce((sum, r) => sum + BigInt(r.amountBaseUnits), 0n);
@@ -435,7 +527,10 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
   async function seedBalances(opts: { retryMs?: number } = {}): Promise<void> {
     if (config.chainMode !== "mock") return;
     const todo = store.state.agents.filter((a) => a.seedBalance && !a.seedApplied);
-    if (todo.length === 0) return;
+    if (todo.length === 0) {
+      seeded = true;
+      return;
+    }
     const deadline = Date.now() + (opts.retryMs ?? 15_000);
     for (;;) {
       try {
@@ -460,6 +555,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
         console.warn(`${LOG} seeding ${agent.name} failed: ${(err as Error).message}`);
       }
     }
+    seeded = true;
   }
 
   // ---------------------------------------------------------------------------
@@ -519,7 +615,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
   // ---- health / summary ----------------------------------------------------
 
   router.get("/health", (_req, res) => {
-    res.json({ ok: true, chainMode: config.chainMode, facilitatorUrl: config.facilitatorUrl, telegramConnected });
+    res.json({ ok: true, chainMode: config.chainMode, facilitatorUrl: config.facilitatorUrl, telegramConnected, seeded });
   });
 
   router.post("/notifier/status", ownerAuth, (req, res) => {
@@ -593,7 +689,23 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     const paymentId = newId("pay");
     const counterparty: Receipt["counterparty"] = { address: to, origin, name };
 
-    const decision = await decide(agent, { amountBaseUnits: amount, to, origin }, { kind: "spend", description, counterparty, paymentId });
+    // Allowlist by origin is only as trustworthy as the URL the agent gave us. If this payment is
+    // relying on the origin (payTo not explicitly allowlisted), re-fetch the 402 ourselves and
+    // confirm the site really demands this payTo/amount before signing.
+    let effectiveOrigin = origin;
+    const al = agent.policy.allowlist;
+    if (al && origin && al.origins.map(normalizeOriginForCompare).includes(normalizeOriginForCompare(origin))) {
+      const explicitlyAllowed = al.addresses.some((a) => a.toLowerCase() === to.toLowerCase());
+      if (!explicitlyAllowed) {
+        const v = await verifyChallenge(body.url, body.method, requirements as X402PaymentRequirements);
+        if (!v.ok) {
+          console.warn(`${LOG} challenge verification failed for ${agent.name} at ${body.url}: ${v.reason}`);
+          effectiveOrigin = undefined; // falls through to not_allowlisted
+        }
+      }
+    }
+
+    const decision = await decide(agent, { amountBaseUnits: amount, to, origin: effectiveOrigin }, { kind: "spend", description, counterparty, paymentId });
     if (decision.outcome === "block") {
       const out: PayResponse = { status: "blocked", reason: decision.reason, message: decision.message, frozen: decision.frozen, receipt: decision.receipt };
       res.status(403).json(out);
@@ -672,6 +784,15 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     }
     const who = receipt.counterparty.name ?? receipt.description;
     if (settle.success && settle.transaction) {
+      const tx = await lookupTx(settle.transaction);
+      if (tx === null) throw new HttpError(400, "tx_not_found", "The ledger has no such transaction");
+      if (tx !== "unavailable") {
+        const okTx =
+          tx.from.toLowerCase() === agent.address.toLowerCase() &&
+          tx.to.toLowerCase() === receipt.counterparty.address.toLowerCase() &&
+          String(tx.amountBaseUnits) === receipt.amountBaseUnits;
+        if (!okTx) throw new HttpError(400, "tx_mismatch", "That transaction does not match this payment");
+      }
       receipt.status = "settled";
       receipt.txHash = settle.transaction as Hex;
       receipt.explorerUrl = explorerTxUrl(settle.transaction, config.chainMode, config.facilitatorUrl);
@@ -708,7 +829,8 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     }
     let amount: bigint;
     try {
-      amount = toBaseUnits(String(body.amount));
+      if (typeof body.amount !== "string" || body.amount.trim() !== body.amount) throw new Error("not a string");
+      amount = toBaseUnits(body.amount);
     } catch {
       throw new HttpError(400, "invalid_request", "`amount` must be a dollar string like \"1.50\"");
     }
@@ -839,7 +961,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     });
   });
 
-  router.post("/earnings", agentAuth, (req: AuthedRequest, res) => {
+  router.post("/earnings", agentAuth, async (req: AuthedRequest, res) => {
     const agent = req.agent!;
     const body = req.body as Partial<EarningRequest>;
     let amount: bigint;
@@ -850,6 +972,16 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     }
     if (!body?.txHash || typeof body.txHash !== "string") throw new HttpError(400, "invalid_request", "`txHash` is required");
     if (!body.from || typeof body.from.origin !== "string") throw new HttpError(400, "invalid_request", "`from.origin` is required");
+    if (store.state.receipts.some((r) => r.kind === "earn" && r.txHash?.toLowerCase() === body.txHash!.toLowerCase())) {
+      throw new HttpError(409, "duplicate_tx", "That payout was already recorded");
+    }
+    const tx = await lookupTx(body.txHash);
+    if (tx === null) throw new HttpError(400, "tx_not_found", "The ledger has no such transaction");
+    if (tx !== "unavailable") {
+      if (tx.to.toLowerCase() !== agent.address.toLowerCase() || String(tx.amountBaseUnits) !== amount.toString()) {
+        throw new HttpError(400, "tx_mismatch", "That transaction does not pay this agent that amount");
+      }
+    }
     const fromAddress = body.from.address && isAddress(body.from.address) ? getAddress(body.from.address) : ("0x0000000000000000000000000000000000000000" as Address);
     const receipt = newReceipt({
       kind: "earn",

@@ -42,6 +42,13 @@ async function requireServices() {
       process.exit(1);
     }
   }
+  // Mock mode mints starting balances a few seconds after boot; wait for that.
+  for (let i = 0; i < 40; i++) {
+    const h = (await fetch(`${config.walletServiceUrl}/v1/health`).then((r) => r.json())) as { seeded?: boolean };
+    if (h.seeded !== false) break;
+    if (i === 0) console.log(dim("  waiting for starting balances…"));
+    await new Promise((r) => setTimeout(r, 500));
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -53,6 +60,9 @@ async function actRace() {
   const bounty = doc.bounties.find((b) => b.id === "api-reliability-check");
   if (!bounty) throw new Error("merchant has no api-reliability-check bounty");
   agentLine("site", `${doc.site.name} offers "${bounty.title}" — ${money(bounty.payout.amount)} × ${bounty.slots.total} slots`, chalk.white);
+  if (bounty.slots.remaining < bounty.slots.total) {
+    console.log(warn(`  ! only ${bounty.slots.remaining} of ${bounty.slots.total} slots open: state is dirty. For a clean run: stop npm run dev, then npm run reset.`));
+  }
   await pace(1200);
 
   const names = ["worker-1", "worker-2", "worker-3", "worker-4"];
@@ -103,7 +113,12 @@ async function actRace() {
   }
   const paid = results.filter(Boolean).length;
   console.log("");
-  console.log(`  ${ok("✔")} ${paid} of 4 agents paid, ${4 - paid} turned away. No platform in the middle: just HTTP and a tx hash.`);
+  if (paid === 0) {
+    console.log(`  ${bad("✖")} nobody was paid: the bounty was already full. Run npm run reset (with services stopped).`);
+    process.exitCode = 1;
+  } else {
+    console.log(`  ${ok("✔")} ${paid} of 4 agents paid, ${4 - paid} turned away. No platform in the middle: just HTTP and a tx hash.`);
+  }
 }
 
 // ---------------------------------------------------------------------------------------------

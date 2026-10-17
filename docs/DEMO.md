@@ -10,7 +10,7 @@
 | Projector B | Owner dashboard | http://localhost:4040 |
 | Phone (held up / mirrored) | Telegram chat with the bot | Telegram |
 
-Before walking on: `npm run reset && npm run dev` (wait for all five services to log their URLs),
+Before walking on: stop any running `npm run dev` (Ctrl-C; `npm run reset` refuses to run under live services), then `npm run reset && npm run dev` (wait for all five services to log their URLs),
 `/start` sent to the Telegram bot, Claude Desktop restarted with the MCP config from `npm run setup`,
 both projector tabs open, dashboard "details" toggle **off**.
 
@@ -81,7 +81,7 @@ real USDC."* Show the explorer tab briefly (http://localhost:4030/explorer): the
 | Telegram unreachable | Approve/deny and alerts are on the dashboard; the notifier logs and keeps retrying |
 | Wi-Fi dies | Everything is `CHAIN_MODE=mock` and local; nothing needs the internet except Telegram |
 | Bounty board does not update live | Refresh; or show the JSON with `curl -H 'Accept: application/json' localhost:4021/.well-known/agent-work` |
-| A service crashed | `npm run dev` restarts all with `tsx watch`; `npm run reset` for a clean slate (10 s) |
+| A service crashed | `npm run dev` restarts all with `tsx watch`; stop it (Ctrl-C) and `npm run reset` for a clean slate (10 s) |
 | Agent frozen from an earlier run | Unfreeze on dashboard/Telegram, or `npm run reset` |
 | Pizza already approved earlier and spend cap reached | `npm run reset` |
 

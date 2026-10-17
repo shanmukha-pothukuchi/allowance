@@ -127,6 +127,21 @@ Semantics:
   signs EIP-3009 (validBefore = now + maxTimeoutSeconds), creates a `signed` receipt, emits
   `payment.signed`, returns `paymentHeader`. The agent retries the URL, then reports the
   `PAYMENT-RESPONSE` to `/settled`, which emits `payment.settled` with the tx hash.
+- **Origin allowlists are verified, not trusted.** If a payment relies on the origin allowlist
+  (payTo is not explicitly in `addresses`), the wallet-service re-fetches the URL itself (same
+  method, no body), expects a 402, and signs only if the live `PAYMENT-REQUIRED` contains the exact
+  payTo/amount/asset/network the agent submitted. Otherwise the payment is treated as
+  `not_allowlisted` (block + freeze). This closes the "trusted origin, attacker payTo" hole.
+- **Spend is never un-counted on the agent's say-so.** `spentToday` includes `failed` receipts: a
+  signed authorization stays valid until `validBefore`, so a fake "settlement failed" report must
+  not refund the daily cap.
+- **Agent-reported settlements and earnings are checked against the ledger** in mock mode: `/settled`
+  requires the tx to exist with `from` = agent, `to` = counterparty and the exact amount
+  (`400 tx_not_found` / `tx_mismatch`); `/earnings` requires `to` = agent with the exact amount and
+  rejects a tx hash recorded twice (`409 duplicate_tx`). In chain mode these checks are skipped
+  (documented gap).
+- `/v1/health` reports `seeded` (mock mode: whether starting balances have been minted). The demo
+  waits for it.
 - **Balance check** happens before policy (`insufficient_balance` block does not freeze). If the 402
   offers no USDC-on-Base-Sepolia option: `403 { error:"unsupported_requirements", status:"blocked",
   reason:"unsupported_requirements", message, frozen }`, no receipt, no freeze.

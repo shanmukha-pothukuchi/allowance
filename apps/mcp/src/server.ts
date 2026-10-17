@@ -371,7 +371,7 @@ export function createServer(opts: CreateServerOptions): McpServer {
         })();
 
         log(`402 at ${url}: ${usd(amountDollars)} to ${description}; asking wallet-service`);
-        const pay = await wallet.pay({ paymentRequired, url, description });
+        const pay = await wallet.pay({ paymentRequired, url, description, method: m as "GET" | "POST", body: body as Record<string, unknown> | undefined });
 
         if (pay.status === "blocked") {
           return blockedResult("payment", amountDollars, description, pay.message, pay.frozen, pay.reason);

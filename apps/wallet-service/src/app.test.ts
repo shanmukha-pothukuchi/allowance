@@ -7,6 +7,7 @@ import { getAddress, verifyTypedData } from "viem";
 import { decodePaymentSignatureHeader } from "@x402/core/http";
 import { TRANSFER_WITH_AUTHORIZATION_TYPES } from "@allowance/wallet";
 import { startStubFacilitator } from "@allowance/wallet/testing";
+import type { LookupTx, VerifyChallenge } from "./app.js";
 import type { StubFacilitator } from "@allowance/wallet/testing";
 import { USDC_BASE_SEPOLIA, containsSecret, toBaseUnits } from "@allowance/shared";
 import type { AppConfig, Policy, WalletEvent, X402PaymentRequired } from "@allowance/shared";
@@ -27,6 +28,13 @@ let baseConfig: AppConfig;
 const logs: string[] = [];
 /** Every response body we saw, for the "no private key anywhere" assertion. */
 const bodies: string[] = [];
+
+/** Overridable per test: default = the site vouches for the payment; ledger lookups go to the stub. */
+let verifyChallenge: VerifyChallenge = async () => ({ ok: true });
+let lookupTx: LookupTx = async (hash) => {
+  const tx = facilitator.txs.find((t) => t.hash.toLowerCase() === hash.toLowerCase());
+  return tx ? { hash: tx.hash, from: tx.from, to: tx.to, amountBaseUnits: tx.amountBaseUnits } : null;
+};
 
 beforeAll(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "allowance-wallet-"));
@@ -52,7 +60,7 @@ beforeAll(async () => {
       logs.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
     });
   }
-  wallet = createApp(config);
+  wallet = createApp(config, { verifyChallenge: (...a) => verifyChallenge(...a), lookupTx: (h) => lookupTx(h) });
   server = await new Promise((resolve) => {
     const s = wallet.app.listen(0, "127.0.0.1", () => resolve(s));
   });
@@ -214,7 +222,16 @@ describe("x402 payments", () => {
     const events = await recentEvents();
     expect(events.find((e) => e.type === "payment.signed" && e.agentId === agent.id)?.message).toContain("$0.05");
 
-    const tx = "0x" + "ab".repeat(32);
+    // Settle the signed authorization on the (stub) facilitator, as the merchant would, then report it.
+    const paymentPayload = decodePaymentSignatureHeader(pay.body.paymentHeader);
+    const settleRes = await fetch(`${facilitator.url}/settle`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ x402Version: 2, paymentPayload, paymentRequirements: paymentRequired("0.05").accepts[0] }),
+    });
+    const settleBody = (await settleRes.json()) as { success: boolean; transaction: string };
+    expect(settleBody.success).toBe(true);
+    const tx = settleBody.transaction;
     const settled = await api(
       "POST",
       `/v1/payments/${pay.body.paymentId}/settled`,
@@ -242,7 +259,32 @@ describe("x402 payments", () => {
       token,
     );
     expect(settled.body.receipt).toMatchObject({ status: "failed", reason: "insufficient_funds" });
-    expect((await api("GET", "/v1/me", undefined, token)).body.agent.spentToday).toBe("0.00");
+    // Still counted: the signed authorization is valid until validBefore, and the agent's word is not proof.
+    expect((await api("GET", "/v1/me", undefined, token)).body.agent.spentToday).toBe("0.10");
+  });
+
+  it("rejects settlement reports whose tx the ledger does not know or that do not match", async () => {
+    const { token } = await createAgent("payer-liar", { approvalThreshold: "1.00" });
+    const pay = await api("POST", "/v1/pay", { paymentRequired: paymentRequired("0.10"), url: `${MERCHANT}/api/news` }, token);
+    const fake = await api(
+      "POST",
+      `/v1/payments/${pay.body.paymentId}/settled`,
+      { settleResponse: { success: true, transaction: "0x" + "ab".repeat(32), network: "eip155:84532" } },
+      token,
+    );
+    expect(fake.status).toBe(400);
+    expect(fake.body.error).toBe("tx_not_found");
+    // A real ledger tx that belongs to someone else is not accepted either.
+    const mintTx = facilitator.txs.find((t) => t.kind === "mint")!;
+    const wrong = await api(
+      "POST",
+      `/v1/payments/${pay.body.paymentId}/settled`,
+      { settleResponse: { success: true, transaction: mintTx.hash, network: "eip155:84532" } },
+      token,
+    );
+    expect(wrong.status).toBe(400);
+    expect(wrong.body.error).toBe("tx_mismatch");
+    expect((await api("GET", "/v1/receipts", undefined, token)).body.receipts.find((r: { kind: string }) => r.kind === "spend").status).toBe("signed");
   });
 
   it("refuses requirements that are not USDC on Base Sepolia without freezing", async () => {
@@ -370,6 +412,31 @@ describe("x402 payments", () => {
     expect(evil.body).toMatchObject({ status: "blocked", reason: "not_allowlisted", frozen: true });
     expect(evil.body.message).toContain("unknown site");
   });
+
+  it("re-verifies the 402 before trusting an origin allowlist (attacker payTo under a trusted URL)", async () => {
+    const { token } = await createAgent("listed-2", { allowlist: { addresses: [], origins: [MERCHANT] }, approvalThreshold: "1.00" });
+    const calls: string[] = [];
+    verifyChallenge = async (url, _method, req) => {
+      calls.push(`${url} ${req.payTo}`);
+      // The real site only asks for PAY_TO; anything else is a forged challenge.
+      return req.payTo.toLowerCase() === PAY_TO.toLowerCase() ? { ok: true } : { ok: false, reason: "payTo mismatch" };
+    };
+    try {
+      const pr = paymentRequired("0.05");
+      pr.accepts[0].payTo = "0x1111111111111111111111111111111111111111";
+      const forged = await api("POST", "/v1/pay", { paymentRequired: pr, url: `${MERCHANT}/api/news` }, token);
+      expect(forged.status).toBe(403);
+      expect(forged.body).toMatchObject({ status: "blocked", reason: "not_allowlisted", frozen: true });
+      expect(calls).toHaveLength(1);
+      // Explicitly allowlisted payTo does not need the site to vouch.
+      const { token: t2 } = await createAgent("listed-3", { allowlist: { addresses: [PAY_TO], origins: [] }, approvalThreshold: "1.00" });
+      const okRes = await api("POST", "/v1/pay", { paymentRequired: paymentRequired("0.05"), url: `${MERCHANT}/api/news` }, t2);
+      expect(okRes.status).toBe(200);
+      expect(calls).toHaveLength(1);
+    } finally {
+      verifyChallenge = async () => ({ ok: true });
+    }
+  });
 });
 
 describe("transfers", () => {
@@ -440,20 +507,32 @@ describe("transfers", () => {
 describe("earnings, topups, summary", () => {
   it("records earnings and top-ups", async () => {
     const { agent, token } = await createAgent("earner", {});
-    const earn = await api(
-      "POST",
-      "/v1/earnings",
-      { amount: "0.50", txHash: "0x" + "cd".repeat(32), description: "Bounty: API reliability check", from: { origin: MERCHANT, name: "Acme" }, bountyId: "api-reliability-check" },
-      token,
-    );
+    // A payout is a ledger tx to the agent; the wallet checks it before believing the agent.
+    const mintRes = await fetch(`${facilitator.url}/admin/mint`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ to: agent.address, amount: "0.50" }),
+    });
+    const payoutTx = ((await mintRes.json()) as { txHash: string }).txHash;
+    const earnBody = { amount: "0.50", txHash: payoutTx, description: "Bounty: API reliability check", from: { origin: MERCHANT, name: "Acme" }, bountyId: "api-reliability-check" };
+    const forged = await api("POST", "/v1/earnings", { ...earnBody, txHash: "0x" + "cd".repeat(32) }, token);
+    expect(forged.status).toBe(400);
+    expect(forged.body.error).toBe("tx_not_found");
+    const inflated = await api("POST", "/v1/earnings", { ...earnBody, amount: "100.00" }, token);
+    expect(inflated.status).toBe(400);
+    expect(inflated.body.error).toBe("tx_mismatch");
+    const earn = await api("POST", "/v1/earnings", earnBody, token);
     expect(earn.status).toBe(200);
+    const dup = await api("POST", "/v1/earnings", earnBody, token);
+    expect(dup.status).toBe(409);
+    expect(dup.body.error).toBe("duplicate_tx");
     expect(earn.body.receipt).toMatchObject({ kind: "earn", status: "settled", amount: "0.50", counterparty: { origin: MERCHANT, name: "Acme" } });
     expect((await api("GET", "/v1/me", undefined, token)).body.agent.earnedToday).toBe("0.50");
 
     const topup = await api("POST", `/v1/agents/${agent.id}/topup`, { amount: "5.00" });
     expect(topup.status).toBe(200);
     expect(topup.body.receipt).toMatchObject({ kind: "topup", status: "settled", amount: "5.00" });
-    expect((await api("GET", "/v1/me", undefined, token)).body.agent.balance).toBe("25.00");
+    expect((await api("GET", "/v1/me", undefined, token)).body.agent.balance).toBe("25.50");
     const events = await recentEvents();
     expect(events.some((e) => e.type === "earning.received" && e.agentId === agent.id)).toBe(true);
     expect(events.filter((e) => e.type === "topup" && e.agentId === agent.id)).toHaveLength(2);

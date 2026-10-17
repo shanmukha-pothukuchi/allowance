@@ -2,6 +2,7 @@
  * JSON state store for the wallet-service. One file, atomic writes (temp + rename).
  * This is the ONLY place agent private keys live. Never serve `state` directly.
  */
+import { isAddress, getAddress } from "viem";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
@@ -168,11 +169,23 @@ export function normalizePolicy(base: Policy, patch: Partial<Policy> | undefined
     p[k] = toDollars(v);
   }
   if (p.allowlist !== null && p.allowlist !== undefined) {
+    if (typeof p.allowlist !== "object") throw new Error("allowlist must be an object or null");
     const addresses = Array.isArray(p.allowlist.addresses) ? p.allowlist.addresses : [];
     const origins = Array.isArray(p.allowlist.origins) ? p.allowlist.origins : [];
-    p.allowlist = { addresses: addresses.map((a) => a as Address), origins: origins.map(String) };
+    for (const a of addresses) if (typeof a !== "string" || !isAddress(a)) throw new Error(`allowlist address is not a 0x address: ${String(a)}`);
+    const normOrigins = origins.map((o) => {
+      try {
+        return new URL(String(o)).origin;
+      } catch {
+        throw new Error(`allowlist origin is not a URL origin: ${String(o)}`);
+      }
+    });
+    p.allowlist = { addresses: addresses.map((a) => getAddress(a)), origins: normOrigins };
   } else {
     p.allowlist = null;
+  }
+  for (const k of ["frozen", "freezeOnViolation"] as const) {
+    if (patch && k in patch && typeof patch[k] !== "boolean") throw new Error(`${k} must be a boolean`);
   }
   p.frozen = Boolean(p.frozen);
   p.freezeOnViolation = p.freezeOnViolation !== false;
@@ -203,6 +216,7 @@ export function createAgentOffline(
 ): { agent: AgentPublic; token: string; tokenId: string; stored: StoredAgent } {
   if (!input.name || typeof input.name !== "string") throw new Error("name is required");
   if (store.agentByName(input.name)) throw new Error(`agent "${input.name}" already exists`);
+  if (input.initialBalance !== undefined && toBaseUnits(input.initialBalance) < 0n) throw new Error("initialBalance must be >= 0");
   const privateKey = generatePrivateKey();
   const account = privateKeyToAccount(privateKey);
   const stored: StoredAgent = {

@@ -109,7 +109,7 @@ export async function paidFetch(wallet: WalletClient, url: string, opts: PaidFet
   const prHeader = first.headers.get("PAYMENT-REQUIRED");
   if (!prHeader) throw new Error("402 without PAYMENT-REQUIRED header");
   const paymentRequired = decodePaymentRequiredHeader(prHeader);
-  const pay = await wallet.pay({ paymentRequired: paymentRequired as never, url, description: opts.description });
+  const pay = await wallet.pay({ paymentRequired: paymentRequired as never, url, description: opts.description, method, body: opts.body });
 
   if (pay.status === "blocked") return { kind: "blocked", reason: pay.reason, message: pay.message, frozen: pay.frozen };
 
