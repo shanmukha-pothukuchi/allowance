@@ -16,6 +16,12 @@ function ownerApiKey(): string | undefined {
   }
 }
 
+// Only the dashboard itself and the agent chat (§13.5 approval embed) may frame these pages.
+// Without this any site could iframe the approve buttons (clickjacking).
+const securityHeaders = {
+  "Content-Security-Policy": "frame-ancestors 'self' http://localhost:4050 http://127.0.0.1:4050",
+};
+
 // The dashboard talks to the wallet-service only, always via relative /v1 URLs.
 // In dev, Vite proxies /v1 to the wallet-service; SSE (/v1/events) streams through
 // http-proxy unbuffered. In production, put the built files behind the same origin
@@ -25,6 +31,7 @@ export default defineConfig({
   server: {
     port: 4040,
     strictPort: true,
+    headers: securityHeaders,
     // Vite's dev server can serve any workspace file via /@fs/. The repo root holds .data/
     // (owner key, agent private keys), so restrict serving to this app and node_modules only.
     fs: {
@@ -49,5 +56,5 @@ export default defineConfig({
       },
     },
   },
-  preview: { port: 4040, strictPort: true },
+  preview: { port: 4040, strictPort: true, headers: securityHeaders },
 });

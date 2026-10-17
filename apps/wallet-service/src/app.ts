@@ -5,11 +5,14 @@
 import { decodePaymentRequiredHeader } from "@x402/core/http";
 import express from "express";
 import type { NextFunction, Request, Response } from "express";
+import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { getAddress, isAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
+  allowlistMatch,
   buildPaymentPayload,
+  findService,
   createSettlement,
   encodePaymentHeader,
   evaluate,
@@ -37,6 +40,7 @@ import type {
   AppConfig,
   Approval,
   ApprovalWaitResponse,
+  ConnectedService,
   CreateAgentRequest,
   EarningRequest,
   EventType,
@@ -47,6 +51,10 @@ import type {
   Policy,
   PolicyBlockReason,
   Receipt,
+  ServiceGrant,
+  ServiceManifest,
+  ServiceRequest,
+  ServiceRequestResponse,
   SettledRequest,
   SummaryResponse,
   TransferRequest,
@@ -65,6 +73,8 @@ import {
   toAgentPublic,
 } from "./store.js";
 import type { PendingPayment, StoredAgent } from "./store.js";
+import { DirectoryUnavailableError, httpDirectoryClient } from "./directory-client.js";
+import type { DirectoryClient } from "./directory-client.js";
 
 const LOG = "[wallet-service]";
 const APPROVAL_TTL_MS = 10 * 60 * 1000;
@@ -83,6 +93,8 @@ export interface AppDeps {
   verifyChallenge?: VerifyChallenge;
   /** Mock mode: look up a tx on the facilitator to confirm agent-reported settlements/earnings. */
   lookupTx?: LookupTx;
+  /** Service directory client. Defaults to HTTP against `config.directoryUrl` (3 s timeout, 30 s list cache). */
+  directory?: DirectoryClient;
 }
 
 export type VerifyChallenge = (
@@ -99,6 +111,10 @@ export interface LedgerTx {
   kind?: string;
 }
 const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as Address;
+const SERVICE_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+/** Block reasons that never freeze: not policy violations, or soft blocks that ask the owner. */
+const NON_FREEZING: ReadonlySet<PolicyBlockReason> = new Set(["insufficient_balance", "frozen", "service_not_connected", "service_cap"]);
 const MAX_TIMEOUT_SECONDS = 3600;
 export type LookupTx = (txHash: string) => Promise<LedgerTx | null | "unavailable">;
 
@@ -138,14 +154,6 @@ export function liveVerifyChallenge(fetchImpl: typeof fetch = fetch): VerifyChal
   };
 }
 
-function normalizeOriginForCompare(o: string): string {
-  try {
-    return new URL(o).origin.toLowerCase();
-  } catch {
-    return o.trim().toLowerCase().replace(/\/+$/, "");
-  }
-}
-
 /** Live implementation against the mock facilitator's /tx/:hash. */
 export function liveLookupTx(facilitatorUrl: string, fetchImpl: typeof fetch = fetch): LookupTx {
   return async (txHash) => {
@@ -176,6 +184,16 @@ export interface WalletApp {
   /** Stop timers and SSE clients. */
   close: () => void;
 }
+
+/** Names the directory service behind a service_not_connected block (extra on the 403 body). */
+export interface BlockedService {
+  id: string;
+  name: string;
+  icon: string;
+}
+
+/** /wait result: the contract shape plus `kind` on every state and `service` (grant or connection) for service approvals. */
+type WaitOut = ApprovalWaitResponse & { kind: "payment" | "service"; service?: ServiceGrant | ConnectedService };
 
 class HttpError extends Error {
   constructor(
@@ -213,6 +231,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
   }
 
   const verifyChallenge: VerifyChallenge = deps.verifyChallenge ?? liveVerifyChallenge();
+  const directory: DirectoryClient = deps.directory ?? httpDirectoryClient(config.directoryUrl);
   const lookupTx: LookupTx = deps.lookupTx ?? (config.chainMode === "mock" ? liveLookupTx(config.facilitatorUrl) : async () => "unavailable");
   let seeded = config.chainMode !== "mock";
   /** Approvals being settled right now. Claimed synchronously so two concurrent approve calls
@@ -308,30 +327,48 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
    */
   async function decide(
     agent: StoredAgent,
-    spend: { amountBaseUnits: bigint; to: Address; origin?: string },
+    spend: { amountBaseUnits: bigint; to: Address; origin?: string; url?: string },
     receiptBase: { kind: "spend" | "transfer"; description: string; counterparty: Receipt["counterparty"]; paymentId: string },
   ): Promise<
     | { outcome: "allow" }
     | { outcome: "needs_approval" }
-    | { outcome: "block"; reason: PolicyBlockReason; message: string; frozen: boolean; receipt: Receipt }
+    | { outcome: "block"; reason: PolicyBlockReason; message: string; frozen: boolean; receipt: Receipt; service?: BlockedService }
   > {
     const amount = spend.amountBaseUnits;
     const balance = await settlement.balanceOf(agent.address).catch((err: Error) => {
       throw new HttpError(503, "ledger_unavailable", `Could not read balance: ${err.message}`);
     });
     // Balance check comes first (contract §6): an unaffordable payment is never a policy violation.
-    const decision =
+    let directoryDown = false;
+    let blockedService: BlockedService | undefined;
+    let decision =
       balance < amount
         ? {
             outcome: "block" as const,
             reason: "insufficient_balance" as const,
             message: `Blocked: tried to send ${formatUsd(amount)}${spend.origin ? ` to ${hostOf(spend.origin)}` : ""} but the balance is only ${formatUsd(balance)}.`,
           }
-        : evaluate(agent.policy, spentToday(agent.id), spend);
+        : evaluate(agent.policy, spentToday(agent.id), spend, { services: agent.services, agentName: agent.name });
+    // Not allowlisted with a URL: is it a directory service this agent has not connected (soft block)?
+    // The directory is only consulted here, so normal payments never depend on it.
+    if (decision.outcome === "block" && decision.reason === "not_allowlisted" && spend.url) {
+      try {
+        const catalog = await directory.list();
+        decision = evaluate(agent.policy, spentToday(agent.id), spend, { services: agent.services, directory: catalog, agentName: agent.name });
+        if (decision.outcome === "block" && decision.reason === "service_not_connected") {
+          const known = findService(spend.url, catalog);
+          if (known) blockedService = { id: known.id, name: known.name, icon: known.icon };
+        }
+      } catch (err) {
+        // Fail closed (still blocked) but do not freeze: it may be a known service we cannot name right now.
+        directoryDown = true;
+        console.warn(`${LOG} directory unavailable while checking ${agent.name}'s payment to ${spend.url} (${(err as Error).message}); blocking as not_allowlisted without freezing`);
+      }
+    }
     if (decision.outcome !== "block") return { outcome: decision.outcome };
 
     const shouldFreeze =
-      agent.policy.freezeOnViolation && decision.reason !== "insufficient_balance" && decision.reason !== "frozen";
+      agent.policy.freezeOnViolation && !NON_FREEZING.has(decision.reason) && !(directoryDown && decision.reason === "not_allowlisted");
     const message = shouldFreeze ? `${decision.message} Agent frozen.` : decision.message;
     const receipt = newReceipt({
       ...receiptBase,
@@ -349,10 +386,15 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
       message,
       reason: decision.reason,
       receipt,
-      data: { frozen: shouldFreeze || agent.policy.frozen, willFreeze: shouldFreeze },
+      data: {
+        frozen: shouldFreeze || agent.policy.frozen,
+        willFreeze: shouldFreeze,
+        receiptId: receipt.id,
+        ...(blockedService ? { service: blockedService, serviceId: blockedService.id } : {}),
+      },
     });
     if (shouldFreeze) freezeAgent(agent, decision.message.replace(/^Blocked: /, ""), receipt);
-    return { outcome: "block", reason: decision.reason, message, frozen: agent.policy.frozen, receipt };
+    return { outcome: "block", reason: decision.reason, message, frozen: agent.policy.frozen, receipt, service: blockedService };
   }
 
   async function signPayment(agent: StoredAgent, pending: PendingPayment): Promise<string> {
@@ -364,6 +406,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
   function openApproval(agent: StoredAgent, pending: PendingPayment, receipt: Receipt, description: string): Approval {
     const approval: Approval = {
       id: newId("apr"),
+      kind: "payment",
       agentId: agent.id,
       agentName: agent.name,
       paymentId: pending.paymentId,
@@ -404,11 +447,15 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
         receipt.status = "denied";
         receipt.reason = "expired";
       }
+      delete store.state.serviceRequests[approval.id];
       store.save();
       emit("approval.denied", {
         agentId: approval.agentId,
         agentName: approval.agentName,
-        message: `Approval for ${formatUsd(toBaseUnits(approval.amount))} to ${approval.counterparty.name ?? approval.counterparty.origin ?? "an address"} expired.`,
+        message:
+          approval.kind === "service"
+            ? `Request to connect ${approval.service?.name ?? "a service"} for ${approval.agentName} expired.`
+            : `Approval for ${formatUsd(toBaseUnits(approval.amount))} to ${approval.counterparty.name ?? approval.counterparty.origin ?? "an address"} expired.`,
         reason: "expired",
         approval,
         receipt,
@@ -418,6 +465,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
   }
 
   async function settleApproval(approval: Approval, by: string): Promise<Approval> {
+    if (approval.kind === "service") return settleServiceApproval(approval, by);
     const agent = requireAgentById(approval.agentId);
     const pending = store.state.pendingPayments[approval.paymentId];
     const receipt = store.state.receipts.find((r) => r.approvalId === approval.id);
@@ -426,11 +474,12 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     // Re-check the hard rules at approval time (frozen / caps / balance); approval does not override them.
     const amount = BigInt(pending.amountBaseUnits);
     const balance = await settlement.balanceOf(agent.address).catch(() => 0n);
-    const recheck = evaluate({ ...agent.policy, approvalThreshold: toDollars(amount) }, spentToday(agent.id), {
-      amountBaseUnits: amount,
-      to: pending.to,
-      origin: pending.origin,
-    });
+    const recheck = evaluate(
+      { ...agent.policy, approvalThreshold: toDollars(amount) },
+      spentToday(agent.id),
+      { amountBaseUnits: amount, to: pending.to, origin: pending.origin, url: pending.kind === "pay" ? pending.request?.url : undefined },
+      { services: agent.services, agentName: agent.name },
+    );
     const hardBlock =
       recheck.outcome === "block"
         ? recheck
@@ -509,6 +558,190 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
       }
     }
     bus.emit(`approval:${approval.id}`, approval);
+    return approval;
+  }
+
+  // ---------------------------------------------------------------------------
+  // services (docs/ARCHITECTURE.md §13.2)
+  // ---------------------------------------------------------------------------
+
+  /** Connect a service to an agent (idempotent). Emits service.connected when something changed. */
+  function connectService(
+    agent: StoredAgent,
+    grant: ServiceGrant,
+    connectedBy: ConnectedService["connectedBy"],
+    docs?: string,
+    approvalId?: string,
+  ): ConnectedService {
+    const existing = agent.services.find((s) => s.id === grant.id);
+    if (existing) return existing;
+    const service: ConnectedService = { ...toGrant(grant), connectedAt: nowIso(), connectedBy, ...(docs ? { docs } : {}) };
+    agent.services.push(service);
+    store.save();
+    emit("service.connected", {
+      agentId: agent.id,
+      agentName: agent.name,
+      message: `${service.name} connected to ${agent.name}.`,
+      data: { service, serviceId: service.id, connectedBy, ...(approvalId ? { approvalId } : {}) },
+    });
+    return service;
+  }
+
+  /** Approving a service request connects exactly what the owner was shown (the stored grant). */
+  function settleServiceApproval(approval: Approval, by: string): Approval {
+    const agent = requireAgentById(approval.agentId);
+    const request = store.state.serviceRequests[approval.id];
+    const grant = request?.grant ?? approval.service;
+    if (!grant) throw new HttpError(500, "pending_missing", "The service request is missing");
+    approval.status = "approved";
+    approval.decidedAt = nowIso();
+    approval.decidedBy = by;
+    delete store.state.serviceRequests[approval.id];
+    store.save();
+    emit("approval.approved", {
+      agentId: agent.id,
+      agentName: agent.name,
+      message: `Approved by ${by}: ${grant.name} connected to ${agent.name}.`,
+      approval,
+      data: { service: grant },
+    });
+    connectService(agent, grant, "approval", request?.docs, approval.id);
+    bus.emit(`approval:${approval.id}`, approval);
+    return approval;
+  }
+
+  async function directoryCall<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err instanceof DirectoryUnavailableError) {
+        console.warn(`${LOG} ${err.message}`);
+        throw new HttpError(503, "directory_unavailable", "The service directory is not reachable right now; try again shortly.");
+      }
+      throw err;
+    }
+  }
+
+  /** Manifest from the directory, or 404 service_not_found / 503 directory_unavailable. */
+  async function requireManifest(id: string): Promise<ServiceManifest> {
+    if (!SERVICE_ID_RE.test(id)) throw new HttpError(400, "invalid_request", "serviceId must be a directory id like \"acme-pizza\"");
+    const manifest = await directoryCall(() => directory.get(id));
+    if (!manifest) throw new HttpError(404, "service_not_found", `No service "${id}" in the directory. Use search_services to find one.`);
+    return manifest;
+  }
+
+  /** A connected custom service rendered as a manifest (its docs are the agent's own). */
+  function customManifest(c: ConnectedService): ServiceManifest {
+    return { ...toGrant(c), description: c.summary, category: "tools", docs: c.docs ?? "", source: "agent" };
+  }
+
+  /** The directory never appears in agent.services; a synthetic connection answers requests for it. */
+  function directoryConnection(agent: StoredAgent, m?: ServiceManifest): ConnectedService {
+    return {
+      id: "directory",
+      name: m?.name ?? "Service Directory",
+      provider: m?.provider ?? "Allowance",
+      icon: m?.icon ?? "🧭",
+      color: m?.color ?? "#6E7BF2",
+      kind: "directory",
+      summary: m?.summary ?? "Find services you can connect to.",
+      baseUrl: m?.baseUrl ?? config.directoryUrl,
+      pricing: "Free",
+      maxPrice: "0.00",
+      permissions: m?.permissions ?? [],
+      source: "directory",
+      connectedAt: agent.createdAt,
+      connectedBy: "default",
+    };
+  }
+
+  /** Validate an agent's custom proposal (§13.2) into a grant flagged source:"agent". */
+  function customGrant(agent: StoredAgent, raw: unknown): { grant: ServiceGrant; docs?: string } {
+    const c = raw as Partial<NonNullable<ServiceRequest["custom"]>> | null;
+    if (!c || typeof c !== "object" || Array.isArray(c)) throw new HttpError(400, "invalid_request", "`custom` must be { name, baseUrl, summary, maxPrice, docs? }");
+    const name = typeof c.name === "string" ? c.name.trim() : "";
+    if (!name || name.length > 60) throw new HttpError(400, "invalid_request", "custom.name is required, at most 60 characters");
+    const summary = typeof c.summary === "string" ? c.summary.trim() : "";
+    if (!summary || summary.length > 200) throw new HttpError(400, "invalid_request", "custom.summary is required, at most 200 characters");
+    let url: URL;
+    try {
+      if (typeof c.baseUrl !== "string" || c.baseUrl.length > 500) throw new Error("bad");
+      url = new URL(c.baseUrl.trim());
+    } catch {
+      throw new HttpError(400, "invalid_request", "custom.baseUrl must be a full http(s) URL like https://api.example.com/v1");
+    }
+    if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password || url.search || url.hash) {
+      throw new HttpError(400, "invalid_request", "custom.baseUrl must be a plain http(s) URL (no credentials, query or fragment)");
+    }
+    const baseUrl = `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+    let maxPriceUnits: bigint;
+    try {
+      if (typeof c.maxPrice !== "string") throw new Error("not a string");
+      maxPriceUnits = toBaseUnits(c.maxPrice);
+    } catch {
+      throw new HttpError(400, "invalid_request", "custom.maxPrice must be a dollar string like \"0.50\"");
+    }
+    if (maxPriceUnits < 0n) throw new HttpError(400, "invalid_request", "custom.maxPrice must be >= 0");
+    if (maxPriceUnits > toBaseUnits(agent.policy.maxPerTx)) {
+      throw new HttpError(400, "invalid_request", `custom.maxPrice ${formatUsd(maxPriceUnits)} is over this agent's ${formatUsd(toBaseUnits(agent.policy.maxPerTx))} per-payment limit`);
+    }
+    if (c.docs !== undefined && (typeof c.docs !== "string" || c.docs.length > 20_000)) {
+      throw new HttpError(400, "invalid_request", "custom.docs must be a string of at most 20000 characters");
+    }
+    const slug = name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "service";
+    let id = `custom-${slug}`;
+    const clash = (x: string) =>
+      agent.services.some((s) => s.id === x && s.baseUrl !== baseUrl) ||
+      store.state.approvals.some((a) => a.status === "pending" && a.agentId === agent.id && a.service?.id === x && a.service.baseUrl !== baseUrl);
+    if (clash(id)) id = `${id}-${randomBytes(2).toString("hex")}`;
+    const maxPrice = toDollars(maxPriceUnits);
+    const host = url.host;
+    const grant: ServiceGrant = {
+      id,
+      name,
+      provider: `Proposed by ${agent.name}`,
+      icon: "🔌",
+      color: "#8A8F98",
+      kind: "x402",
+      category: "tools",
+      summary,
+      baseUrl,
+      pricing: maxPriceUnits === 0n ? "Free" : `Up to ${formatUsd(maxPriceUnits)} per payment`,
+      maxPrice,
+      permissions:
+        maxPriceUnits === 0n
+          ? [`Use ${name} at ${host} (no payments)`]
+          : [`Pay up to ${formatUsd(maxPriceUnits)} per payment to ${name} (${host})`],
+      source: "agent",
+    };
+    return { grant, docs: typeof c.docs === "string" && c.docs.trim() ? c.docs : undefined };
+  }
+
+  function openServiceApproval(agent: StoredAgent, grant: ServiceGrant, reason: string | undefined, docs: string | undefined): Approval {
+    const approval: Approval = {
+      id: newId("apr"),
+      kind: "service",
+      agentId: agent.id,
+      agentName: agent.name,
+      paymentId: "",
+      amount: toDollars(toBaseUnits(grant.maxPrice)),
+      description: grant.source === "agent" ? `Connect ${grant.name} (proposed by ${agent.name})` : `Connect ${grant.name}`,
+      counterparty: { address: ZERO_ADDRESS, origin: originOf(grant.baseUrl) || undefined, name: grant.name },
+      service: grant,
+      reason,
+      status: "pending",
+      createdAt: nowIso(),
+    };
+    store.state.approvals.push(approval);
+    store.state.serviceRequests[approval.id] = { approvalId: approval.id, agentId: agent.id, grant, docs, createdAt: approval.createdAt };
+    store.save();
+    emit("service.requested", {
+      agentId: agent.id,
+      agentName: agent.name,
+      message: `${agent.name} wants to connect ${grant.name}.`,
+      approval,
+      data: { approvalId: approval.id, service: grant, custom: grant.source === "agent" },
+    });
     return approval;
   }
 
@@ -629,6 +862,10 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     if (config.ownerApiKey && req.header("x-owner-key") !== config.ownerApiKey) {
       throw new HttpError(401, "unauthorized", "X-Owner-Key required");
     }
+    // Defense in depth for keyless dev setups: an agent token never opens an owner endpoint.
+    if (!config.ownerApiKey && /^Bearer\s/i.test(req.header("authorization") ?? "")) {
+      throw new HttpError(401, "unauthorized", "Agent tokens cannot call owner endpoints");
+    }
     next();
   };
 
@@ -717,25 +954,33 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     const paymentId = newId("pay");
     const counterparty: Receipt["counterparty"] = { address: to, origin, name };
 
-    // Allowlist by origin is only as trustworthy as the URL the agent gave us. If this payment is
-    // relying on the origin (payTo not explicitly allowlisted), re-fetch the 402 ourselves and
-    // confirm the site really demands this payTo/amount before signing.
+    // Allowlist by origin or by connected service is only as trustworthy as the URL the agent gave
+    // us. If this payment relies on either (payTo not explicitly allowlisted), re-fetch the 402
+    // ourselves and confirm the site really demands this payTo/amount before signing.
     let effectiveOrigin = origin;
+    let effectiveUrl: string | undefined = body.url;
     const al = agent.policy.allowlist;
-    if (al && origin && al.origins.map(normalizeOriginForCompare).includes(normalizeOriginForCompare(origin))) {
-      const explicitlyAllowed = al.addresses.some((a) => a.toLowerCase() === to.toLowerCase());
-      if (!explicitlyAllowed) {
-        const v = await verifyChallenge(body.url, body.method, requirements as X402PaymentRequirements);
-        if (!v.ok) {
-          console.warn(`${LOG} challenge verification failed for ${agent.name} at ${body.url}: ${v.reason}`);
-          effectiveOrigin = undefined; // falls through to not_allowlisted
-        }
+    const match = al ? allowlistMatch(al, { to, origin, url: body.url }, agent.services) : null;
+    if (match && match.via !== "address") {
+      const v = await verifyChallenge(body.url, body.method, requirements as X402PaymentRequirements);
+      if (!v.ok) {
+        console.warn(`${LOG} challenge verification failed for ${agent.name} at ${body.url}: ${v.reason}`);
+        effectiveOrigin = undefined; // falls through to not_allowlisted (block + freeze)
+        effectiveUrl = undefined;
       }
     }
 
-    const decision = await decide(agent, { amountBaseUnits: amount, to, origin: effectiveOrigin }, { kind: "spend", description, counterparty, paymentId });
+    const decision = await decide(agent, { amountBaseUnits: amount, to, origin: effectiveOrigin, url: effectiveUrl }, { kind: "spend", description, counterparty, paymentId });
     if (decision.outcome === "block") {
-      const out: PayResponse = { status: "blocked", reason: decision.reason, message: decision.message, frozen: decision.frozen, receipt: decision.receipt };
+      // service_not_connected also names the service, so the agent can request_service it directly.
+      const out: PayResponse & { service?: BlockedService; serviceId?: string } = {
+        status: "blocked",
+        reason: decision.reason,
+        message: decision.message,
+        frozen: decision.frozen,
+        receipt: decision.receipt,
+        ...(decision.service ? { service: decision.service, serviceId: decision.service.id } : {}),
+      };
       res.status(403).json(out);
       return;
     }
@@ -939,14 +1184,37 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     expireApprovals();
     const approval = store.approvalById(String(req.params.id));
     if (!approval || approval.agentId !== agent.id) throw new HttpError(404, "approval_not_found", `No approval ${String(req.params.id)}`);
-    const timeoutMs = Math.min(WAIT_MAX_MS, Math.max(0, Number(req.query.timeoutMs ?? WAIT_DEFAULT_MS) || WAIT_DEFAULT_MS));
+    // Any finite number is honoured (0 = check now); only a missing or non-numeric value means the default.
+    const rawTimeout = typeof req.query.timeoutMs === "string" && req.query.timeoutMs.trim() !== "" ? Number(req.query.timeoutMs) : NaN;
+    const timeoutMs = Number.isFinite(rawTimeout) ? Math.min(WAIT_MAX_MS, Math.max(0, rawTimeout)) : WAIT_DEFAULT_MS;
 
+    // Every result carries `kind`; service approvals carry `service` in every state (the grant, or
+    // the connection once approved).
     const respond = (a: Approval) => {
+      if (a.kind === "service") {
+        let out: WaitOut;
+        const grant = a.service ? toGrant(a.service) : undefined;
+        if (a.status === "approved") {
+          const service =
+            agent.services.find((s) => s.id === a.service?.id) ??
+            ({ ...grant!, connectedAt: a.decidedAt ?? nowIso(), connectedBy: "approval" } as ConnectedService);
+          out = { kind: "service", status: "approved", approvalId: a.id, paymentId: "", service };
+        } else if (a.status === "denied") {
+          out = { kind: "service", status: "denied", approvalId: a.id, reason: "denied_by_owner", service: grant };
+        } else if (a.status === "expired") {
+          out = { kind: "service", status: "expired", approvalId: a.id, service: grant };
+        } else {
+          out = { kind: "service", status: "pending", approvalId: a.id, service: grant };
+        }
+        res.json(out);
+        return;
+      }
       const receipt = store.state.receipts.find((r) => r.approvalId === a.id)!;
       const pending = store.state.pendingPayments[a.paymentId];
-      let out: ApprovalWaitResponse;
+      let out: WaitOut;
       if (a.status === "approved") {
         out = {
+          kind: "payment",
           status: "approved",
           approvalId: a.id,
           paymentId: a.paymentId,
@@ -955,16 +1223,16 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
           receipt,
         };
       } else if (a.status === "denied") {
-        out = { status: "denied", approvalId: a.id, receipt };
+        out = { kind: "payment", status: "denied", approvalId: a.id, receipt };
       } else if (a.status === "expired") {
-        out = { status: "expired", approvalId: a.id };
+        out = { kind: "payment", status: "expired", approvalId: a.id };
       } else {
-        out = { status: "pending", approvalId: a.id };
+        out = { kind: "payment", status: "pending", approvalId: a.id };
       }
       res.json(out);
     };
 
-    if (approval.status !== "pending") {
+    if (approval.status !== "pending" || timeoutMs === 0) {
       respond(approval);
       return;
     }
@@ -1059,6 +1327,130 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
       if (typeof req.query.agentId === "string") receipts = receipts.filter((r) => r.agentId === req.query.agentId);
     }
     res.json({ receipts: receipts.slice(-limit).reverse() });
+  });
+
+  // ---- services (agent + owner) --------------------------------------------
+
+  router.get("/services", agentAuth, (req: AuthedRequest, res) => {
+    res.json({ connected: req.agent!.services, directoryUrl: config.directoryUrl });
+  });
+
+  /** Agent token → `connected` flags; owner → `connectedAgents`. Same pattern as GET /v1/receipts. */
+  function viewer(req: Request): StoredAgent | null {
+    const agent = agentFromRequest(req);
+    if (agent) return agent;
+    if (config.ownerApiKey && req.header("x-owner-key") !== config.ownerApiKey) {
+      throw new HttpError(401, "unauthorized", "X-Owner-Key or agent token required");
+    }
+    return null;
+  }
+  const isConnected = (agent: StoredAgent, id: string) => id === "directory" || agent.services.some((s) => s.id === id);
+  const connectedAgents = (id: string) => store.state.agents.filter((a) => isConnected(a, id)).map((a) => a.id);
+  const decorate = <T extends { id: string }>(agent: StoredAgent | null, s: T) =>
+    agent ? { ...s, connected: isConnected(agent, s.id) } : { ...s, connectedAgents: connectedAgents(s.id) };
+
+  router.get("/directory", async (req, res) => {
+    const agent = viewer(req);
+    const q = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 200) : undefined;
+    const category = typeof req.query.category === "string" ? req.query.category.trim().slice(0, 40) : undefined;
+    const services = await directoryCall(() => directory.list({ q, category }));
+    res.json({ services: services.map(({ docs: _docs, ...s }) => decorate(agent, s)) });
+  });
+
+  router.get("/directory/:id", async (req, res) => {
+    const agent = viewer(req);
+    const id = String(req.params.id);
+    // Custom services are not in the directory: the agent's own connection (or, for the owner, any) answers.
+    const custom = (agent ? [agent] : store.state.agents)
+      .flatMap((a) => a.services)
+      .find((s) => s.id === id && s.source === "agent");
+    if (custom) {
+      res.json(decorate(agent, customManifest(custom)));
+      return;
+    }
+    const manifest = await requireManifest(id);
+    res.json(decorate(agent, manifest));
+  });
+
+  router.post("/services/requests", agentAuth, async (req: AuthedRequest, res) => {
+    const agent = req.agent!;
+    const body = (req.body ?? {}) as Partial<ServiceRequest>;
+    if (typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "invalid_request", "Body must be { serviceId } or { custom }, plus reason");
+    if (body.reason !== undefined && typeof body.reason !== "string") throw new HttpError(400, "invalid_request", "`reason` must be a string");
+    const reason = body.reason?.trim().slice(0, 500) || undefined;
+    const hasId = body.serviceId !== undefined && body.serviceId !== null;
+    const hasCustom = body.custom !== undefined && body.custom !== null;
+    if (hasId === hasCustom) throw new HttpError(400, "invalid_request", "Send either `serviceId` (a directory id) or `custom` (a proposal), not both");
+
+    let grant: ServiceGrant;
+    let docs: string | undefined;
+    if (hasId) {
+      if (typeof body.serviceId !== "string") throw new HttpError(400, "invalid_request", "`serviceId` must be a string");
+      const id = body.serviceId.trim();
+      const already = id === "directory" ? directoryConnection(agent) : agent.services.find((s) => s.id === id);
+      if (already) {
+        const out: ServiceRequestResponse = { status: "connected", service: already };
+        res.json(out);
+        return;
+      }
+      const manifest = await requireManifest(id);
+      if (manifest.kind === "directory") {
+        const out: ServiceRequestResponse = { status: "connected", service: directoryConnection(agent, manifest) };
+        res.json(out);
+        return;
+      }
+      grant = toGrant({ ...manifest, source: "directory" });
+    } else {
+      ({ grant, docs } = customGrant(agent, body.custom));
+      const already = agent.services.find((s) => s.id === grant.id && s.baseUrl === grant.baseUrl);
+      if (already) {
+        const out: ServiceRequestResponse = { status: "connected", service: already };
+        res.json(out);
+        return;
+      }
+    }
+
+    // One open request per service: asking again returns the same approval instead of a second card.
+    const open = store.state.approvals.find(
+      (a) => a.status === "pending" && a.kind === "service" && a.agentId === agent.id && a.service?.id === grant.id && a.service.baseUrl === grant.baseUrl,
+    );
+    const approval = open ?? openServiceApproval(agent, grant, reason, docs);
+    const out: ServiceRequestResponse = {
+      status: "needs_approval",
+      approvalId: approval.id,
+      service: approval.service!,
+      message: `Waiting for your owner to approve connecting ${grant.name}. Approval id ${approval.id}.`,
+    };
+    res.status(202).json(out);
+  });
+
+  router.post("/agents/:id/services", ownerAuth, async (req, res) => {
+    const agent = requireAgentById(String(req.params.id));
+    const serviceId = req.body?.serviceId;
+    if (typeof serviceId !== "string" || !serviceId.trim()) throw new HttpError(400, "invalid_request", "Body must be { serviceId }");
+    const id = serviceId.trim();
+    if (id !== "directory" && !agent.services.some((s) => s.id === id)) {
+      const manifest = await requireManifest(id);
+      if (manifest.kind !== "directory") connectService(agent, toGrant({ ...manifest, source: "directory" }), "owner");
+    }
+    res.json({ agent: await agentPublic(agent) });
+  });
+
+  router.delete("/agents/:id/services/:serviceId", ownerAuth, async (req, res) => {
+    const agent = requireAgentById(String(req.params.id));
+    const id = String(req.params.serviceId);
+    const idx = agent.services.findIndex((s) => s.id === id);
+    if (idx >= 0) {
+      const [service] = agent.services.splice(idx, 1);
+      store.save();
+      emit("service.disconnected", {
+        agentId: agent.id,
+        agentName: agent.name,
+        message: `${service.name} disconnected from ${agent.name}.`,
+        data: { service, serviceId: service.id },
+      });
+    }
+    res.json({ agent: await agentPublic(agent) });
   });
 
   // ---- owner endpoints -----------------------------------------------------
@@ -1213,12 +1605,16 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
       receipt.status = "denied";
       receipt.reason = "denied_by_owner";
     }
-    delete store.state.pendingPayments[approval.paymentId];
+    if (approval.paymentId) delete store.state.pendingPayments[approval.paymentId];
+    delete store.state.serviceRequests[approval.id];
     store.save();
     emit("approval.denied", {
       agentId: approval.agentId,
       agentName: approval.agentName,
-      message: `Denied by ${by}: ${approval.agentName} will not pay ${formatUsd(toBaseUnits(approval.amount))} to ${approval.counterparty.name ?? approval.counterparty.origin ?? "that address"}.`,
+      message:
+        approval.kind === "service"
+          ? `Denied by ${by}: ${approval.service?.name ?? "the service"} will not be connected to ${approval.agentName}.`
+          : `Denied by ${by}: ${approval.agentName} will not pay ${formatUsd(toBaseUnits(approval.amount))} to ${approval.counterparty.name ?? approval.counterparty.origin ?? "that address"}.`,
       reason: "denied_by_owner",
       approval,
       receipt,
@@ -1258,6 +1654,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     store.state.approvals = [];
     store.state.events = [];
     store.state.pendingPayments = {};
+    store.state.serviceRequests = {};
     store.save();
     console.log(`${LOG} reset: receipts, approvals and events cleared`);
     res.json({ ok: true });
@@ -1298,6 +1695,25 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
       for (const res of sseClients) res.end();
       sseClients.clear();
     },
+  };
+}
+
+/** The grant fields of a manifest or connection (what an approval card shows and a connection stores). */
+function toGrant(s: ServiceGrant): ServiceGrant {
+  return {
+    id: s.id,
+    name: s.name,
+    provider: s.provider,
+    icon: s.icon,
+    color: s.color,
+    kind: s.kind,
+    category: s.category ?? "tools",
+    summary: s.summary,
+    baseUrl: s.baseUrl,
+    pricing: s.pricing,
+    maxPrice: s.maxPrice,
+    permissions: [...(s.permissions ?? [])],
+    source: s.source ?? "directory",
   };
 }
 

@@ -196,7 +196,10 @@ export interface ServiceManifest {
 }
 
 /** Shown on approval cards and stored on the connection. */
-export type ServiceGrant = Pick<ServiceManifest, "id" | "name" | "provider" | "icon" | "color" | "kind" | "summary" | "baseUrl" | "pricing" | "maxPrice" | "permissions" | "source">;
+export type ServiceGrant = Pick<ServiceManifest, "id" | "name" | "provider" | "icon" | "color" | "kind" | "summary" | "baseUrl" | "pricing" | "maxPrice" | "permissions" | "source"> & {
+  /** Directory category; custom (agent-proposed) services default to "tools". */
+  category?: ServiceCategory;
+};
 
 /** A service connected to one agent. */
 export interface ConnectedService extends ServiceGrant {
@@ -334,6 +337,9 @@ export type PayResponse =
       message: string;
       frozen: boolean;
       receipt: Receipt;
+      /** service_not_connected only: which directory service the URL belongs to. */
+      service?: { id: string; name: string; icon: string };
+      serviceId?: string;
     };
 
 /** POST /v1/payments/:paymentId/settled (agent token) — report the PAYMENT-RESPONSE. */
@@ -355,12 +361,13 @@ export type TransferResponse =
 
 /** GET /v1/approvals/:id/wait?timeoutMs=45000 (agent token) */
 export type ApprovalWaitResponse =
-  | { status: "pending"; approvalId: string }
-  | { status: "denied"; approvalId: string; receipt?: Receipt; reason?: string }
-  | { status: "expired"; approvalId: string }
+  | { status: "pending"; approvalId: string; kind: "payment" | "service"; service?: ServiceGrant }
+  | { status: "denied"; approvalId: string; kind: "payment" | "service"; receipt?: Receipt; reason?: string; service?: ServiceGrant }
+  | { status: "expired"; approvalId: string; kind: "payment" | "service"; service?: ServiceGrant }
   | {
       status: "approved";
       approvalId: string;
+      kind: "payment" | "service";
       paymentId: string;
       /** For x402 payments: header to retry with. Absent for direct transfers. */
       paymentHeader?: string;

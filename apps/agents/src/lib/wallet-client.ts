@@ -5,11 +5,14 @@
 import { decodePaymentRequiredHeader, decodePaymentResponseHeader } from "@x402/core/http";
 import type {
   ApprovalWaitResponse,
+  ConnectedService,
   EarningRequest,
   MeResponse,
   PayRequest,
   PayResponse,
   Receipt,
+  ServiceRequest,
+  ServiceRequestResponse,
   TransferRequest,
   TransferResponse,
 } from "@allowance/shared";
@@ -70,6 +73,20 @@ export class WalletClient {
     const r = await this.call<{ receipt: Receipt }>("POST", "/v1/earnings", req);
     if (r.status !== 200) throw new Error(`earning failed: ${r.status} ${JSON.stringify(r.data)}`);
     return r.data.receipt;
+  }
+
+  /** Connected services (the directory is implicit). */
+  async services(): Promise<ConnectedService[]> {
+    const r = await this.call<{ connected: ConnectedService[] }>("GET", "/v1/services");
+    if (r.status !== 200) throw new Error(`services failed: ${r.status} ${JSON.stringify(r.data)}`);
+    return r.data.connected ?? [];
+  }
+
+  /** Ask the owner to connect a service: 200 connected · 202 needs_approval. */
+  async requestService(req: ServiceRequest): Promise<ServiceRequestResponse> {
+    const r = await this.call<ServiceRequestResponse>("POST", "/v1/services/requests", req);
+    if (r.status !== 200 && r.status !== 202) throw new Error(`service request failed: ${r.status} ${JSON.stringify(r.data)}`);
+    return r.data;
   }
 
   async receipts(limit = 20): Promise<Receipt[]> {

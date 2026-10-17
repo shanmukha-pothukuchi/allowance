@@ -1,6 +1,16 @@
-import type { AgentPublic, Approval, Receipt, SummaryResponse, WalletEvent } from "../types";
+import type { AgentPublic, Approval, DirectoryService, Receipt, SummaryResponse, WalletEvent } from "../types";
 import { EVENT_TYPES } from "../types";
 import type { WalletAdapter } from "./adapter";
+
+export class HttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+  ) {
+    super(message);
+  }
+}
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -9,18 +19,27 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
+    let code: string | undefined;
     try {
       const body = (await res.json()) as { message?: string; error?: string };
       message = body.message ?? body.error ?? message;
+      code = body.error;
     } catch {
       /* non-JSON error body */
     }
-    throw new Error(message);
+    throw new HttpError(message, res.status, code);
   }
   return (await res.json()) as T;
 }
 
 const post = <T>(path: string, body?: unknown) => req<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
+const enc = encodeURIComponent;
+
+/** One approval in any status: `GET /v1/approvals` without `status` lists them all (§6). */
+async function findApproval(id: string): Promise<Approval | null> {
+  const { approvals } = await req<{ approvals: Approval[] }>("/v1/approvals");
+  return approvals.find((x) => x.id === id) ?? null;
+}
 
 /** True if the wallet-service answers /v1/health within `timeoutMs`. */
 export async function walletServiceReachable(timeoutMs = 1500): Promise<boolean> {
@@ -46,11 +65,20 @@ export function createHttpAdapter(): WalletAdapter {
     getReceipts: async (limit = 50) => (await req<{ receipts: Receipt[] }>(`/v1/receipts?limit=${limit}`)).receipts,
     getRecentEvents: async (limit = 100) => (await req<{ events: WalletEvent[] }>(`/v1/events/recent?limit=${limit}`)).events,
     getPendingApprovals: async () => (await req<{ approvals: Approval[] }>("/v1/approvals?status=pending")).approvals,
+    getApproval: findApproval,
     approve: async (id) => (await post<{ approval: Approval }>(`/v1/approvals/${encodeURIComponent(id)}/approve`, { by: "dashboard" })).approval,
     deny: async (id) => (await post<{ approval: Approval }>(`/v1/approvals/${encodeURIComponent(id)}/deny`, { by: "dashboard" })).approval,
     freeze: async (agentId) => (await post<{ agent: AgentPublic }>(`/v1/agents/${encodeURIComponent(agentId)}/freeze`)).agent,
     unfreeze: async (agentId) => (await post<{ agent: AgentPublic }>(`/v1/agents/${encodeURIComponent(agentId)}/unfreeze`)).agent,
     topup: async (agentId, amount) => (await post<{ receipt: Receipt }>(`/v1/agents/${encodeURIComponent(agentId)}/topup`, { amount })).receipt,
+    getDirectory: async (q) => (await req<{ services: DirectoryService[] }>(`/v1/directory${q ? `?q=${enc(q)}` : ""}`)).services,
+    getService: async (serviceId) => {
+      const body = await req<DirectoryService | { service: DirectoryService }>(`/v1/directory/${enc(serviceId)}`);
+      return "service" in body ? body.service : body;
+    },
+    connectService: async (agentId, serviceId) => (await post<{ agent: AgentPublic }>(`/v1/agents/${enc(agentId)}/services`, { serviceId })).agent,
+    disconnectService: async (agentId, serviceId) =>
+      (await req<{ agent: AgentPublic }>(`/v1/agents/${enc(agentId)}/services/${enc(serviceId)}`, { method: "DELETE" })).agent,
     subscribe(onEvent, onStatus) {
       // EventSource reconnects on its own; we only surface the status. Named events
       // (`event: payment.signed`) do not fire `onmessage`, so listen to each type.

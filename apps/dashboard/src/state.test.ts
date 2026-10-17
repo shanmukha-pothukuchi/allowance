@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collapseFeed, MAX_FEED, applyEvent, initialState, isMoneyEvent, reducer, type DashboardState } from "./state";
+import { collapseFeed, MAX_FEED, applyEvent, initialState, isMoneyEvent, reducer, refreshesSummary, serviceKey, type DashboardState } from "./state";
 import type { AgentPublic, Approval, Receipt, SummaryResponse, WalletEvent } from "./types";
 
 const policy: AgentPublic["policy"] = { maxPerTx: "2.00", dailyCap: "10.00", allowlist: null, approvalThreshold: "2.00", frozen: false, freezeOnViolation: true };
@@ -8,6 +8,7 @@ const agent = (id: string, name: string): AgentPublic => ({
   name,
   address: "0x1111111111111111111111111111111111111111",
   policy: { ...policy },
+  services: [],
   createdAt: "2026-10-17T00:00:00Z",
   balance: "20.00",
   spentToday: "0.00",
@@ -201,3 +202,157 @@ describe("collapseFeed (one line per payment)", () => {
   });
 });
 
+
+describe("services: reducer", () => {
+  const grant = {
+    id: "acme-pizza",
+    name: "Acme Pizza",
+    provider: "Acme Corp",
+    icon: "🍕",
+    color: "#F08A24",
+    kind: "x402" as const,
+    summary: "Order a pizza.",
+    baseUrl: "http://localhost:4021/pizza",
+    pricing: "$18.50 per order",
+    maxPrice: "18.50",
+    permissions: ["Pay Acme Pizza up to $18.50 per order"],
+    source: "directory" as const,
+  };
+  const svcApproval: Approval = {
+    id: "apr_s",
+    kind: "service",
+    agentId: "agt_b",
+    agentName: "shopper",
+    paymentId: "",
+    amount: "18.50",
+    description: "Connect Acme Pizza",
+    counterparty: { address: "0x2222222222222222222222222222222222222222", name: "Acme Pizza" },
+    service: grant,
+    reason: "You asked me to order pizza.",
+    status: "pending",
+    createdAt: "2026-10-17T12:00:00Z",
+  };
+
+  it("service.requested adds a service approval (like payment.needs_approval), once", () => {
+    let s = loaded();
+    s = applyEvent(s, ev("service.requested", { agentId: "agt_b", agentName: "shopper", approval: svcApproval }));
+    s = applyEvent(s, ev("service.requested", { agentId: "agt_b", agentName: "shopper", approval: svcApproval }));
+    expect(s.approvals.map((a) => [a.id, a.kind, a.service?.id])).toEqual([["apr_s", "service", "acme-pizza"]]);
+  });
+
+  it("marks a service.requested approval as a service approval even if the server omits kind", () => {
+    const { kind: _k, ...noKind } = svcApproval;
+    void _k;
+    const s = applyEvent(loaded(), ev("service.requested", { approval: noKind as Approval }));
+    expect(s.approvals[0].kind).toBe("service");
+  });
+
+  it("approval.approved / denied clear service approvals too", () => {
+    let s = applyEvent(loaded(), ev("service.requested", { approval: svcApproval }));
+    s = applyEvent(s, ev("approval.denied", { approval: { ...svcApproval, status: "denied" } }));
+    expect(s.approvals).toHaveLength(0);
+  });
+
+  it("service.connected adds the connection to the agent, filling connectedBy from data", () => {
+    let s = loaded();
+    s = applyEvent(s, ev("service.connected", { agentId: "agt_b", agentName: "shopper", data: { service: grant, connectedBy: "approval" } }));
+    const shopper = s.agents.find((a) => a.id === "agt_b")!;
+    expect(shopper.services.map((x) => [x.id, x.connectedBy])).toEqual([["acme-pizza", "approval"]]);
+    expect(shopper.services[0].connectedAt).toBeTruthy();
+    // a repeat (e.g. after a reconnect) updates, never duplicates
+    s = applyEvent(s, ev("service.connected", { agentId: "agt_b", data: { service: { ...grant, connectedBy: "owner" } } }));
+    expect(s.agents.find((a) => a.id === "agt_b")!.services.map((x) => [x.id, x.connectedBy])).toEqual([["acme-pizza", "owner"]]);
+    expect(s.agents.find((a) => a.id === "agt_a")!.services).toEqual([]);
+  });
+
+  it("service.disconnected removes it, by data.service or data.serviceId", () => {
+    let s = applyEvent(loaded(), ev("service.connected", { agentId: "agt_b", data: { service: grant, connectedBy: "owner" } }));
+    s = applyEvent(s, ev("service.disconnected", { agentId: "agt_b", data: { serviceId: "acme-pizza" } }));
+    expect(s.agents.find((a) => a.id === "agt_b")!.services).toEqual([]);
+    s = applyEvent(s, ev("service.connected", { agentId: "agt_b", data: { service: grant, connectedBy: "owner" } }));
+    s = applyEvent(s, ev("service.disconnected", { agentId: "agt_b", data: { service: grant } }));
+    expect(s.agents.find((a) => a.id === "agt_b")!.services).toEqual([]);
+  });
+
+  it("normalizes agents from a wallet-service that sends no services", () => {
+    const { services: _s, ...old } = agent("agt_c", "worker-9");
+    void _s;
+    const s = reducer(initialState, { type: "loaded", summary: { ...summary, agents: [old as AgentPublic] }, events: [], receipts: [], approvals: [] });
+    expect(s.agents[0].services).toEqual([]);
+  });
+
+  it("refetches the summary after connection changes but not on requests", () => {
+    expect(refreshesSummary("service.connected")).toBe(true);
+    expect(refreshesSummary("service.disconnected")).toBe(true);
+    expect(refreshesSummary("service.requested")).toBe(false);
+    expect(refreshesSummary("payment.settled")).toBe(true);
+  });
+
+  it("keeps a directory it already has when a refetch fails", () => {
+    let s = reducer(initialState, { type: "directoryLoading" });
+    expect(s.directoryStatus).toBe("loading");
+    s = reducer(s, { type: "directoryError", message: "down" });
+    expect(s.directoryStatus).toBe("error");
+    s = reducer(s, { type: "directory", services: [{ ...grant, category: "shopping", description: "" }] });
+    expect(s.directoryStatus).toBe("ready");
+    s = reducer(s, { type: "directoryError", message: "down again" });
+    expect(s.directoryStatus).toBe("ready");
+    expect(s.directory).toHaveLength(1);
+    s = reducer(s, { type: "serviceDocs", id: "acme-pizza", docs: "POST /order" });
+    expect(s.serviceDocs["acme-pizza"]).toBe("POST /order");
+    s = reducer(s, { type: "busyService", key: serviceKey("agt_b", "acme-pizza"), busy: true });
+    expect(s.busyServices).toEqual(["agt_b:acme-pizza"]);
+  });
+});
+
+describe("collapseFeed: services and freezes", () => {
+  const ev = (id: string, type: WalletEvent["type"], extra: Partial<WalletEvent> = {}): WalletEvent => ({ id, type, at: "2026-10-17T12:00:00.000Z", message: id, ...extra });
+  const svc = { id: "acme-pizza", name: "Acme Pizza" } as Approval["service"];
+  const req = { id: "apr_s", kind: "service", agentId: "agt_b", service: svc } as Approval;
+
+  it("one line per service request: the connection replaces the request and its approval", () => {
+    const out = collapseFeed([
+      ev("e3", "service.connected", { agentId: "agt_b", data: { service: svc, connectedBy: "approval" } }),
+      ev("e2", "approval.approved", { agentId: "agt_b", approval: { ...req, status: "approved" } }),
+      ev("e1", "service.requested", { agentId: "agt_b", approval: req }),
+    ]);
+    expect(out.map((e) => e.id)).toEqual(["e3"]);
+  });
+
+  it("keeps the approval row if the connection never arrived, and a denial replaces the request", () => {
+    expect(collapseFeed([ev("e2", "approval.approved", { agentId: "agt_b", approval: { ...req, status: "approved" } }), ev("e1", "service.requested", { approval: req })]).map((e) => e.id)).toEqual(["e2"]);
+    expect(collapseFeed([ev("e2", "approval.denied", { approval: { ...req, status: "denied" } }), ev("e1", "service.requested", { approval: req })]).map((e) => e.id)).toEqual(["e2"]);
+  });
+
+  it("a connection for another agent does not hide this agent's approval", () => {
+    const out = collapseFeed([
+      ev("e3", "service.connected", { agentId: "agt_OTHER", data: { service: svc } }),
+      ev("e2", "approval.approved", { agentId: "agt_b", approval: { ...req, status: "approved" } }),
+    ]);
+    expect(out.map((e) => e.id)).toEqual(["e3", "e2"]);
+  });
+
+  it("a payment approval is never folded into a service connection", () => {
+    const pay = { id: "apr_p", kind: "payment", agentId: "agt_b" } as Approval;
+    const out = collapseFeed([ev("e2", "service.connected", { agentId: "agt_b", data: { service: svc } }), ev("e1", "approval.approved", { agentId: "agt_b", approval: pay })]);
+    expect(out.map((e) => e.id)).toEqual(["e2", "e1"]);
+  });
+
+  it("folds a policy freeze into its block row (§6 receiptId pair), but keeps an owner freeze", () => {
+    const r = { id: "rcp_b" } as WalletEvent["receipt"];
+    const out = collapseFeed([
+      ev("e3", "agent.frozen", { data: { cause: "owner" } }),
+      ev("e2", "agent.frozen", { data: { cause: "policy_violation", receiptId: "rcp_b" } }),
+      ev("e1", "payment.blocked", { receipt: r, data: { frozen: true, willFreeze: true, receiptId: "rcp_b" } }),
+    ]);
+    expect(out.map((e) => e.id)).toEqual(["e3", "e1"]);
+  });
+
+  it("applyEvent still freezes the agent even though the freeze row is folded", () => {
+    let s = loaded();
+    s = applyEvent(s, ev("e1", "payment.blocked", { agentId: "agt_a", receipt: receipt("rcp_b", { status: "blocked" }), data: { receiptId: "rcp_b" } }));
+    s = applyEvent(s, ev("e2", "agent.frozen", { agentId: "agt_a", reason: "Blocked.", data: { cause: "policy_violation", receiptId: "rcp_b" } }));
+    expect(s.agents.find((a) => a.id === "agt_a")!.frozen).toBe(true);
+    expect(s.events.map((e) => e.id)).toEqual(["e1"]);
+  });
+});

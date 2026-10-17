@@ -9,12 +9,17 @@ import type {
   AgentWorkDoc,
   ApprovalWaitResponse,
   ClaimResponse,
+  ConnectedService,
   EarningRequest,
   MeResponse,
   PayRequest,
   PayResponse,
   PayoutResponse,
   Receipt,
+  ServiceGrant,
+  ServiceManifest,
+  ServiceRequest,
+  ServiceRequestResponse,
   TransferRequest,
   TransferResponse,
 } from "@allowance/shared";
@@ -34,6 +39,122 @@ function listen(app: express.Express): Promise<{ server: Server; url: string }> 
 
 // ---------------------------------------------------------------------------- wallet stub
 
+/** One agent behind a stub token. */
+export interface StubAgent {
+  id: string;
+  name: string;
+  services: ConnectedService[];
+}
+
+export interface StubApproval {
+  status: "pending" | "approved" | "denied" | "expired";
+  /** "payment" (default) or "service". */
+  kind?: "payment" | "service";
+  paymentId: string;
+  paymentHeader?: string;
+  /** Payment approvals only. */
+  receipt?: Receipt;
+  /** Service approvals only. */
+  service?: ServiceGrant;
+  /** Service approvals only: the token whose agent gets the connection. */
+  token?: string;
+  /** Service approvals only: docs from a custom proposal. */
+  docs?: string;
+  /** Service approvals only: the connection made on approval. */
+  connected?: ConnectedService;
+}
+
+/**
+ * The stub directory: the directory itself plus three services on the merchant stub.
+ * acme-weather and acme-pizza are connected to the default token; acme-stocks is not (it
+ * answers `service_not_connected` on /v1/pay until requested and approved).
+ */
+export function stubDirectory(merchantUrl: string, walletUrl = ""): ServiceManifest[] {
+  const m = merchantUrl.replace(/\/+$/, "");
+  return [
+    {
+      id: "directory",
+      name: "Service Directory",
+      provider: "Allowance",
+      icon: "🗂️",
+      color: "#64748B",
+      category: "tools",
+      kind: "directory",
+      summary: "Find services and ask your owner to connect them.",
+      description: "The catalog of services agents can connect. Always available.",
+      baseUrl: `${walletUrl}/v1/directory`,
+      pricing: "Free",
+      maxPrice: "0.00",
+      permissions: ["Read the service catalog"],
+      docs: "Use search_services, get_service and request_service.",
+      source: "directory",
+    },
+    {
+      id: "acme-weather",
+      name: "Acme Weather",
+      provider: "Acme Corp",
+      icon: "🌤️",
+      color: "#3AA0E0",
+      category: "data",
+      kind: "x402",
+      summary: "Current weather for any city.",
+      description: "Temperature and a one-word summary for a city.",
+      baseUrl: `${m}/api/weather`,
+      pricing: "$0.05 per call",
+      maxPrice: "0.05",
+      permissions: ["Pay up to $0.05 per call to Acme Weather"],
+      docs: `GET ${m}/api/weather?city=Berlin -> { city, tempC, summary }`,
+      source: "directory",
+    },
+    {
+      id: "acme-stocks",
+      name: "Acme Stocks",
+      provider: "Acme Corp",
+      icon: "📈",
+      color: "#2F9E5B",
+      category: "data",
+      kind: "x402",
+      summary: "Latest price for a stock symbol.",
+      description: "Price and daily change for a ticker.",
+      baseUrl: `${m}/api/stock`,
+      pricing: "$0.15 per call",
+      maxPrice: "0.15",
+      permissions: ["Pay up to $0.15 per call to Acme Stocks"],
+      docs: `GET ${m}/api/stock?symbol=ACME -> { symbol, price, change }`,
+      source: "directory",
+    },
+    {
+      id: "acme-pizza",
+      name: "Acme Pizza",
+      provider: "Acme Corp",
+      icon: "🍕",
+      color: "#E5527A",
+      category: "shopping",
+      kind: "x402",
+      summary: "Order a pizza (fulfillment simulated).",
+      description: "Pick a size and toppings; a simulated order is placed.",
+      baseUrl: `${m}/pizza`,
+      pricing: "$18.50 per order",
+      maxPrice: "18.50",
+      permissions: ["Pay up to $18.50 per order to Acme Pizza"],
+      docs: `POST ${m}/pizza/order { size, toppings[], address } -> { orderId, status, eta }`,
+      source: "directory",
+    },
+  ];
+}
+
+function toGrant(m: ServiceManifest): ServiceGrant {
+  const { id, name, provider, icon, color, kind, summary, baseUrl, pricing, maxPrice, permissions, source } = m;
+  return { id, name, provider, icon, color, kind, summary, baseUrl, pricing, maxPrice, permissions, source };
+}
+
+/** Path-boundary prefix match, like the real wallet's connected-service check. */
+function underBase(url: string, base: string): boolean {
+  if (!base) return false;
+  const b = base.replace(/\/+$/, "");
+  return url === b || url.startsWith(`${b}/`) || url.startsWith(`${b}?`);
+}
+
 export interface WalletStub {
   url: string;
   token: string;
@@ -50,7 +171,17 @@ export interface WalletStub {
   settledCalls: { paymentId: string; body: unknown }[];
   earnings: EarningRequest[];
   transfers: TransferRequest[];
-  approvals: Map<string, { status: "pending" | "approved" | "denied" | "expired"; paymentId: string; paymentHeader?: string; receipt: Receipt }>;
+  approvals: Map<string, StubApproval>;
+  /** Base URL the stub directory points at (set it to the merchant stub's url). */
+  merchantUrl: string;
+  /** Agents by token. The default `token` is "claude-desktop". */
+  agents: Map<string, StubAgent>;
+  serviceRequests: ServiceRequest[];
+  directory(): ServiceManifest[];
+  /** Add another agent token with these directory services connected (connectedBy "default"). */
+  addToken(name: string, serviceIds?: string[]): string;
+  /** Connect a directory service to a token's agent directly (like the owner would). */
+  connect(token: string, serviceId: string, by?: ConnectedService["connectedBy"]): ConnectedService | undefined;
   approve(approvalId: string): void;
   deny(approvalId: string): void;
   close(): Promise<void>;
@@ -59,9 +190,15 @@ export interface WalletStub {
 let seq = 0;
 const nid = (p: string) => `${p}_${(++seq).toString(16).padStart(6, "0")}`;
 
-export async function startWalletStub(opts: Partial<Pick<WalletStub, "approveUpTo" | "blockAbove" | "autoApproveAfterMs">> = {}): Promise<WalletStub> {
+export interface WalletStubOptions extends Partial<Pick<WalletStub, "approveUpTo" | "blockAbove" | "autoApproveAfterMs" | "merchantUrl">> {
+  /** Directory services connected to the default token. Default ["acme-weather", "acme-pizza"]. */
+  connected?: string[];
+}
+
+export async function startWalletStub(opts: WalletStubOptions = {}): Promise<WalletStub> {
   const token = "aw_" + "ab".repeat(24);
   const address = "0x1111111111111111111111111111111111111111" as const;
+  let tokenSeq = 0;
   const stub: WalletStub = {
     url: "",
     token,
@@ -76,11 +213,41 @@ export async function startWalletStub(opts: Partial<Pick<WalletStub, "approveUpT
     earnings: [],
     transfers: [],
     approvals: new Map(),
+    merchantUrl: opts.merchantUrl ?? "",
+    agents: new Map(),
+    serviceRequests: [],
+    directory: () => stubDirectory(stub.merchantUrl, stub.url),
+    addToken(name, serviceIds = []) {
+      const t = `aw_${(++tokenSeq).toString(16).padStart(4, "0")}${"cd".repeat(22)}`;
+      stub.agents.set(t, { id: `agt_${name}`, name, services: [] });
+      for (const sid of serviceIds) stub.connect(t, sid, "default");
+      return t;
+    },
+    connect(t, serviceId, by = "owner") {
+      const agent = stub.agents.get(t);
+      const m = stub.directory().find((s) => s.id === serviceId);
+      if (!agent || !m) return undefined;
+      const existing = agent.services.find((c) => c.id === serviceId);
+      if (existing) return existing;
+      const c: ConnectedService = { ...toGrant(m), connectedAt: new Date().toISOString(), connectedBy: by };
+      agent.services.push(c);
+      return c;
+    },
     approve(id) {
       const a = stub.approvals.get(id);
       if (!a || a.status !== "pending") return;
       a.status = "approved";
+      if (a.kind === "service") {
+        const agent = a.token ? stub.agents.get(a.token) : undefined;
+        if (agent && a.service) {
+          const c: ConnectedService = { ...a.service, connectedAt: new Date().toISOString(), connectedBy: "approval", ...(a.docs ? { docs: a.docs } : {}) };
+          agent.services = [...agent.services.filter((x) => x.id !== c.id), c];
+          a.connected = c;
+        }
+        return;
+      }
       a.paymentHeader = a.paymentHeader === undefined ? undefined : `hdr_${id}`;
+      if (!a.receipt) return;
       a.receipt.status = a.paymentHeader ? "signed" : "settled";
       if (!a.paymentHeader) {
         a.receipt.txHash = `0x${"c".repeat(64)}`;
@@ -91,20 +258,26 @@ export async function startWalletStub(opts: Partial<Pick<WalletStub, "approveUpT
       const a = stub.approvals.get(id);
       if (!a || a.status !== "pending") return;
       a.status = "denied";
-      a.receipt.status = "denied";
+      if (a.receipt) a.receipt.status = "denied";
     },
     close: async () => {},
   };
 
   const app = express();
   app.use(express.json());
+  stub.agents.set(token, { id: "agt_test", name: "claude-desktop", services: [] });
   app.use((req, res, next) => {
-    if (req.headers.authorization !== `Bearer ${token}`) {
+    const auth = req.headers.authorization ?? "";
+    const agent = auth.startsWith("Bearer ") ? stub.agents.get(auth.slice(7)) : undefined;
+    if (!agent) {
       res.status(401).json({ error: "unauthorized", message: "bad token" });
       return;
     }
+    res.locals.token = auth.slice(7);
+    res.locals.agent = agent;
     next();
   });
+  const agentOf = (res: express.Response) => res.locals.agent as StubAgent;
 
   const mkReceipt = (kind: Receipt["kind"], amount: string, description: string, extra: Partial<Receipt> = {}): Receipt => {
     const r: Receipt = {
@@ -125,11 +298,12 @@ export async function startWalletStub(opts: Partial<Pick<WalletStub, "approveUpT
     return r;
   };
 
-  const me = (): MeResponse => ({
+  const me = (agent: StubAgent): MeResponse => ({
     agent: {
-      id: "agt_test",
-      name: "claude-desktop",
+      id: agent.id,
+      name: agent.name,
       address,
+      services: agent.services,
       policy: { maxPerTx: "20.00", dailyCap: "50.00", allowlist: { addresses: [], origins: ["http://localhost:4021"] }, approvalThreshold: "10.00", frozen: stub.frozen, freezeOnViolation: true },
       createdAt: new Date().toISOString(),
       balance: "20.00",
@@ -141,7 +315,7 @@ export async function startWalletStub(opts: Partial<Pick<WalletStub, "approveUpT
   });
 
   app.get("/v1/me", (_req, res) => {
-    res.json(me());
+    res.json(me(agentOf(res)));
   });
 
   function decide(amountDollars: number, description: string, counterpartyName: string, kind: "spend" | "transfer", isX402: boolean): { status: number; body: PayResponse | TransferResponse } {
@@ -181,6 +355,15 @@ export async function startWalletStub(opts: Partial<Pick<WalletStub, "approveUpT
     const body = req.body as PayRequest;
     stub.payRequests.push(body);
     const amountDollars = Number(body.paymentRequired.accepts[0].amount) / 1e6;
+    // A directory service this agent has not connected: soft block, no freeze (ARCHITECTURE §13.2).
+    const agent = agentOf(res);
+    const svc = stub.directory().find((s) => s.kind === "x402" && underBase(body.url, s.baseUrl));
+    if (svc && !agent.services.some((c) => c.id === svc.id)) {
+      const receipt = mkReceipt("spend", amountDollars.toFixed(2), body.description ?? svc.name, { status: "blocked", reason: "service_not_connected", paymentId: nid("pay") });
+      const out: PayResponse = { status: "blocked", reason: "service_not_connected", message: `${svc.name} is not connected for ${agent.name}. Ask the owner with request_service.`, frozen: false, receipt };
+      res.status(403).json(out);
+      return;
+    }
     const d = decide(amountDollars, body.description ?? body.url, body.description ?? body.url, "spend", true);
     res.status(d.status).json(d.body);
   });
@@ -221,11 +404,70 @@ export async function startWalletStub(opts: Partial<Pick<WalletStub, "approveUpT
       await new Promise((r) => setTimeout(r, 25));
     }
     let out: ApprovalWaitResponse;
-    if (a.status === "pending") out = { status: "pending", approvalId: id };
-    else if (a.status === "denied") out = { status: "denied", approvalId: id, receipt: a.receipt };
-    else if (a.status === "expired") out = { status: "expired", approvalId: id };
-    else out = { status: "approved", approvalId: id, paymentId: a.paymentId, paymentHeader: a.paymentHeader || undefined, receipt: a.receipt };
+    const kind = a.kind === "service" ? "service" : "payment";
+    if (a.status === "pending") out = { status: "pending", approvalId: id, kind };
+    else if (a.status === "denied") out = kind === "service" ? { status: "denied", approvalId: id, kind } : { status: "denied", approvalId: id, kind, receipt: a.receipt };
+    else if (a.status === "expired") out = { status: "expired", approvalId: id, kind };
+    else if (kind === "service") out = { status: "approved", approvalId: id, kind, paymentId: "", service: a.connected };
+    else out = { status: "approved", approvalId: id, kind, paymentId: a.paymentId, paymentHeader: a.paymentHeader || undefined, receipt: a.receipt };
     res.json(out);
+  });
+
+  // ---- services (ARCHITECTURE §13.2)
+  const withoutDocs = (m: ServiceManifest, agent: StubAgent) => {
+    const { docs: _docs, ...rest } = m;
+    return { ...rest, connected: agent.services.some((c) => c.id === m.id) };
+  };
+
+  app.get("/v1/services", (_req, res) => {
+    res.json({ connected: agentOf(res).services, directoryUrl: `${stub.url}/v1/directory` });
+  });
+
+  app.get("/v1/directory", (req, res) => {
+    const agent = agentOf(res);
+    const q = String(req.query.q ?? "").trim().toLowerCase();
+    const all = stub.directory().filter((m) => !q || [m.name, m.summary, m.description, m.provider, m.category].some((f) => f.toLowerCase().includes(q)));
+    res.json({ services: all.map((m) => withoutDocs(m, agent)) });
+  });
+
+  app.get("/v1/directory/:id", (req, res) => {
+    const agent = agentOf(res);
+    const id = req.params.id as string;
+    const m = stub.directory().find((s) => s.id === id);
+    if (m) return void res.json({ ...m, connected: agent.services.some((c) => c.id === id) });
+    const custom = agent.services.find((c) => c.id === id && c.source === "agent");
+    if (custom) {
+      return void res.json({ ...custom, category: "tools", description: custom.summary, docs: custom.docs ?? "", connected: true });
+    }
+    res.status(404).json({ error: "service_not_found", message: `No service ${id}` });
+  });
+
+  app.post("/v1/services/requests", (req, res) => {
+    const body = (req.body ?? {}) as ServiceRequest;
+    stub.serviceRequests.push(body);
+    const agent = agentOf(res);
+    let grant: ServiceGrant;
+    if (body.serviceId) {
+      const m = stub.directory().find((s) => s.id === body.serviceId);
+      if (!m) return void res.status(404).json({ error: "service_not_found", message: `No service ${body.serviceId} in the directory` });
+      if (m.kind === "directory") return void res.status(400).json({ error: "invalid_request", message: "The directory is always available" });
+      const existing = agent.services.find((c) => c.id === m.id);
+      if (existing) return void res.json({ status: "connected", service: existing } satisfies ServiceRequestResponse);
+      grant = toGrant(m);
+    } else if (body.custom) {
+      const c = body.custom;
+      const bad = !/^https?:\/\//.test(c.baseUrl ?? "") ? "baseUrl must be http(s)" : !c.name || c.name.length > 60 ? "name must be 1-60 characters" : (c.summary ?? "").length > 200 ? "summary must be at most 200 characters" : !(Number(c.maxPrice) >= 0 && Number(c.maxPrice) <= 20) ? "maxPrice must be at most your max per payment ($20.00)" : "";
+      if (bad) return void res.status(400).json({ error: "invalid_request", message: bad });
+      const slug = c.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      grant = { id: `custom-${slug}`, name: c.name, provider: "Proposed by agent", icon: "🧩", color: "#7C8799", kind: "x402", summary: c.summary, baseUrl: c.baseUrl, pricing: `Up to $${Number(c.maxPrice).toFixed(2)} per payment`, maxPrice: Number(c.maxPrice).toFixed(2), permissions: [`Pay up to $${Number(c.maxPrice).toFixed(2)} per request under ${c.baseUrl}`], source: "agent" };
+    } else {
+      return void res.status(400).json({ error: "invalid_request", message: "Give serviceId or custom" });
+    }
+    const approvalId = nid("apr");
+    stub.approvals.set(approvalId, { status: "pending", kind: "service", paymentId: "", service: grant, token: res.locals.token as string, docs: body.custom?.docs });
+    if (stub.autoApproveAfterMs !== null) setTimeout(() => stub.approve(approvalId), stub.autoApproveAfterMs);
+    const out: ServiceRequestResponse = { status: "needs_approval", approvalId, service: grant, message: `${agent.name} wants to connect ${grant.name}.` };
+    res.status(202).json(out);
   });
 
   app.post("/v1/earnings", (req, res) => {
@@ -248,6 +490,7 @@ export async function startWalletStub(opts: Partial<Pick<WalletStub, "approveUpT
 
   const { server, url } = await listen(app);
   stub.url = url;
+  for (const sid of opts.connected ?? ["acme-weather", "acme-pizza"]) stub.connect(token, sid, "default");
   stub.close = () => new Promise((r) => server.close(() => r()));
   return stub;
 }
@@ -295,6 +538,7 @@ export async function startMerchantStub(): Promise<MerchantStub> {
   paid("/api/weather", "50000", "Acme Weather", (req) => ({ city: req.query.city ?? "Berlin", tempC: 17, summary: "cloudy" }));
   paid("/pizza/order", "8000000", "Pizza Co", (req) => ({ orderId: "ord_1", status: "placed", eta: "25 min", size: req.body?.size ?? "large", simulated: true }));
   paid("/api/expensive", "50000000", "Gold Plated API", () => ({ gold: true }));
+  paid("/api/stock", "150000", "Acme Stocks", (req) => ({ symbol: req.query.symbol ?? "ACME", price: 101.5, change: 0.8 }));
 
   app.get("/free", (_req, res) => {
     res.type("text/plain").send("hello, free world");

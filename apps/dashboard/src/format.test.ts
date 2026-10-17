@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addDollars, describeEvent, fromCents, money, pctOf, relativeTime, shortHex, signedMoney, toCents } from "./format";
+import { addDollars, approvalOutcomeLabel, describeEvent, fromCents, isServiceApproval, isSoftBlock, money, pctOf, relativeTime, serviceOfEvent, shortHex, signedMoney, toCents } from "./format";
 import type { Receipt } from "./types";
 
 describe("money", () => {
@@ -90,5 +90,60 @@ describe("describeEvent", () => {
       }),
     ).toBe("Blocked: naive-worker tried to send $4.50 to an unknown address. Agent frozen.");
     expect(describeEvent({ type: "agent.unfrozen", message: "", agentName: "shopper" })).toBe("Shopper is unfrozen.");
+  });
+});
+
+describe("services: sentences and labels", () => {
+  const grant = { id: "acme-pizza", name: "Acme Pizza", provider: "Acme Corp", icon: "🍕", color: "#F08A24", kind: "x402" as const, summary: "", baseUrl: "http://localhost:4021/pizza", pricing: "$18.50 per order", maxPrice: "18.50", permissions: [], source: "directory" as const };
+  const approval = {
+    id: "apr_s",
+    kind: "service" as const,
+    agentId: "agt_b",
+    agentName: "shopper",
+    paymentId: "",
+    amount: "18.50",
+    description: "Connect Acme Pizza",
+    counterparty: { address: "0x2222222222222222222222222222222222222222" as const, name: "Acme Pizza" },
+    service: grant,
+    status: "pending" as const,
+    createdAt: "2026-10-17T12:00:00Z",
+  };
+  it("prefers the server's service messages", () => {
+    expect(describeEvent({ type: "service.requested", message: "shopper wants to connect Acme Pizza.", approval })).toBe("shopper wants to connect Acme Pizza.");
+  });
+  it("builds request / connect / disconnect sentences (§13.2 wording)", () => {
+    expect(describeEvent({ type: "service.requested", message: "", agentName: "shopper", approval })).toBe("shopper wants to connect Acme Pizza (up to $18.50 per payment).");
+    expect(describeEvent({ type: "service.requested", message: "", agentName: "worker-1", approval: { ...approval, service: { ...grant, name: "Acme Bounties", maxPrice: "0.00" } } })).toBe("worker-1 wants to connect Acme Bounties (free).");
+    expect(describeEvent({ type: "service.requested", message: "", agentName: "researcher", approval: { ...approval, service: { ...grant, name: "HN Digest", maxPrice: "0.25", source: "agent" } } })).toBe(
+      "researcher wants to connect HN Digest, a service it proposed (up to $0.25 per payment).",
+    );
+    expect(describeEvent({ type: "service.connected", message: "", agentName: "shopper", data: { service: grant, connectedBy: "approval" } })).toBe("Acme Pizza connected to shopper.");
+    expect(describeEvent({ type: "service.disconnected", message: "", agentName: "shopper", data: { serviceId: "acme-pizza", serviceName: "Acme Pizza" } })).toBe("Acme Pizza disconnected from shopper.");
+  });
+  it("never words a service decision as a payment", () => {
+    expect(describeEvent({ type: "approval.approved", message: "", agentName: "shopper", approval: { ...approval, status: "approved" } })).toBe("Approved connecting Acme Pizza to shopper.");
+    expect(describeEvent({ type: "approval.denied", message: "", agentName: "shopper", approval: { ...approval, status: "denied" } })).toBe("Denied connecting Acme Pizza to shopper.");
+    expect(describeEvent({ type: "approval.denied", message: "", agentName: "shopper", reason: "expired", approval: { ...approval, status: "expired" } })).toBe("Request to connect Acme Pizza to shopper expired.");
+    expect(isServiceApproval(approval)).toBe(true);
+    expect(isServiceApproval({ kind: undefined, service: undefined })).toBe(false);
+    expect(isServiceApproval({ kind: undefined, service: grant })).toBe(true); // older server without kind
+    expect(serviceOfEvent({ approval })?.name).toBe("Acme Pizza");
+    expect(serviceOfEvent({ data: { serviceId: "x" } })?.id).toBe("x");
+  });
+  it("tells soft blocks (no freeze) from freezing ones", () => {
+    const blocked = (reason: string, data?: Record<string, unknown>) => ({ type: "payment.blocked" as const, reason, data });
+    expect(isSoftBlock(blocked("service_not_connected"))).toBe(true);
+    expect(isSoftBlock(blocked("service_cap"))).toBe(true);
+    expect(isSoftBlock(blocked("insufficient_balance"))).toBe(true);
+    expect(isSoftBlock(blocked("not_allowlisted"))).toBe(false);
+    expect(isSoftBlock(blocked("not_allowlisted", { willFreeze: false }))).toBe(true);
+    expect(describeEvent({ type: "payment.blocked", message: "", agentName: "shopper", reason: "service_not_connected", data: { service: grant } })).toBe(
+      "Acme Pizza is not connected for shopper. It can ask you to connect it.",
+    );
+  });
+  it("describes a decided approval for the card", () => {
+    expect(approvalOutcomeLabel({ status: "approved", decidedBy: "telegram" })).toBe("Approved on Telegram");
+    expect(approvalOutcomeLabel({ status: "denied", decidedBy: "dashboard" })).toBe("Denied by you");
+    expect(approvalOutcomeLabel({ status: "expired" })).toMatch(/^Expired/);
   });
 });

@@ -1,6 +1,6 @@
 # @allowance/mcp — Claude Desktop talks to your Allowance wallet
 
-An MCP server (stdio) that gives Claude Desktop eight tools for spending and earning USDC
+An MCP server (stdio) that gives Claude Desktop twelve tools for spending and earning USDC
 through the Allowance **wallet-service**. The agent never holds a private key: the server is
 configured with an **agent token**, and every payment is signed by the wallet-service only if the
 owner's policy allows it. Blocked payments come back as clear errors; payments over the
@@ -15,8 +15,12 @@ On stage, this prompt in Claude Desktop uses only these tools:
 | Tool | What it does |
 |---|---|
 | `get_wallet` | Balance, wallet address, limits (max per payment, daily cap, approval threshold, remaining today), spent/earned today, frozen status. `GET /v1/me`. |
-| `fetch_url({ url, method?, body?, headers? })` | Fetch any URL. On `402` it decodes `PAYMENT-REQUIRED`, asks the wallet-service to pay (`POST /v1/pay`), retries with `PAYMENT-SIGNATURE`, reports `PAYMENT-RESPONSE` to `/v1/payments/:id/settled` and returns the body plus a receipt line. Over-threshold payments wait ≤45 s for approval, then return an approval id. Blocked payments return `isError` with the policy reason. |
-| `check_approval({ approval_id })` | Resume a pending approval (`GET /v1/approvals/:id/wait?timeoutMs=45000`). If approved, completes the original request and returns body + receipt. |
+| `fetch_url({ url, method?, body?, headers? })` | Fetch any URL. On `402` it decodes `PAYMENT-REQUIRED`, asks the wallet-service to pay (`POST /v1/pay`), retries with `PAYMENT-SIGNATURE`, reports `PAYMENT-RESPONSE` to `/v1/payments/:id/settled` and returns the body plus a receipt line. Over-threshold payments wait ≤45 s for approval, then return an approval id. Blocked payments return `isError` with the policy reason. A URL that belongs to a directory service the agent has not connected (`service_not_connected`) returns a soft, non-freezing message: "Acme Pizza isn't connected yet. Ask your owner with request_service { service_id: "acme-pizza" }." |
+| `check_approval({ approval_id })` | Resume a pending approval (`GET /v1/approvals/:id/wait?timeoutMs=45000`). If a payment is approved, completes the original request and returns body + receipt; if a service request is approved, returns "Owner connected Acme Pizza." |
+| `list_services()` | Connected services (`GET /v1/services`): icon, name, id, one-line summary, pricing. Says the Service Directory is always available. |
+| `get_service({ service_id })` | Full manifest + docs (`GET /v1/directory/:id`), and whether it is connected. |
+| `search_services({ query? })` | Directory search (`GET /v1/directory?q=`); marks `[connected]` / `[not connected]` and says how to request others. |
+| `request_service({ service_id?, custom?, reason })` | Ask the owner to connect a directory service, or propose a custom one (`custom: { name, base_url, summary, max_price, docs? }`). `POST /v1/services/requests`; on `202` waits ≤45 s on `/wait` and returns "Connected Acme Pizza." / "Waiting for the owner to approve connecting Acme Pizza. Approval id apr_… — call check_approval to resume." / denied. |
 | `find_work({ site_url })` | `GET /.well-known/agent-work` (bare hosts like `localhost:4021` are fine). Lists bounties with payout, slots, task type, claim URL, and the untrusted-text reminder. |
 | `claim_bounty({ claim_url, bounty_id? })` | Claims a slot with the wallet address from `/v1/me`. Returns claim id, expiry, submit URL and task input. Friendly errors for `bounty_full`, `already_claimed`, `404`. |
 | `submit_bounty({ submit_url, claim_id, result, bounty_title? })` | Submits work. On `200` records the payout via `POST /v1/earnings` and returns "Paid $0.50 for API reliability check. Receipt: tx … (link)". `422` returns the rejection details so Claude can fix and resubmit; `410` explains the claim expired. |
@@ -68,7 +72,7 @@ Tool results never contain the agent token or any key.
    Replace the three paths with your own. On Windows use double backslashes or forward slashes.
 
 5. **Completely quit and restart Claude Desktop.** The config is only read at startup. Then click the
-   "Add files, connectors, and more" button in the chat box → Connectors → Manage connectors; `allowance` should list eight tools.
+   "Add files, connectors, and more" button in the chat box → Connectors → Manage connectors; `allowance` should list twelve tools.
 
 ### Try it
 

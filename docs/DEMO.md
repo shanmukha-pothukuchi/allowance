@@ -8,7 +8,7 @@ on its own.
 
 | Screen | What | URL / app |
 |---|---|---|
-| Laptop | Agent chat page (you type here) | http://localhost:4050 |
+| Laptop | Agent chat page (you type here); collapse the sidebar to icons for more room | http://localhost:4050 |
 | Projector A | Bounty board (HTML view of `/.well-known/agent-work`) | http://localhost:4021/.well-known/agent-work |
 | Projector B | Owner dashboard | http://localhost:4040 |
 | Phone (held up / mirrored) | Telegram chat with the bot | Telegram |
@@ -28,13 +28,14 @@ chat page: every agent idle.
 
 ## 0:20 — Act 1: the race (45 s)
 
-Chat page: **All workers**, click the chip *"Find paid work on localhost:4021 and complete the API
+Chat page: **All workers** (switch the header to **Grid** to show all four at once), click the chip *"Find paid work on localhost:4021 and complete the API
 reliability check bounty."*, Send.
 
 Say: *"One message, four agents, same moment. The site publishes paid work at a well-known URL with
 three slots."* The four panels fill with tool calls (`find_work`, `claim_bounty`, `fetch_url` on
 each endpoint, `submit_bounty`). Projector A: slot pills go 3 to 0 and payouts appear with tx hashes.
-One agent gets "all slots taken". Projector B: three "earned $0.50" rows.
+One agent gets "all slots taken". Projector B: three "earned $0.50" rows. (Optional: open the dashboard's **Services** tab to show
+which agent can use which service.)
 
 *"No marketplace. One line of middleware. The tx hash is the receipt."*
 
@@ -46,10 +47,13 @@ ACME stock price?"*. Three `fetch_url` cards turn green with "Paid $0.05 / $0.10
 *"Each of those was an HTTP 402. The agent asked the wallet to pay; the wallet signed because it was
 within policy."*
 
-Then **shopper**, chip *"Order me a large mushroom and olive pizza…"*. The card shows "waiting for
-your approval". The phone buzzes: $18.50 is over the shopper's $10 threshold. Hold it up, tap
-**Approve**. The shopper finishes: "Paid $18.50 … order placed". Say it plainly: *"The pizza is
-simulated. The payment is not."*
+Then **shopper**, chip *"Order me a large mushroom and olive pizza…"*. Watch the activity row: it
+checks its services, has no pizza service, searches the directory, and **asks you to connect Acme
+Pizza**. A connection card appears in the thread with what Acme Pizza could do, and the phone buzzes.
+Approve (inline, on the phone, or the dashboard). It reads Acme Pizza's docs and orders: now the
+$18.50 payment is over its $10 threshold, so a second approval appears. Approve. "Paid $18.50 … order
+placed", with a receipt card. Say it plainly: *"The pizza is simulated. The payment is not. And it
+could only pay Acme Pizza because I connected it."*
 
 ## 1:55 — Act 3: try to make it steal (40 s)
 
@@ -88,6 +92,7 @@ Sepolia with real USDC."* Show the explorer tab briefly: the same tx hashes.
 - [ ] `.env` has `LLM_API_KEY` (NRP token) and `LLM_MODEL`
 - [ ] `npm run reset` done with services stopped, then `npm run dev` shows all services up
 - [ ] Chat page: six idle agents at $20.00, no red banner, one warm-up message sent and cleared
+- [ ] Shopper has no services (details panel); researcher has Weather, News, Stocks
 - [ ] Bounty board shows 3/3 and 2/2 slots open
 - [ ] Dashboard shows "live" and 8 agents
 - [ ] Telegram `/start` answered; `TELEGRAM_BOT_TOKEN` in `.env`

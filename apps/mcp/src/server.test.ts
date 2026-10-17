@@ -10,8 +10,8 @@ function textOf(r: ToolResult): string {
   return r.content.map((c) => (c.type === "text" ? c.text ?? "" : "")).join("\n");
 }
 
-async function connect(walletServiceUrl: string, agentToken: string, approvalWaitMs = 1500) {
-  const server = createServer({ walletServiceUrl, agentToken, approvalWaitMs, log: () => {} });
+async function connect(walletServiceUrl: string, agentToken: string, approvalWaitMs = 1500, logs?: string[]) {
+  const server = createServer({ walletServiceUrl, agentToken, approvalWaitMs, log: (m) => logs?.push(m) });
   const client = new Client({ name: "test", version: "0.0.0" });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   await server.connect(st);
@@ -32,6 +32,7 @@ let mcp: Awaited<ReturnType<typeof connect>>;
 beforeAll(async () => {
   wallet = await startWalletStub({ approveUpTo: 5, blockAbove: 10, autoApproveAfterMs: 300 });
   merchant = await startMerchantStub();
+  wallet.merchantUrl = merchant.url;
   mcp = await connect(wallet.url, wallet.token);
 });
 afterAll(async () => {
@@ -45,11 +46,28 @@ beforeEach(() => {
 });
 
 describe("tool registry", () => {
-  it("exposes the eight tools from ARCHITECTURE §9 (+ transfer_usdc)", async () => {
+  it("exposes the tools from ARCHITECTURE §9 and §13.3", async () => {
     const { tools } = await mcp.client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(
-      ["check_approval", "claim_bounty", "fetch_url", "find_work", "get_wallet", "list_receipts", "submit_bounty", "transfer_usdc"].sort(),
+      [
+        "check_approval",
+        "claim_bounty",
+        "fetch_url",
+        "find_work",
+        "get_wallet",
+        "list_receipts",
+        "submit_bounty",
+        "transfer_usdc",
+        "list_services",
+        "get_service",
+        "search_services",
+        "request_service",
+      ].sort(),
     );
+    expect(tools.find((t) => t.name === "list_services")!.description).toMatch(/Call this first when the owner asks for something you might need a service for/);
+    expect(tools.find((t) => t.name === "request_service")!.inputSchema.required).toEqual(["reason"]);
+    expect(tools.find((t) => t.name === "request_service")!.inputSchema.properties).toHaveProperty("custom");
+    expect(tools.find((t) => t.name === "get_service")!.inputSchema.required).toEqual(["service_id"]);
     const getWallet = tools.find((t) => t.name === "get_wallet")!;
     expect(getWallet.annotations?.readOnlyHint).toBe(true);
     expect(tools.find((t) => t.name === "transfer_usdc")!.annotations?.destructiveHint).toBe(true);
@@ -67,6 +85,7 @@ describe("get_wallet", () => {
     expect(t).toContain("max $20.00 per payment");
     expect(t).toContain("over $10.00 need owner approval");
     expect(t).toContain("Status: active");
+    expect(t).toContain("Connected services: Acme Weather (acme-weather), Acme Pizza (acme-pizza)");
   });
 });
 
@@ -271,6 +290,201 @@ describe("list_receipts", () => {
     expect(textOf(r)).toContain("http://explorer.test/tx/");
     const receipts = r.structuredContent?.receipts as { createdAt: string }[];
     for (let i = 1; i < receipts.length; i++) expect(receipts[i - 1].createdAt >= receipts[i].createdAt).toBe(true);
+  });
+});
+
+describe("services (ARCHITECTURE §13.3)", () => {
+  it("list_services shows connected services like skill descriptions, and the always-available directory", async () => {
+    const r = await mcp.call("list_services");
+    expect(r.isError).toBeFalsy();
+    const t = textOf(r);
+    expect(t).toContain("Your connected services (2):");
+    expect(t).toContain("- 🌤️ Acme Weather (acme-weather): Current weather for any city. · $0.05 per call");
+    expect(t).toContain("- 🍕 Acme Pizza (acme-pizza)");
+    expect(t).not.toContain("acme-stocks");
+    expect(t).toMatch(/Service Directory is always available/);
+    expect((r.structuredContent?.connected as Array<{ id: string }>).map((s) => s.id)).toEqual(["acme-weather", "acme-pizza"]);
+  });
+
+  it("get_service returns docs and connection status; unknown ids are a friendly error", async () => {
+    const w = await mcp.call("get_service", { service_id: "acme-weather" });
+    expect(w.isError).toBeFalsy();
+    expect(textOf(w)).toContain("🌤️ Acme Weather (acme-weather) by Acme Corp");
+    expect(textOf(w)).toContain("Status: connected");
+    expect(textOf(w)).toContain(`GET ${merchant.url}/api/weather?city=Berlin`);
+    expect(w.structuredContent?.connected).toBe(true);
+
+    const s = await mcp.call("get_service", { service_id: "acme-stocks" });
+    expect(textOf(s)).toContain("Status: not connected");
+    expect(textOf(s)).toContain('request_service { service_id: "acme-stocks"');
+    expect(s.structuredContent?.connected).toBe(false);
+
+    const d = await mcp.call("get_service", { service_id: "directory" });
+    expect(textOf(d)).toContain("always available");
+
+    const missing = await mcp.call("get_service", { service_id: "acme-yachts" });
+    expect(missing.isError).toBe(true);
+    expect(textOf(missing)).toContain('There is no service "acme-yachts"');
+  });
+
+  it("search_services marks connected ones and says how to request others", async () => {
+    const all = await mcp.call("search_services", {});
+    expect(all.isError).toBeFalsy();
+    const t = textOf(all);
+    expect(t).toContain("Service Directory (3 services):");
+    expect(t).toMatch(/Acme Weather \(acme-weather\).*\[connected\]/);
+    expect(t).toMatch(/Acme Stocks \(acme-stocks\).*\[not connected\]/);
+    expect(t).not.toContain("(directory)");
+    expect(t).toContain("request_service { service_id, reason }");
+    const flags = Object.fromEntries((all.structuredContent?.services as Array<{ id: string; connected: boolean }>).map((s) => [s.id, s.connected]));
+    expect(flags).toEqual({ "acme-weather": true, "acme-stocks": false, "acme-pizza": true });
+
+    const q = await mcp.call("search_services", { query: "stock" });
+    expect(textOf(q)).toContain('Directory results for "stock" (1):');
+    expect(textOf(q)).toContain("acme-stocks");
+
+    const none = await mcp.call("search_services", { query: "yachts" });
+    expect(none.isError).toBeFalsy();
+    expect(textOf(none)).toContain('No services match "yachts"');
+    expect(textOf(none)).toContain("custom");
+  });
+
+  it("fetch_url on an unconnected service says how to request it, without freezing or paying", async () => {
+    const paidBefore = merchant.paidRequests.length;
+    const r = await mcp.call("fetch_url", { url: `${merchant.url}/api/stock?symbol=ACME` });
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toBe('Acme Stocks isn\'t connected yet. Ask your owner with request_service { service_id: "acme-stocks" }. Nothing was paid.');
+    expect(textOf(r)).not.toMatch(/frozen/i);
+    expect(r.structuredContent).toMatchObject({ status: "blocked", reason: "service_not_connected", serviceId: "acme-stocks" });
+    expect(merchant.paidRequests.length).toBe(paidBefore);
+    expect(wallet.frozen).toBe(false);
+  });
+
+  it("request_service: pending → check_approval → connected, then the service can be paid", async () => {
+    wallet.autoApproveAfterMs = null;
+    const logs: string[] = [];
+    const c = await connect(wallet.url, wallet.token, 300, logs);
+    try {
+      const r = await c.call("request_service", { service_id: "acme-stocks", reason: "The owner asked for the ACME stock price." });
+      expect(r.isError).toBeFalsy();
+      const approvalId = r.structuredContent?.approvalId as string;
+      expect(approvalId).toMatch(/^apr_/);
+      expect(textOf(r)).toBe(
+        `Waiting for the owner to approve connecting Acme Stocks. Approval id ${approvalId} — call check_approval to resume. Tell the user their phone/dashboard has a request to connect Acme Stocks.`,
+      );
+      expect(r.structuredContent).toMatchObject({ status: "pending", kind: "service", approvalId, service: { id: "acme-stocks", name: "Acme Stocks" } });
+      expect(logs).toContain(`service request needs approval ${approvalId}; waiting 300 ms`);
+      expect(wallet.serviceRequests.at(-1)).toEqual({ serviceId: "acme-stocks", reason: "The owner asked for the ACME stock price." });
+
+      const still = await c.call("check_approval", { approval_id: approvalId });
+      expect(textOf(still)).toContain("Waiting for the owner to approve connecting Acme Stocks");
+      expect(logs.filter((l) => l.includes(`service request needs approval ${approvalId}`)).length).toBe(2);
+
+      setTimeout(() => wallet.approve(approvalId), 100);
+      const done = await c.call("check_approval", { approval_id: approvalId });
+      expect(done.isError).toBeFalsy();
+      expect(textOf(done)).toBe('Owner connected Acme Stocks. Call get_service { service_id: "acme-stocks" } for how to use it.');
+      expect(done.structuredContent).toMatchObject({ status: "connected", kind: "service", approvalId, service: { id: "acme-stocks", connectedBy: "approval" } });
+
+      // already decided: no "waiting" log line for the quick look
+      const n = logs.length;
+      const again = await c.call("check_approval", { approval_id: approvalId });
+      expect(textOf(again)).toContain("Owner connected Acme Stocks");
+      expect(logs.length).toBe(n);
+
+      expect(textOf(await c.call("list_services"))).toContain("📈 Acme Stocks (acme-stocks)");
+      const paid = await c.call("fetch_url", { url: `${merchant.url}/api/stock?symbol=ACME` });
+      expect(paid.isError).toBeFalsy();
+      expect(textOf(paid)).toContain("Paid $0.15 to Acme Stocks");
+
+      const already = await c.call("request_service", { service_id: "acme-stocks", reason: "again" });
+      expect(textOf(already)).toBe('Acme Stocks is already connected. Call get_service { service_id: "acme-stocks" } for how to use it.');
+      expect(already.structuredContent).toMatchObject({ status: "connected" });
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("request_service connects within the wait window when the owner approves quickly (per-token lists)", async () => {
+    const shopperToken = wallet.addToken("shopper", []);
+    const c = await connect(wallet.url, shopperToken, 2000);
+    try {
+      expect(textOf(await c.call("list_services"))).toContain("No services are connected to you yet.");
+      const blocked = await c.call("fetch_url", { url: `${merchant.url}/pizza/order`, method: "POST", body: { size: "large" } });
+      expect(textOf(blocked)).toContain('Acme Pizza isn\'t connected yet. Ask your owner with request_service { service_id: "acme-pizza" }.');
+      wallet.autoApproveAfterMs = 100;
+      const r = await c.call("request_service", { service_id: "acme-pizza", reason: "The owner wants a pizza." });
+      expect(r.isError).toBeFalsy();
+      expect(textOf(r)).toBe('Connected Acme Pizza. Call get_service { service_id: "acme-pizza" } for how to use it.');
+      expect(r.structuredContent).toMatchObject({ status: "connected", service: { id: "acme-pizza" } });
+      expect(wallet.agents.get(shopperToken)!.services.map((s) => s.id)).toEqual(["acme-pizza"]);
+      // each token sees only its own connections
+      expect(textOf(await c.call("get_wallet"))).toContain("Connected services: Acme Pizza (acme-pizza) — list_services");
+      expect(textOf(await mcp.call("get_wallet"))).toContain("Acme Weather (acme-weather)");
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("reports a denied service request", async () => {
+    wallet.autoApproveAfterMs = null;
+    const tok = wallet.addToken("worker-9", []);
+    const c = await connect(wallet.url, tok, 200);
+    try {
+      const r = await c.call("request_service", { service_id: "acme-weather", reason: "Curious about the weather." });
+      const approvalId = r.structuredContent?.approvalId as string;
+      expect(r.structuredContent?.status).toBe("pending");
+      wallet.deny(approvalId);
+      const d = await c.call("check_approval", { approval_id: approvalId });
+      expect(d.isError).toBeFalsy();
+      expect(textOf(d)).toContain("The owner denied connecting Acme Weather");
+      expect(d.structuredContent).toMatchObject({ status: "denied", kind: "service", approvalId });
+      expect(wallet.agents.get(tok)!.services).toEqual([]);
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("proposes a custom service, validates input, and serves its docs once connected", async () => {
+    wallet.autoApproveAfterMs = 50;
+    const bad = await mcp.call("request_service", { custom: { name: "Sketchy", base_url: "ftp://nope", summary: "x", max_price: "1.00" }, reason: "test" });
+    expect(bad.isError).toBe(true);
+    expect(textOf(bad)).toContain("baseUrl must be http(s)");
+
+    const none = await mcp.call("request_service", { reason: "no id" });
+    expect(none.isError).toBe(true);
+    expect(textOf(none)).toContain("Give service_id");
+
+    const partial = await mcp.call("request_service", { custom: { name: "Half" }, reason: "x" });
+    expect(partial.isError).toBe(true);
+    expect(textOf(partial)).toContain("A custom service needs base_url, summary, max_price");
+
+    // a model that fills `custom: {}` next to a good service_id still gets through
+    const filled = await mcp.call("request_service", { service_id: "acme-weather", custom: {}, reason: "x" });
+    expect(filled.isError).toBeFalsy();
+    expect(textOf(filled)).toContain("Acme Weather is already connected");
+
+    const missing = await mcp.call("request_service", { service_id: "acme-yachts", reason: "boat" });
+    expect(missing.isError).toBe(true);
+    expect(textOf(missing)).toContain('There is no service "acme-yachts" in the directory');
+
+    const r = await mcp.call("request_service", {
+      custom: { name: "Translate Co", base_url: `${merchant.url}/translate`, summary: "Translate text.", max_price: "0.10", docs: "POST /translate { text, to }" },
+      reason: "The owner asked for translations.",
+    });
+    expect(r.isError).toBeFalsy();
+    expect(textOf(r)).toContain("Connected Translate Co.");
+    expect(wallet.serviceRequests.at(-1)).toMatchObject({ custom: { name: "Translate Co", baseUrl: `${merchant.url}/translate`, maxPrice: "0.10" } });
+    const id = (r.structuredContent?.service as { id: string }).id;
+    const g = await mcp.call("get_service", { service_id: id });
+    expect(textOf(g)).toContain("Docs (written by an agent");
+    expect(textOf(g)).toContain("POST /translate { text, to }");
+  });
+
+  it("check_approval explains an unknown approval id", async () => {
+    const r = await mcp.call("check_approval", { approval_id: "apr_nope" });
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toContain("There is no approval apr_nope");
   });
 });
 

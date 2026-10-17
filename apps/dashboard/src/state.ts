@@ -2,10 +2,13 @@
  * Pure state + reducer for the dashboard. The hook feeds it the initial fetches and
  * then every SSE event; components only read from it. Unit-tested in state.test.ts.
  */
+import { isServiceApproval, serviceIdOfEvent, serviceOfEvent } from "./format";
 import type {
   AgentPublic,
   Approval,
+  ConnectedService,
   ConnectionStatus,
+  DirectoryService,
   EventType,
   Receipt,
   SummaryResponse,
@@ -36,8 +39,16 @@ export interface DashboardState {
   /** Ids of approvals with an approve/deny request in flight. */
   busyApprovals: string[];
   busyAgents: string[];
+  /** `${agentId}:${serviceId}` keys with a connect/disconnect request in flight. */
+  busyServices: string[];
   loaded: boolean;
   lastError?: string;
+  /** The service directory (catalog). Connections come from `agents[].services`, not from here. */
+  directory: DirectoryService[];
+  directoryStatus: "idle" | "loading" | "ready" | "error";
+  directoryError?: string;
+  /** Usage docs fetched on demand, by service id. */
+  serviceDocs: Record<string, string>;
 }
 
 export const initialState: DashboardState = {
@@ -51,7 +62,11 @@ export const initialState: DashboardState = {
   showDetails: false,
   busyApprovals: [],
   busyAgents: [],
+  busyServices: [],
   loaded: false,
+  directory: [],
+  directoryStatus: "idle",
+  serviceDocs: {},
 };
 
 export type Action =
@@ -65,6 +80,11 @@ export type Action =
   | { type: "toggleDetails" }
   | { type: "busyApproval"; id: string; busy: boolean }
   | { type: "busyAgent"; id: string; busy: boolean }
+  | { type: "busyService"; key: string; busy: boolean }
+  | { type: "directory"; services: DirectoryService[] }
+  | { type: "directoryError"; message: string }
+  | { type: "directoryLoading" }
+  | { type: "serviceDocs"; id: string; docs: string }
   | { type: "error"; message?: string };
 
 const MONEY_EVENTS: ReadonlySet<EventType> = new Set<EventType>([
@@ -81,6 +101,14 @@ const MONEY_EVENTS: ReadonlySet<EventType> = new Set<EventType>([
 export function isMoneyEvent(type: EventType): boolean {
   return MONEY_EVENTS.has(type);
 }
+
+/** Events after which the summary (balances, or agents' connected services) should be refetched. */
+export function refreshesSummary(type: EventType): boolean {
+  return isMoneyEvent(type) || type === "service.connected" || type === "service.disconnected";
+}
+
+/** Busy key for one agent/service switch. */
+export const serviceKey = (agentId: string, serviceId: string) => `${agentId}:${serviceId}`;
 
 function totalsFrom(summary: SummaryResponse): Totals {
   return {
@@ -106,7 +134,14 @@ function upsertReceipt(receipts: Receipt[], r: Receipt): Receipt[] {
   return [r, ...receipts].slice(0, MAX_RECEIPTS);
 }
 
-function upsertAgent(agents: AgentPublic[], agent: AgentPublic): AgentPublic[] {
+/** A wallet-service that predates §13 sends no `services`; never let that crash a render. */
+function norm(agent: AgentPublic): AgentPublic {
+  return Array.isArray(agent.services) ? agent : { ...agent, services: [] };
+}
+const normAll = (agents: AgentPublic[]) => agents.map(norm);
+
+function upsertAgent(agents: AgentPublic[], raw: AgentPublic): AgentPublic[] {
+  const agent = norm(raw);
   const idx = agents.findIndex((a) => a.id === agent.id);
   if (idx >= 0) {
     const next = agents.slice();
@@ -122,23 +157,71 @@ function patchAgent(agents: AgentPublic[], id: string | undefined, patch: Partia
 }
 
 const approvalIdOf = (e: WalletEvent): string | undefined => e.approval?.id ?? e.receipt?.approvalId;
+const frozenReceiptId = (e: WalletEvent): string | undefined => (e.data as { receiptId?: string } | undefined)?.receiptId;
+const connectKey = (e: WalletEvent): string | undefined => {
+  const sid = serviceIdOfEvent(e);
+  const aid = e.agentId ?? e.approval?.agentId;
+  return sid && aid ? `${aid}:${sid}` : undefined;
+};
 
 /**
  * One feed line per payment: a settlement replaces its own "is paying" row, and an owner decision
  * replaces its "Approve?" row. Used for live events and for the initial snapshot alike.
+ * Services follow the same rule: a decision replaces its "wants to connect" row, and the
+ * "Acme Pizza connected to shopper" row replaces the "Approved connecting…" row it caused.
+ * A freeze caused by a block is folded into the block's row (same `data.receiptId`).
  */
 export function collapseFeed(newestFirst: WalletEvent[]): WalletEvent[] {
   const settled = new Set<string>();
   const decided = new Set<string>();
+  const connected = new Set<string>();
+  const blocked = new Set<string>();
   for (const e of newestFirst) {
+    if (e.type === "payment.blocked" && e.receipt) blocked.add(e.receipt.id);
     if (e.type === "payment.settled" && e.receipt) settled.add(e.receipt.id);
     if ((e.type === "approval.approved" || e.type === "approval.denied") && approvalIdOf(e)) decided.add(approvalIdOf(e)!);
+    if (e.type === "service.connected" && connectKey(e)) connected.add(connectKey(e)!);
   }
   return newestFirst.filter((e) => {
     if (e.type === "payment.signed" && e.receipt && settled.has(e.receipt.id)) return false;
-    if (e.type === "payment.needs_approval" && approvalIdOf(e) && decided.has(approvalIdOf(e)!)) return false;
+    if ((e.type === "payment.needs_approval" || e.type === "service.requested") && approvalIdOf(e) && decided.has(approvalIdOf(e)!)) return false;
+    if (e.type === "approval.approved" && isServiceApproval(e.approval) && connectKey(e) && connected.has(connectKey(e)!)) return false;
+    // §6: a policy freeze comes as a pair (payment.blocked + agent.frozen) sharing receiptId; the
+    // blocked row already says "Agent frozen.", and the banner + red card carry the frozen state.
+    if (e.type === "agent.frozen" && frozenReceiptId(e) && blocked.has(frozenReceiptId(e)!)) return false;
     return true;
   });
+}
+
+function withService(agent: AgentPublic, svc: ConnectedService): AgentPublic {
+  const services = agent.services ?? [];
+  const idx = services.findIndex((s) => s.id === svc.id);
+  const next = idx >= 0 ? services.map((s, i) => (i === idx ? { ...s, ...svc } : s)) : [...services, svc];
+  return { ...agent, services: next };
+}
+
+/** The connection a `service.connected` event describes, filled in from the event when fields are missing. */
+export function connectionFromEvent(e: WalletEvent): ConnectedService | undefined {
+  const svc = serviceOfEvent(e);
+  if (!svc?.id) return undefined;
+  const data = (e.data ?? {}) as { connectedBy?: ConnectedService["connectedBy"] };
+  const s = svc as Partial<ConnectedService>;
+  return {
+    icon: "🔌",
+    color: "#5B7CFA",
+    provider: "",
+    kind: "x402",
+    summary: "",
+    baseUrl: "",
+    pricing: "",
+    maxPrice: "0.00",
+    permissions: [],
+    name: svc.name ?? svc.id,
+    ...s,
+    id: svc.id,
+    connectedAt: s.connectedAt ?? e.at,
+    connectedBy: s.connectedBy ?? data.connectedBy ?? (e.approval ? "approval" : "owner"),
+  } as ConnectedService;
 }
 
 /** Apply one wallet event to the state. Idempotent on event id. */
@@ -173,10 +256,24 @@ export function applyEvent(state: DashboardState, e: WalletEvent): DashboardStat
       break;
     }
     case "payment.needs_approval":
-      if (e.approval && !next.approvals.some((a) => a.id === e.approval!.id)) {
-        next.approvals = sortNewest([e.approval, ...next.approvals]);
+    case "service.requested":
+      if (e.approval && e.approval.status !== "approved" && e.approval.status !== "denied" && e.approval.status !== "expired" && !next.approvals.some((a) => a.id === e.approval!.id)) {
+        const approval: Approval = e.type === "service.requested" && !e.approval.kind ? { ...e.approval, kind: "service" } : e.approval;
+        next.approvals = sortNewest([approval, ...next.approvals]);
       }
       break;
+    case "service.connected": {
+      const svc = connectionFromEvent(e);
+      if (svc && e.agentId) next.agents = next.agents.map((a) => (a.id === e.agentId ? withService(a, svc) : a));
+      break;
+    }
+    case "service.disconnected": {
+      const sid = serviceIdOfEvent(e);
+      if (sid && e.agentId) {
+        next.agents = next.agents.map((a) => (a.id === e.agentId ? { ...a, services: (a.services ?? []).filter((s) => s.id !== sid) } : a));
+      }
+      break;
+    }
     case "approval.approved":
     case "approval.denied": {
       const id = e.approval?.id ?? e.receipt?.approvalId;
@@ -204,7 +301,7 @@ export function reducer(state: DashboardState, action: Action): DashboardState {
       return {
         ...state,
         loaded: true,
-        agents: action.summary.agents,
+        agents: normAll(action.summary.agents),
         totals: totalsFrom(action.summary),
         approvals: sortNewest(action.approvals.filter((a) => a.status === "pending")),
         receipts: sortNewest(action.receipts).slice(0, MAX_RECEIPTS),
@@ -212,7 +309,7 @@ export function reducer(state: DashboardState, action: Action): DashboardState {
         lastError: undefined,
       };
     case "summary":
-      return { ...state, agents: action.summary.agents, totals: totalsFrom(action.summary), approvals: sortNewest(action.summary.pendingApprovals) };
+      return { ...state, agents: normAll(action.summary.agents), totals: totalsFrom(action.summary), approvals: sortNewest(action.summary.pendingApprovals) };
     case "receipts":
       return { ...state, receipts: sortNewest(action.receipts).slice(0, MAX_RECEIPTS) };
     case "approvals":
@@ -229,6 +326,17 @@ export function reducer(state: DashboardState, action: Action): DashboardState {
       return { ...state, busyApprovals: toggleId(state.busyApprovals, action.id, action.busy) };
     case "busyAgent":
       return { ...state, busyAgents: toggleId(state.busyAgents, action.id, action.busy) };
+    case "busyService":
+      return { ...state, busyServices: toggleId(state.busyServices, action.key, action.busy) };
+    case "directoryLoading":
+      return { ...state, directoryStatus: state.directoryStatus === "ready" ? "ready" : "loading" };
+    case "directory":
+      return { ...state, directory: action.services, directoryStatus: "ready", directoryError: undefined };
+    case "directoryError":
+      // Keep a catalog we already have; only show the error when there is nothing to show.
+      return { ...state, directoryStatus: state.directory.length ? "ready" : "error", directoryError: action.message };
+    case "serviceDocs":
+      return { ...state, serviceDocs: { ...state.serviceDocs, [action.id]: action.docs } };
     case "error":
       return { ...state, lastError: action.message };
   }

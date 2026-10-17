@@ -1,16 +1,29 @@
 import type {
   ApprovalWaitResponse,
+  ConnectedService,
   EarningRequest,
   MeResponse,
   PayRequest,
   PayResponse,
   Receipt,
+  ServiceManifest,
+  ServiceRequest,
+  ServiceRequestResponse,
   TransferRequest,
   TransferResponse,
   X402SettleResponse,
 } from "@allowance/shared";
 
 export type FetchLike = typeof fetch;
+
+/** A directory entry as the agent sees it (GET /v1/directory, /v1/directory/:id). */
+export type DirectoryEntry = ServiceManifest & { connected: boolean };
+
+/** GET /v1/services */
+export interface ServicesResponse {
+  connected: ConnectedService[];
+  directoryUrl: string;
+}
 
 /** The wallet-service could not be reached at all (not running / wrong URL). */
 export class WalletUnreachableError extends Error {
@@ -74,6 +87,10 @@ export class WalletClient {
     return this.#request<TransferResponse>("POST", "/v1/transfer", req, [200, 202, 403]);
   }
 
+  /**
+   * Long-poll an approval (payment or service). Approved service approvals carry `service`
+   * (the connection that was made) and no paymentHeader/receipt.
+   */
   waitApproval(approvalId: string, timeoutMs: number): Promise<ApprovalWaitResponse> {
     return this.#request<ApprovalWaitResponse>(
       "GET",
@@ -83,6 +100,29 @@ export class WalletClient {
       // allow the long-poll to run a bit past the server-side timeout
       timeoutMs + 10_000,
     );
+  }
+
+  /** Services connected to this agent (the directory itself is always available and not listed). */
+  async services(): Promise<ServicesResponse> {
+    const r = await this.#request<Partial<ServicesResponse>>("GET", "/v1/services");
+    return { connected: r?.connected ?? [], directoryUrl: r?.directoryUrl ?? "" };
+  }
+
+  /** Directory search (no docs). `q` matches name, summary, description, provider, category. */
+  async directory(q?: string): Promise<DirectoryEntry[]> {
+    const query = q && q.trim() ? `?q=${encodeURIComponent(q.trim())}` : "";
+    const r = await this.#request<{ services?: DirectoryEntry[] }>("GET", `/v1/directory${query}`);
+    return r?.services ?? [];
+  }
+
+  /** One directory entry with docs (custom connected services return their own docs). 404 service_not_found. */
+  directoryEntry(id: string): Promise<DirectoryEntry> {
+    return this.#request<DirectoryEntry>("GET", `/v1/directory/${encodeURIComponent(id)}`);
+  }
+
+  /** 200 already connected · 202 needs_approval. 404 service_not_found / 400 invalid_request throw WalletApiError. */
+  requestService(req: ServiceRequest): Promise<ServiceRequestResponse> {
+    return this.#request<ServiceRequestResponse>("POST", "/v1/services/requests", req, [200, 201, 202]);
   }
 
   earnings(req: EarningRequest): Promise<{ receipt: Receipt }> {

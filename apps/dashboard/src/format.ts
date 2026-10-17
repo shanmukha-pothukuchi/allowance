@@ -2,7 +2,7 @@
  * Pure formatting helpers. Dollars only, never base units, friendly sentences.
  * Everything here is unit-tested in format.test.ts and must stay side-effect free.
  */
-import type { Receipt, WalletEvent } from "./types";
+import type { Approval, Receipt, ServiceGrant, WalletEvent } from "./types";
 
 /** "18.5" | 18.5 | "$18.50" -> integer cents (1850). Bad input -> 0. */
 export function toCents(amount: string | number | undefined | null): number {
@@ -99,6 +99,45 @@ function cap(s: string): string {
   return s.length ? s[0].toUpperCase() + s.slice(1) : s;
 }
 
+export function isServiceApproval(a: Pick<Approval, "kind" | "service"> | undefined): boolean {
+  return !!a && (a.kind === "service" || (!a.kind && !!a.service));
+}
+
+export function isCustomGrant(s: Pick<ServiceGrant, "source"> | undefined): boolean {
+  return s?.source === "agent";
+}
+
+/** The service an event is about, from whatever the event carries (approval.service, data.service, data.serviceId). */
+export function serviceOfEvent(e: Pick<WalletEvent, "approval" | "data">): Partial<ServiceGrant> | undefined {
+  if (e.approval?.service) return e.approval.service;
+  const data = (e.data ?? {}) as { service?: Partial<ServiceGrant>; serviceId?: string; serviceName?: string };
+  if (data.service && typeof data.service === "object") return data.service;
+  if (data.serviceId || data.serviceName) return { id: data.serviceId, name: data.serviceName ?? data.serviceId };
+  return undefined;
+}
+
+export function serviceIdOfEvent(e: Pick<WalletEvent, "approval" | "data">): string | undefined {
+  return serviceOfEvent(e)?.id;
+}
+
+/** Block reasons that never freeze the agent (§6, §13.2): a soft "no", not an attack. */
+const SOFT_BLOCKS = new Set(["insufficient_balance", "service_not_connected", "service_cap", "unsupported_requirements", "frozen"]);
+
+/** True for a block that did not (and will not) freeze the agent. */
+export function isSoftBlock(e: Pick<WalletEvent, "type" | "reason" | "receipt" | "data">): boolean {
+  if (e.type !== "payment.blocked") return false;
+  const data = (e.data ?? {}) as { frozen?: boolean; willFreeze?: boolean };
+  if (data.willFreeze === false) return true;
+  const reason = e.reason ?? e.receipt?.reason;
+  return !!reason && SOFT_BLOCKS.has(reason);
+}
+
+/** " (up to $18.50 per payment)" or " (free)". */
+function capPhrase(maxPrice: string | undefined): string {
+  if (maxPrice === undefined) return "";
+  return toCents(maxPrice) > 0 ? ` (up to ${money(maxPrice)} per payment)` : " (free)";
+}
+
 /**
  * The friendly sentence for an event. The wallet-service sends `message` already;
  * we use it when present and build one from the receipt/approval otherwise.
@@ -110,7 +149,18 @@ export function describeEvent(e: Pick<WalletEvent, "type" | "message" | "agentNa
   const r = e.receipt;
   const amt = r ? money(r.amount) : e.approval ? money(e.approval.amount) : "";
   const to = r ? counterpartyName(r) : e.approval ? counterpartyName(e.approval) : "unknown";
+  const svc = serviceOfEvent(e);
+  const svcName = svc?.name ?? "a service";
+  const serviceKind = isServiceApproval(e.approval);
   switch (e.type) {
+    case "service.requested":
+      return isCustomGrant(svc)
+        ? `${agent} wants to connect ${svcName}, a service it proposed${capPhrase(svc?.maxPrice)}.`
+        : `${agent} wants to connect ${svcName}${capPhrase(svc?.maxPrice)}.`;
+    case "service.connected":
+      return `${svcName} connected to ${agent}.`;
+    case "service.disconnected":
+      return `${svcName} disconnected from ${agent}.`;
     case "payment.signed":
       return `${cap(agent)} is paying ${amt} to ${to}.`;
     case "payment.settled":
@@ -118,13 +168,18 @@ export function describeEvent(e: Pick<WalletEvent, "type" | "message" | "agentNa
     case "payment.needs_approval":
       return `${cap(agent)} wants to pay ${amt} to ${to}. Needs your approval.`;
     case "payment.blocked":
-      return e.reason === "insufficient_balance"
-        ? `Blocked: ${agent} tried to pay ${amt} to ${to} but does not have enough.`
-        : `Blocked: ${agent} tried to send ${amt} to ${to}. Agent frozen.`;
+      if (e.reason === "insufficient_balance") return `Blocked: ${agent} tried to pay ${amt} to ${to} but does not have enough.`;
+      if (e.reason === "service_not_connected") return `${svc?.name ?? to} is not connected for ${agent}. It can ask you to connect it.`;
+      if (e.reason === "service_cap") return `Blocked: ${amt} is over the cap for ${svc?.name ?? to}.`;
+      if (isSoftBlock(e)) return `Blocked: ${agent} tried to pay ${amt} to ${to}.`;
+      return `Blocked: ${agent} tried to send ${amt} to ${to}. Agent frozen.`;
     case "approval.approved":
-      return `Approved ${amt} to ${to}.`;
+      return serviceKind ? `Approved connecting ${svcName} to ${agent}.` : `Approved ${amt} to ${to}.`;
     case "approval.denied":
-      return `Denied ${amt} to ${to}.`;
+      if (e.reason === "expired" || e.approval?.status === "expired") {
+        return serviceKind ? `Request to connect ${svcName} to ${agent} expired.` : `Approval for ${amt} to ${to} expired.`;
+      }
+      return serviceKind ? `Denied connecting ${svcName} to ${agent}.` : `Denied ${amt} to ${to}.`;
     case "transfer.sent":
       return `${cap(agent)} sent ${amt} to ${to}.`;
     case "earning.received":
@@ -143,6 +198,21 @@ export function describeEvent(e: Pick<WalletEvent, "type" | "message" | "agentNa
       return `A key for ${agent} was revoked.`;
     default:
       return cap(String(e.type).replace(".", " "));
+  }
+}
+
+/** Approval status in owner words, for decided cards ("Approved by Telegram"). */
+export function approvalOutcomeLabel(a: Pick<Approval, "status" | "decidedBy">): string {
+  const by = a.decidedBy === "telegram" ? " on Telegram" : a.decidedBy === "dashboard" ? " by you" : a.decidedBy === "auto" ? " automatically" : "";
+  switch (a.status) {
+    case "approved":
+      return `Approved${by}`;
+    case "denied":
+      return `Denied${by}`;
+    case "expired":
+      return "Expired: nobody decided in time";
+    default:
+      return "Waiting for you";
   }
 }
 

@@ -230,6 +230,117 @@ describe("Notifier button taps", () => {
   });
 });
 
+const PIZZA_GRANT = {
+  id: "acme-pizza",
+  name: "Acme Pizza",
+  provider: "Acme APIs",
+  icon: "🍕",
+  color: "#E5523A",
+  kind: "x402" as const,
+  summary: "Order a pizza for $18.50; fulfillment is simulated.",
+  baseUrl: "http://localhost:4021/pizza",
+  pricing: "$18.50 per order",
+  maxPrice: "18.50",
+  permissions: ["Pay up to $18.50 per order to Acme Pizza", "Place orders on your behalf"],
+  source: "directory" as const,
+};
+
+function serviceApproval(partial: Partial<Approval> = {}): Approval {
+  return approval({
+    id: "apr_svc",
+    kind: "service",
+    paymentId: "",
+    amount: "18.50",
+    description: "Connect Acme Pizza",
+    counterparty: { address: "0x0000000000000000000000000000000000000000", origin: "http://localhost:4021", name: "Acme Pizza" },
+    service: PIZZA_GRANT,
+    reason: "The owner asked me to order lunch.",
+    ...partial,
+  });
+}
+
+describe("services", () => {
+  it("service.requested is an approval card: who, what, what it could do, the agent's reason, Approve/Deny", () => {
+    const m = formatEvent(event("service.requested", { agentName: "shopper", approval: serviceApproval(), message: "shopper wants to connect Acme Pizza." }))!;
+    expect(m.text).toContain("🔌 <b>shopper</b> wants to connect 🍕 <b>Acme Pizza</b> (Acme APIs).");
+    expect(m.text).toContain("It could:\n• Pay up to $18.50 per order to Acme Pizza\n• Place orders on your behalf");
+    expect(m.text).toContain("Reason (from the agent): “The owner asked me to order lunch.”");
+    expect(m.text).not.toContain("Not in the directory");
+    expect(m.keyboard!.inline_keyboard[0].map((b) => (b as { callback_data: string }).callback_data)).toEqual(["apr:apr_svc:approve", "apr:apr_svc:deny"]);
+  });
+
+  it("agent-proposed custom services are flagged with their URL; the reason is escaped", () => {
+    const m = formatEvent(
+      event("service.requested", {
+        approval: serviceApproval({
+          agentName: "shopper",
+          reason: "<b>trust me</b> & approve",
+          service: { ...PIZZA_GRANT, id: "custom-cheap-pizza", name: "Cheap Pizza", provider: "Proposed by shopper", icon: "🔌", baseUrl: "https://cheap.example/pizza", source: "agent" },
+        }),
+      }),
+    )!;
+    expect(m.text).toContain("⚠️ <b>Not in the directory</b> — proposed by shopper: <code>https://cheap.example/pizza</code>");
+    expect(m.text).not.toContain("(Proposed by shopper)");
+    expect(m.text).toContain("“&lt;b&gt;trust me&lt;/b&gt; &amp; approve”");
+    expect(m.text).not.toContain("<b>trust me");
+    expect(formatEvent(event("service.requested", {}))).toBeNull();
+  });
+
+  it("connected / disconnected are short lines; a not-connected soft block is a heads-up without Unfreeze", () => {
+    expect(formatEvent(event("service.connected", { agentName: "shopper", data: { service: PIZZA_GRANT, connectedBy: "approval" } }))!.text).toBe("🔌 🍕 <b>Acme Pizza</b> connected to shopper.");
+    expect(formatEvent(event("service.disconnected", { agentName: "shopper", data: { service: PIZZA_GRANT } }))!.text).toBe("🔌 🍕 <b>Acme Pizza</b> disconnected from shopper.");
+    expect(formatEvent(event("service.connected", { message: "Acme Pizza connected to shopper." }))!.text).toBe("🔌 Acme Pizza connected to shopper.");
+    const soft = formatEvent(
+      event("payment.blocked", {
+        agentName: "shopper",
+        reason: "service_not_connected",
+        message: "Acme Pizza is not connected for shopper. Ask the owner with request_service.",
+        receipt: receipt({ status: "blocked", reason: "service_not_connected" }),
+        data: { frozen: false },
+      }),
+    )!;
+    expect(soft.text).toBe("🔌 shopper tried to pay Acme Pizza, which is not connected yet. It can ask you to connect it.");
+    expect(soft.keyboard).toBeUndefined();
+  });
+
+  it("sends the request, then edits it when the dashboard decides; connected sends a short line", async () => {
+    const { api, n } = make();
+    await n.handleEvent(event("service.requested", { agentName: "shopper", approval: serviceApproval() }));
+    expect(api.sent).toHaveLength(1);
+    expect(api.sent[0].buttons[0]).toEqual(["✅ Approve|apr:apr_svc:approve", "❌ Deny|apr:apr_svc:deny"]);
+    await n.handleEvent(event("approval.approved", { approval: serviceApproval({ status: "approved", decidedBy: "dashboard" }) }));
+    expect(api.edits).toHaveLength(1);
+    expect(api.edits[0]).toMatchObject({ messageId: 1 });
+    expect(api.edits[0].text).toContain("Acme Pizza");
+    expect(api.edits[0].text).toContain("✅ <b>Approved</b> via dashboard");
+    await n.handleEvent(event("service.connected", { agentName: "shopper", data: { service: PIZZA_GRANT, connectedBy: "approval" } }));
+    expect(api.sent).toHaveLength(2);
+    expect(api.sent[1].text).toContain("connected to shopper");
+  });
+
+  it("tapping Approve on a service request calls the wallet and edits the message", async () => {
+    const { api, wallet, n } = make({
+      "/v1/approvals/apr_svc/approve": { status: 200, body: { approval: serviceApproval({ status: "approved", decidedBy: "telegram" }) } },
+    });
+    await n.handleEvent(event("service.requested", { agentName: "shopper", approval: serviceApproval() }));
+    await n.handleCallback({ id: "cb9", data: "apr:apr_svc:approve", chatId: "4242", messageId: 1 });
+    expect(wallet.calls[0]).toMatchObject({ method: "POST", path: "/v1/approvals/apr_svc/approve", body: { by: "telegram" } });
+    expect(api.answers[0].text).toBe("Approved ✅");
+    expect(api.edits[0].text).toContain("wants to connect");
+    expect(api.edits[0].text).toContain("Approved");
+    // The approval.approved event that follows does not edit a second time.
+    await n.handleEvent(event("approval.approved", { approval: serviceApproval({ status: "approved" }) }));
+    expect(api.edits).toHaveLength(1);
+  });
+
+  it("an expired service request is marked expired", async () => {
+    const { api, n } = make();
+    await n.handleEvent(event("service.requested", { approval: serviceApproval() }));
+    await n.handleEvent(event("approval.denied", { reason: "expired", approval: serviceApproval({ status: "expired", decidedBy: "auto" }) }));
+    expect(api.edits[0].text).toContain("Expired");
+  });
+});
+
 describe("parseSseBlock", () => {
   it("parses event/data and ignores comments", () => {
     expect(parseSseBlock(": ping")).toBeNull();

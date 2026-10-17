@@ -106,7 +106,7 @@ export class Notifier {
         reply_markup: msg.keyboard,
         link_preview_options: { is_disabled: true },
       });
-      if (e.type === "payment.needs_approval" && e.approval) {
+      if ((e.type === "payment.needs_approval" || e.type === "service.requested") && e.approval) {
         this.approvals.set(e.approval.id, { chatId, messageId: sent.message_id, text: msg.text, decided: false });
         if (this.approvals.size > 200) this.approvals.delete(this.approvals.keys().next().value!);
       }

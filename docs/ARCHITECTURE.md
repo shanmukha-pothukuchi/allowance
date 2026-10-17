@@ -249,7 +249,8 @@ slot counts.
 
 Env: `WALLET_SERVICE_URL`, `AGENT_TOKEN`. Tools: `get_wallet`, `fetch_url`, `find_work`,
 `claim_bounty`, `submit_bounty`, `list_receipts`, `check_approval`, `transfer_usdc` (direct transfer,
-subject to policy; it is the tool a fooled agent reaches for). `fetch_url` implements:
+subject to policy; it is the tool a fooled agent reaches for), and the service tools of §13.3
+(`list_services`, `get_service`, `search_services`, `request_service`). `fetch_url` implements:
 GET/POST → if 402: decode `PAYMENT-REQUIRED` → `POST /v1/pay` → 200: retry with
 `PAYMENT-SIGNATURE`, report `/settled`, return body + receipt · 202: `/wait` 45 s → approved: retry;
 pending: return approval id · 403: friendly error. `submit_bounty` on 200 posts `/v1/earnings`.
@@ -460,7 +461,15 @@ amount must also be ≤ that service's `maxPrice` (`service_cap` block, no freez
 allowlisted and its URL matches a directory service the agent has not connected, the block reason is
 `service_not_connected` with message `"Acme Pizza is not connected for shopper. Ask the owner with
 request_service."` and the agent is **not** frozen. Unknown destinations stay `not_allowlisted` and
-freeze. `allowlist: null` still means unrestricted. Setup gives every agent
+freeze. `allowlist: null` still means unrestricted
+(services are ignored). Rule order: address, then origin, then connected service; the service cap
+applies only when the payment was allowed via a service. The directory is consulted only when a URL
+payment would otherwise be `not_allowlisted`; if it is unreachable the payment is blocked as
+`not_allowlisted` without freezing (direct transfers never consult it and still freeze). A
+`service_not_connected` 403 includes `service: { id, name, icon }` and `serviceId`. A repeated
+request for a service that already has a pending approval returns the same approval id; custom
+services get ids `custom-<slug>`. Agent tokens are refused on owner endpoints even without an owner
+key. Setup gives every agent
 `allowlist: { addresses: [], origins: [] }` and default services:
 
 | Agent | Default services |
@@ -480,6 +489,10 @@ freeze. `allowlist: null` still means unrestricted. Setup gives every agent
 | `request_service` | `{ service_id?, custom?, reason }` | `POST /v1/services/requests`; on 202 waits ≤ approval wait (45 s) on `/wait`; returns "Connected Acme Pizza." / "Waiting for the owner to approve connecting Acme Pizza. Approval id apr_… — call check_approval to resume." / denied. Logs `service request needs approval apr_…; waiting` (the chat server keys on `needs approval apr_`). |
 | `check_approval` | `{ approval_id }` | Also resolves service approvals ("Owner connected Acme Pizza."). |
 
+`request_service.reason` is required in the MCP schema (`ServiceRequest.reason` stays optional on
+the wire). `/v1/approvals/:id/wait` returns `kind` on every result and `service` for service
+approvals in every state; `timeoutMs=0` means "check now".
+
 `fetch_url` on a `service_not_connected` block returns a non-freezing, non-scary message telling
 the model to call `request_service` with the matching service id.
 
@@ -494,6 +507,10 @@ the model to call `request_service` with the matching service id.
   and `lastMessage: { kind, text, at } | null` for the conversation list.
 - Group sends tag the user log entry: `{ kind:"user", …, groupId }` (same `groupId` for every member
   of one broadcast) so the UI renders a group thread with one user bubble per broadcast.
+- Additive SSE/API fields: `wallet` events carry `services`; the `snapshot` carries `groups`;
+  `POST /api/groups/:group/messages` returns `groupId`; `waiting_approval` status carries
+  `approvalKind`. The system prompt's services block is rebuilt each run and after
+  `request_service` / `check_approval`.
 - `LogEntry` tool entries are unchanged; the UI derives cards from tool names (`fetch_url` paid →
   receipt card, `request_service` → connection card, `transfer_usdc` blocked → blocked card).
 

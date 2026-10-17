@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Server } from "node:http";
@@ -15,6 +15,8 @@ import type { AppConfig, Policy, WalletEvent, X402PaymentRequired } from "@allow
 import { createApp } from "./app.js";
 import type { WalletApp } from "./app.js";
 import { openStore, createAgentOffline } from "./store.js";
+import { createDirectoryApp } from "../../directory/src/app.js";
+import { buildCatalog } from "../../directory/src/catalog.js";
 
 const MERCHANT = "http://localhost:4021";
 const PAY_TO = "0x9999999999999999999999999999999999999999";
@@ -23,6 +25,7 @@ const ATTACKER = "0x000000000000000000000000000000000000dEaD";
 let facilitator: StubFacilitator;
 let wallet: WalletApp;
 let server: Server;
+let directoryServer: Server;
 let base: string;
 let dataDir: string;
 let baseConfig: AppConfig;
@@ -40,6 +43,11 @@ let lookupTx: LookupTx = async (hash) => {
 beforeAll(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "allowance-wallet-"));
   facilitator = await startStubFacilitator();
+  // The real directory app on port 0; its catalog points at MERCHANT like the wallet's config.
+  directoryServer = await new Promise((resolve) => {
+    const s = createDirectoryApp({ merchantUrl: MERCHANT, directoryUrl: "http://127.0.0.1:0" }).listen(0, "127.0.0.1", () => resolve(s));
+  });
+  const directoryUrl = `http://127.0.0.1:${(directoryServer.address() as AddressInfo).port}`;
   const config: AppConfig = (baseConfig = {
     chainMode: "mock",
     repoRoot: process.cwd(),
@@ -51,6 +59,8 @@ beforeAll(async () => {
     merchantPort: 4021,
     merchantUrl: MERCHANT,
     dashboardPort: 4040,
+    directoryPort: 0,
+    directoryUrl,
     baseSepoliaRpcUrl: "http://127.0.0.1:1",
     x402FacilitatorUrl: facilitator.url,
     network: "eip155:84532",
@@ -76,6 +86,7 @@ beforeAll(async () => {
 afterAll(async () => {
   wallet.close();
   await new Promise<void>((r) => server.close(() => r()));
+  await new Promise<void>((r) => directoryServer.close(() => r()));
   await facilitator.close();
   rmSync(dataDir, { recursive: true, force: true });
   vi.restoreAllMocks();
@@ -317,8 +328,16 @@ describe("x402 payments", () => {
     // Short wait times out as pending.
     const t0 = Date.now();
     const pending = await api("GET", `/v1/approvals/${approvalId}/wait?timeoutMs=200`, undefined, token);
-    expect(pending.body).toEqual({ status: "pending", approvalId });
+    expect(pending.body).toEqual({ kind: "payment", status: "pending", approvalId });
     expect(Date.now() - t0).toBeGreaterThanOrEqual(150);
+
+    // Tiny timeouts are honoured (not replaced by the 45 s default); 0 means "check now".
+    for (const t of ["1", "0"]) {
+      const t1 = Date.now();
+      const quick = await api("GET", `/v1/approvals/${approvalId}/wait?timeoutMs=${t}`, undefined, token);
+      expect(quick.body, `timeoutMs=${t}`).toEqual({ kind: "payment", status: "pending", approvalId });
+      expect(Date.now() - t1, `timeoutMs=${t}`).toBeLessThan(1000);
+    }
 
     // Long wait resolves as soon as the owner approves.
     const waiting = api("GET", `/v1/approvals/${approvalId}/wait?timeoutMs=10000`, undefined, token);
@@ -712,6 +731,454 @@ describe("offline agent creation", () => {
       await expect(w.seedBalances({ retryMs: 300 })).resolves.toBeUndefined();
       expect(store.state.agents[0].seedApplied).toBe(false);
       w.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("connected services (§13)", () => {
+  const CLOSED = { addresses: [], origins: [] };
+  const shopperPolicy = { maxPerTx: "20.00", dailyCap: "50.00", approvalThreshold: "10.00", allowlist: CLOSED };
+  const PIZZA_URL = `${MERCHANT}/pizza/order`;
+  const pizzaPay = () => ({ paymentRequired: paymentRequired("18.50", PIZZA_URL), url: PIZZA_URL, description: "Acme Pizza", method: "POST" as const });
+
+  async function connect(agentId: string, serviceId: string) {
+    const r = await api("POST", `/v1/agents/${agentId}/services`, { serviceId });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    return r.body.agent as { services: { id: string; connectedBy: string }[] };
+  }
+
+  async function withVerifyCalls<T>(fn: (calls: string[]) => Promise<T>): Promise<T> {
+    const calls: string[] = [];
+    verifyChallenge = async (url) => {
+      calls.push(url);
+      return { ok: true };
+    };
+    try {
+      return await fn(calls);
+    } finally {
+      verifyChallenge = async () => ({ ok: true });
+    }
+  }
+
+  it("prefix matching: connected base URL covers its paths and queries, not look-alike paths", async () => {
+    const { agent, token } = await createAgent("svc-prefix", { maxPerTx: "1.00", dailyCap: "5.00", approvalThreshold: "1.00", allowlist: CLOSED });
+    await connect(agent.id, "acme-weather");
+    await withVerifyCalls(async (calls) => {
+      for (const url of [`${MERCHANT}/api/weather?city=Paris`, `${MERCHANT}/api/weather`, `${MERCHANT}/api/weather/hourly`, "HTTP://LOCALHOST:4021/api/weather?city=Oslo"]) {
+        const r = await api("POST", "/v1/pay", { paymentRequired: paymentRequired("0.05", url), url }, token);
+        expect(r.status, url).toBe(200);
+      }
+      // Allowed via a service → the wallet re-fetched the 402 every time (the URL is agent-supplied).
+      expect(calls).toHaveLength(4);
+    });
+    const lookalike = await api("POST", "/v1/pay", { paymentRequired: paymentRequired("0.05", `${MERCHANT}/api/weathers`), url: `${MERCHANT}/api/weathers` }, token);
+    expect(lookalike.status).toBe(403);
+    expect(lookalike.body).toMatchObject({ status: "blocked", reason: "not_allowlisted", frozen: true });
+  });
+
+  it("a known but unconnected service is a soft block: 403 service_not_connected, not frozen", async () => {
+    const { agent, token } = await createAgent("svc-soft", shopperPolicy);
+    const pay = await api("POST", "/v1/pay", pizzaPay(), token);
+    expect(pay.status).toBe(403);
+    expect(pay.body).toMatchObject({ status: "blocked", reason: "service_not_connected", frozen: false });
+    expect(pay.body.message).toBe("Acme Pizza is not connected for svc-soft. Ask the owner with request_service.");
+    expect(pay.body.service).toEqual({ id: "acme-pizza", name: "Acme Pizza", icon: "🍕" });
+    expect(pay.body.serviceId).toBe("acme-pizza");
+    expect(pay.body.receipt).toMatchObject({ status: "blocked", reason: "service_not_connected" });
+    const me = await api("GET", "/v1/me", undefined, token);
+    expect(me.body.agent.frozen).toBe(false);
+    expect(me.body.agent.services).toEqual([]);
+    const events = await recentEvents();
+    expect(events.find((e) => e.type === "payment.blocked" && e.agentId === agent.id)?.data).toMatchObject({ frozen: false, willFreeze: false });
+    expect(events.some((e) => e.type === "agent.frozen" && e.agentId === agent.id)).toBe(false);
+  });
+
+  it("an unknown destination stays not_allowlisted and freezes", async () => {
+    const { token } = await createAgent("svc-unknown", shopperPolicy);
+    const url = "http://evil.example/pizza/order";
+    const pay = await api("POST", "/v1/pay", { paymentRequired: paymentRequired("4.50", url), url }, token);
+    expect(pay.body).toMatchObject({ status: "blocked", reason: "not_allowlisted", frozen: true });
+    expect(pay.body.message).toMatch(/Agent frozen\.$/);
+    expect(pay.body).not.toHaveProperty("service");
+    expect(pay.body).not.toHaveProperty("serviceId");
+    const transfer = await api("POST", "/v1/transfer", { to: ATTACKER, amount: "1.00" }, token);
+    expect(transfer.body).toMatchObject({ status: "blocked", reason: "frozen" });
+  });
+
+  it("request → owner approves → /wait returns the service → the payment is now allowed", async () => {
+    const { agent, token } = await createAgent("svc-shopper", shopperPolicy);
+    const reqBody = { serviceId: "acme-pizza", reason: "The owner asked me to order lunch." };
+    const req = await api("POST", "/v1/services/requests", reqBody, token);
+    expect(req.status).toBe(202);
+    expect(req.body).toMatchObject({ status: "needs_approval", service: { id: "acme-pizza", name: "Acme Pizza", maxPrice: "18.50", source: "directory" } });
+    expect(req.body.service).not.toHaveProperty("docs");
+    const approvalId: string = req.body.approvalId;
+
+    // Asking again while pending returns the same approval (one card for the owner).
+    expect((await api("POST", "/v1/services/requests", reqBody, token)).body.approvalId).toBe(approvalId);
+
+    const pending = (await api("GET", "/v1/approvals?status=pending")).body.approvals.find((a: { id: string }) => a.id === approvalId);
+    expect(pending).toMatchObject({ kind: "service", paymentId: "", amount: "18.50", reason: reqBody.reason, description: "Connect Acme Pizza", service: { id: "acme-pizza" } });
+    expect((await api("GET", "/v1/summary")).body.pendingApprovals.map((a: { id: string }) => a.id)).toContain(approvalId);
+    const requested = (await recentEvents()).find((e) => e.type === "service.requested" && e.approval?.id === approvalId);
+    expect(requested?.message).toBe("svc-shopper wants to connect Acme Pizza.");
+    expect(requested?.data).toMatchObject({ custom: false });
+
+    expect((await api("GET", `/v1/approvals/${approvalId}/wait?timeoutMs=1`, undefined, token)).body).toEqual({
+      kind: "service",
+      status: "pending",
+      approvalId,
+      service: req.body.service,
+    });
+    const waiting = api("GET", `/v1/approvals/${approvalId}/wait?timeoutMs=10000`, undefined, token);
+    await new Promise((r) => setTimeout(r, 50));
+    const approve = await api("POST", `/v1/approvals/${approvalId}/approve`, { by: "telegram" });
+    expect(approve.status).toBe(200);
+    expect(approve.body.approval).toMatchObject({ status: "approved", decidedBy: "telegram", kind: "service" });
+
+    const resolved = await waiting;
+    expect(resolved.body).toMatchObject({ kind: "service", status: "approved", approvalId, service: { id: "acme-pizza", connectedBy: "approval" } });
+    expect(resolved.body.paymentHeader).toBeUndefined();
+    expect(resolved.body.receipt).toBeUndefined();
+
+    const events = await recentEvents();
+    expect(events.some((e) => e.type === "approval.approved" && e.approval?.id === approvalId)).toBe(true);
+    const connected = events.find((e) => e.type === "service.connected" && e.agentId === agent.id);
+    expect(connected?.message).toBe("Acme Pizza connected to svc-shopper.");
+    expect(connected?.data).toMatchObject({ connectedBy: "approval", service: { id: "acme-pizza" } });
+
+    const services = await api("GET", "/v1/services", undefined, token);
+    expect(services.body.connected.map((s: { id: string }) => s.id)).toEqual(["acme-pizza"]);
+    expect(services.body.directoryUrl).toMatch(/^http:\/\/127\.0\.0\.1:/);
+    expect((await api("GET", "/v1/me", undefined, token)).body.agent.services[0]).toMatchObject({ id: "acme-pizza", connectedBy: "approval" });
+    expect((await api("GET", "/v1/summary")).body.agents.find((a: { id: string }) => a.id === agent.id).services).toHaveLength(1);
+    // Now connected: asking again is a no-op.
+    expect(await api("POST", "/v1/services/requests", reqBody, token)).toMatchObject({ status: 200, body: { status: "connected", service: { id: "acme-pizza" } } });
+
+    // The pizza now goes through: over the $10 threshold, so it is parked for approval as usual.
+    await withVerifyCalls(async (calls) => {
+      const pay = await api("POST", "/v1/pay", pizzaPay(), token);
+      expect(pay.status).toBe(202);
+      expect(calls).toEqual([PIZZA_URL]);
+      const ok = await api("POST", `/v1/approvals/${pay.body.approvalId}/approve`, { by: "dashboard" });
+      expect(ok.body.approval.status).toBe("approved");
+      const w = await api("GET", `/v1/approvals/${pay.body.approvalId}/wait`, undefined, token);
+      expect(w.body).toMatchObject({ status: "approved", request: { url: PIZZA_URL, method: "POST" }, receipt: { status: "signed" } });
+      await verifyHeader(w.body.paymentHeader, agent.address);
+    });
+    expect((await api("GET", "/v1/me", undefined, token)).body.agent.spentToday).toBe("18.50");
+  });
+
+  it("a forged challenge under a connected service is still not_allowlisted + frozen", async () => {
+    const { agent, token } = await createAgent("svc-forged", shopperPolicy);
+    await connect(agent.id, "acme-pizza");
+    verifyChallenge = async () => ({ ok: false, reason: "payTo mismatch" });
+    try {
+      const pr = paymentRequired("18.50", PIZZA_URL);
+      pr.accepts[0].payTo = ATTACKER;
+      const pay = await api("POST", "/v1/pay", { paymentRequired: pr, url: PIZZA_URL, method: "POST" }, token);
+      expect(pay.body).toMatchObject({ status: "blocked", reason: "not_allowlisted", frozen: true });
+    } finally {
+      verifyChallenge = async () => ({ ok: true });
+    }
+  });
+
+  it("owner denies a service request", async () => {
+    const { agent, token } = await createAgent("svc-denied", shopperPolicy);
+    const req = await api("POST", "/v1/services/requests", { serviceId: "acme-pizza" }, token);
+    const waiting = api("GET", `/v1/approvals/${req.body.approvalId}/wait?timeoutMs=10000`, undefined, token);
+    await new Promise((r) => setTimeout(r, 30));
+    const deny = await api("POST", `/v1/approvals/${req.body.approvalId}/deny`, { by: "dashboard" });
+    expect(deny.body.approval).toMatchObject({ status: "denied", kind: "service" });
+    expect((await waiting).body).toEqual({ kind: "service", status: "denied", approvalId: req.body.approvalId, reason: "denied_by_owner", service: req.body.service });
+    expect((await api("GET", "/v1/services", undefined, token)).body.connected).toEqual([]);
+    const denied = (await recentEvents()).find((e) => e.type === "approval.denied" && e.approval?.id === req.body.approvalId);
+    expect(denied?.message).toBe("Denied by dashboard: Acme Pizza will not be connected to svc-denied.");
+    expect((await recentEvents()).some((e) => e.type === "service.connected" && e.agentId === agent.id)).toBe(false);
+    expect((await api("POST", "/v1/pay", pizzaPay(), token)).body.reason).toBe("service_not_connected");
+    expect((await api("POST", `/v1/approvals/${req.body.approvalId}/approve`, {})).status).toBe(409);
+  });
+
+  it("service approvals expire like payments", async () => {
+    const { token } = await createAgent("svc-expired", shopperPolicy);
+    const req = await api("POST", "/v1/services/requests", { serviceId: "acme-news" }, token);
+    const approval = wallet.store.approvalById(req.body.approvalId)!;
+    approval.createdAt = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+    expect((await api("GET", "/v1/approvals?status=pending")).body.approvals.some((a: { id: string }) => a.id === approval.id)).toBe(false);
+    expect((await api("GET", `/v1/approvals/${approval.id}/wait`, undefined, token)).body).toEqual({ kind: "service", status: "expired", approvalId: approval.id, service: req.body.service });
+    const ev = (await recentEvents()).find((e) => e.type === "approval.denied" && e.approval?.id === approval.id);
+    expect(ev).toMatchObject({ reason: "expired", message: "Request to connect Acme News for svc-expired expired." });
+  });
+
+  it("owner connects and disconnects directly", async () => {
+    const { agent, token } = await createAgent("svc-owner", { maxPerTx: "1.00", dailyCap: "5.00", approvalThreshold: "1.00", allowlist: CLOSED });
+    const after = await connect(agent.id, "acme-weather");
+    expect(after.services).toEqual([expect.objectContaining({ id: "acme-weather", connectedBy: "owner", maxPrice: "0.05", baseUrl: `${MERCHANT}/api/weather` })]);
+    expect((await connect(agent.id, "acme-weather")).services).toHaveLength(1); // idempotent
+    expect((await connect(agent.id, "directory")).services).toHaveLength(1); // always available, never stored
+    const ev = (await recentEvents()).filter((e) => e.type === "service.connected" && e.agentId === agent.id);
+    expect(ev).toHaveLength(1);
+    expect(ev[0].data).toMatchObject({ connectedBy: "owner" });
+
+    const listing = await api("GET", "/v1/directory?q=weather");
+    expect(listing.body.services).toHaveLength(1);
+    expect(listing.body.services[0].connectedAgents).toContain(agent.id);
+    expect(listing.body.services[0]).not.toHaveProperty("connected");
+    expect(listing.body.services[0]).not.toHaveProperty("docs");
+    expect((await api("GET", "/v1/directory/acme-weather")).body).toMatchObject({ id: "acme-weather", connectedAgents: expect.arrayContaining([agent.id]) });
+
+    const ok = await api("POST", "/v1/pay", { paymentRequired: paymentRequired("0.05"), url: `${MERCHANT}/api/weather?city=Paris` }, token);
+    expect(ok.status).toBe(200);
+
+    const del = await api("DELETE", `/v1/agents/${agent.id}/services/acme-weather`);
+    expect(del.status).toBe(200);
+    expect(del.body.agent.services).toEqual([]);
+    expect((await api("DELETE", `/v1/agents/${agent.id}/services/acme-weather`)).status).toBe(200);
+    const gone = (await recentEvents()).filter((e) => e.type === "service.disconnected" && e.agentId === agent.id);
+    expect(gone).toHaveLength(1);
+    expect(gone[0].message).toBe("Acme Weather disconnected from svc-owner.");
+    const blocked = await api("POST", "/v1/pay", { paymentRequired: paymentRequired("0.05"), url: `${MERCHANT}/api/weather?city=Paris` }, token);
+    expect(blocked.body).toMatchObject({ reason: "service_not_connected", frozen: false });
+
+    expect((await api("POST", `/v1/agents/${agent.id}/services`, { serviceId: "acme-spaceship" })).body.error).toBe("service_not_found");
+    expect((await api("POST", `/v1/agents/${agent.id}/services`, {})).status).toBe(400);
+    expect((await api("POST", `/v1/agents/agt_nope/services`, { serviceId: "acme-news" })).status).toBe(404);
+  });
+
+  it("agent view of the directory marks connected services and serves docs", async () => {
+    const { agent, token } = await createAgent("svc-browse", shopperPolicy);
+    await connect(agent.id, "acme-news");
+    const all = await api("GET", "/v1/directory", undefined, token);
+    expect(all.body.services).toHaveLength(6);
+    const byId = Object.fromEntries(all.body.services.map((s: { id: string; connected: boolean }) => [s.id, s.connected]));
+    expect(byId).toEqual({ directory: true, "acme-weather": false, "acme-news": true, "acme-stocks": false, "acme-pizza": false, "acme-bounties": false });
+    expect(all.body.services[0]).not.toHaveProperty("connectedAgents");
+    const pizza = await api("GET", "/v1/directory/acme-pizza", undefined, token);
+    expect(pizza.body).toMatchObject({ id: "acme-pizza", connected: false });
+    expect(pizza.body.docs).toContain("/pizza/order");
+    expect((await api("GET", "/v1/directory?q=pizza", undefined, token)).body.services.map((s: { id: string }) => s.id)).toEqual(["acme-pizza"]);
+    expect((await api("GET", "/v1/directory/acme-spaceship", undefined, token)).status).toBe(404);
+    expect((await api("POST", "/v1/services/requests", { serviceId: "acme-spaceship" }, token)).body.error).toBe("service_not_found");
+    expect((await api("POST", "/v1/services/requests", { serviceId: "directory" }, token)).body).toMatchObject({ status: "connected", service: { id: "directory" } });
+    expect((await api("GET", "/v1/services")).status).toBe(401);
+  });
+
+  it("agent tokens cannot call owner service endpoints", async () => {
+    const { agent, token } = await createAgent("svc-sneaky", shopperPolicy);
+    // Keyless dev app: a Bearer token is still refused on owner routes.
+    expect((await api("POST", `/v1/agents/${agent.id}/services`, { serviceId: "acme-pizza" }, token)).status).toBe(401);
+    expect((await api("DELETE", `/v1/agents/${agent.id}/services/acme-pizza`, undefined, token)).status).toBe(401);
+    // Keyed app (production): owner key required.
+    const dir = mkdtempSync(join(tmpdir(), "allowance-svc-owner-"));
+    const w = createApp({ ...baseConfig, dataDir: dir, ownerApiKey: "ok_test" }, { store: openStore(dir), settlement: wallet.settlement });
+    const srv = await new Promise<Server>((resolve) => {
+      const s = w.app.listen(0, "127.0.0.1", () => resolve(s));
+    });
+    const b = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+    const call = (method: string, path: string, headers: Record<string, string>, body?: unknown) =>
+      fetch(`${b}${path}`, { method, headers: { "content-type": "application/json", ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
+    try {
+      const created = await (await call("POST", "/v1/agents", { "x-owner-key": "ok_test" }, { name: "sneaky", policy: shopperPolicy })).json();
+      const bearer = { authorization: `Bearer ${created.token}` };
+      expect((await call("POST", `/v1/agents/${created.agent.id}/services`, bearer, { serviceId: "acme-pizza" })).status).toBe(401);
+      expect((await call("DELETE", `/v1/agents/${created.agent.id}/services/acme-pizza`, bearer)).status).toBe(401);
+      expect((await call("POST", `/v1/approvals/apr_x/approve`, bearer, {})).status).toBe(401);
+      expect((await call("GET", "/v1/directory", {})).status).toBe(401);
+      expect((await call("GET", "/v1/directory", bearer)).status).toBe(200);
+      const req = await (await call("POST", "/v1/services/requests", bearer, { serviceId: "acme-pizza" })).json();
+      expect((await call("POST", `/v1/approvals/${req.approvalId}/approve`, bearer, {})).status).toBe(401);
+      expect((await call("POST", `/v1/agents/${created.agent.id}/services`, { "x-owner-key": "ok_test" }, { serviceId: "acme-pizza" })).status).toBe(200);
+    } finally {
+      w.close();
+      await new Promise((r) => srv.close(() => r(null)));
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("another agent cannot wait on or see a service approval", async () => {
+    const { token } = await createAgent("svc-a", shopperPolicy);
+    const { token: other } = await createAgent("svc-b", shopperPolicy);
+    const req = await api("POST", "/v1/services/requests", { serviceId: "acme-stocks" }, token);
+    expect((await api("GET", `/v1/approvals/${req.body.approvalId}/wait?timeoutMs=10`, undefined, other)).status).toBe(404);
+  });
+
+  it("validates custom proposals", async () => {
+    const { token } = await createAgent("svc-custom-bad", { ...shopperPolicy, maxPerTx: "1.00" });
+    const good = { name: "Example API", baseUrl: "https://api.example.com/v1/", summary: "Example data", maxPrice: "0.50" };
+    const bad: unknown[] = [
+      {},
+      { serviceId: "acme-pizza", custom: good },
+      { custom: "nope" },
+      { custom: { ...good, name: "" } },
+      { custom: { ...good, name: "x".repeat(61) } },
+      { custom: { ...good, summary: "" } },
+      { custom: { ...good, summary: "s".repeat(201) } },
+      { custom: { ...good, baseUrl: "ftp://api.example.com" } },
+      { custom: { ...good, baseUrl: "javascript:alert(1)" } },
+      { custom: { ...good, baseUrl: "api.example.com" } },
+      { custom: { ...good, baseUrl: "https://user:pw@api.example.com" } },
+      { custom: { ...good, baseUrl: "https://api.example.com/v1?key=1" } },
+      { custom: { ...good, maxPrice: "1.01" } },
+      { custom: { ...good, maxPrice: "-1" } },
+      { custom: { ...good, maxPrice: 0.5 } },
+      { custom: { ...good, docs: 42 } },
+      { serviceId: "Acme Pizza!" },
+      { serviceId: "acme-pizza", reason: 7 },
+    ];
+    for (const body of bad) {
+      const r = await api("POST", "/v1/services/requests", body, token);
+      expect(r.status, JSON.stringify(body)).toBe(400);
+      expect(r.body.error).toBe("invalid_request");
+    }
+    expect((await api("POST", "/v1/services/requests", { custom: { ...good, name: "x".repeat(60), maxPrice: "1.00" } }, token)).status).toBe(202);
+  });
+
+  it("custom proposal: flagged source agent, approved with its docs, then payable up to its cap", async () => {
+    const { agent, token } = await createAgent("svc-custom", { ...shopperPolicy, maxPerTx: "1.00", approvalThreshold: "1.00" });
+    const custom = { name: "Example API", baseUrl: "https://API.example.com/v1/", summary: "Example data feed", maxPrice: "0.50", docs: "GET https://api.example.com/v1/quote" };
+    const req = await api("POST", "/v1/services/requests", { custom, reason: "I need example data" }, token);
+    expect(req.status).toBe(202);
+    expect(req.body.service).toMatchObject({
+      id: "custom-example-api",
+      name: "Example API",
+      provider: "Proposed by svc-custom",
+      kind: "x402",
+      baseUrl: "https://api.example.com/v1",
+      maxPrice: "0.50",
+      source: "agent",
+      permissions: ["Pay up to $0.50 per payment to Example API (api.example.com)"],
+    });
+    const requested = (await recentEvents()).find((e) => e.type === "service.requested" && e.approval?.id === req.body.approvalId);
+    expect(requested?.approval).toMatchObject({ kind: "service", amount: "0.50", description: "Connect Example API (proposed by svc-custom)", service: { source: "agent" } });
+    expect(requested?.data).toMatchObject({ custom: true });
+
+    expect((await api("POST", `/v1/approvals/${req.body.approvalId}/approve`, { by: "dashboard" })).status).toBe(200);
+    const services = (await api("GET", "/v1/services", undefined, token)).body.connected;
+    expect(services).toEqual([expect.objectContaining({ id: "custom-example-api", source: "agent", connectedBy: "approval", docs: custom.docs })]);
+    const manifest = await api("GET", "/v1/directory/custom-example-api", undefined, token);
+    expect(manifest.body).toMatchObject({ id: "custom-example-api", docs: custom.docs, connected: true, source: "agent" });
+    expect((await api("GET", "/v1/directory/custom-example-api")).body.connectedAgents).toEqual([agent.id]);
+    // Proposing the same thing again is a no-op.
+    expect((await api("POST", "/v1/services/requests", { custom }, token)).body.status).toBe("connected");
+
+    const url = "https://api.example.com/v1/quote?x=1";
+    await withVerifyCalls(async (calls) => {
+      expect((await api("POST", "/v1/pay", { paymentRequired: paymentRequired("0.50", url), url }, token)).status).toBe(200);
+      expect(calls).toEqual([url]);
+    });
+    const over = await api("POST", "/v1/pay", { paymentRequired: paymentRequired("0.51", url), url }, token);
+    expect(over.body).toMatchObject({ status: "blocked", reason: "service_cap", frozen: false });
+  });
+
+  it("service_cap: a connected service cannot charge more than its maxPrice (no freeze)", async () => {
+    const { agent, token } = await createAgent("svc-cap", { maxPerTx: "5.00", dailyCap: "25.00", approvalThreshold: "5.00", allowlist: CLOSED });
+    await connect(agent.id, "acme-weather");
+    const r = await api("POST", "/v1/pay", { paymentRequired: paymentRequired("0.06"), url: `${MERCHANT}/api/weather?city=Paris` }, token);
+    expect(r.status).toBe(403);
+    expect(r.body).toMatchObject({ status: "blocked", reason: "service_cap", frozen: false });
+    expect(r.body.message).toBe("Blocked: tried to send $0.06 to Acme Weather, over its $0.05 per-payment cap.");
+    expect((await api("GET", "/v1/me", undefined, token)).body.agent.frozen).toBe(false);
+    expect((await api("POST", "/v1/pay", { paymentRequired: paymentRequired("0.05"), url: `${MERCHANT}/api/weather?city=Paris` }, token)).status).toBe(200);
+  });
+
+  it("five concurrent approves of one service approval: exactly one 200, one connection", async () => {
+    const { agent, token } = await createAgent("svc-race", shopperPolicy);
+    const req = await api("POST", "/v1/services/requests", { serviceId: "acme-pizza" }, token);
+    const results = await Promise.all(Array.from({ length: 5 }, () => api("POST", `/v1/approvals/${req.body.approvalId}/approve`, { by: "dashboard" })));
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409, 409, 409, 409]);
+    expect(wallet.store.agentById(agent.id)!.services.filter((s) => s.id === "acme-pizza")).toHaveLength(1);
+    const events = await recentEvents();
+    expect(events.filter((e) => e.type === "service.connected" && e.agentId === agent.id)).toHaveLength(1);
+    expect(events.filter((e) => e.type === "approval.approved" && e.approval?.id === req.body.approvalId)).toHaveLength(1);
+    expect((await api("POST", `/v1/approvals/${req.body.approvalId}/deny`, {})).status).toBe(409);
+  });
+
+  it("directory down: 503 directory_unavailable, and payments never fail open (blocked, not frozen)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "allowance-nodir-"));
+    const store = openStore(dir);
+    const weather = buildCatalog({ merchantUrl: MERCHANT, directoryUrl: "http://127.0.0.1:1" }).find((s) => s.id === "acme-weather")!;
+    const { docs: _docs, ...grant } = weather;
+    const withWeather = createAgentOffline(store, {
+      name: "nodir-researcher",
+      policy: { maxPerTx: "1.00", dailyCap: "5.00", approvalThreshold: "1.00", allowlist: CLOSED },
+      services: [{ ...grant, connectedAt: new Date().toISOString(), connectedBy: "default" }],
+    });
+    const plain = createAgentOffline(store, { name: "nodir-shopper", policy: shopperPolicy });
+    for (const a of [withWeather, plain]) {
+      await fetch(`${facilitator.url}/admin/mint`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ to: a.agent.address, amount: "20.00" }) });
+    }
+    const w = createApp({ ...baseConfig, dataDir: dir, directoryUrl: "http://127.0.0.1:1" }, { store, settlement: wallet.settlement, verifyChallenge: async () => ({ ok: true }), lookupTx: (h) => lookupTx(h) });
+    const srv = await new Promise<Server>((resolve) => {
+      const s = w.app.listen(0, "127.0.0.1", () => resolve(s));
+    });
+    const b = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+    const call = async (method: string, path: string, token?: string, body?: unknown) => {
+      const r = await fetch(`${b}${path}`, {
+        method,
+        headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const text = await r.text();
+      bodies.push(text);
+      return { status: r.status, body: JSON.parse(text) };
+    };
+    try {
+      for (const [method, path, body] of [
+        ["GET", "/v1/directory", undefined],
+        ["GET", "/v1/directory/acme-pizza", undefined],
+        ["POST", "/v1/services/requests", { serviceId: "acme-pizza" }],
+      ] as const) {
+        const r = await call(method, path, plain.token, body);
+        expect(r.status, path).toBe(503);
+        expect(r.body.error).toBe("directory_unavailable");
+      }
+      expect((await call("POST", `/v1/agents/${plain.agent.id}/services`, undefined, { serviceId: "acme-pizza" })).status).toBe(503);
+      // Custom proposals do not need the directory.
+      expect((await call("POST", "/v1/services/requests", plain.token, { custom: { name: "X", baseUrl: "https://x.example", summary: "x", maxPrice: "0.10" } })).status).toBe(202);
+
+      // Unknown-or-unconnected URL with the directory down: still blocked (never allowed), but no freeze.
+      const pay = await call("POST", "/v1/pay", plain.token, pizzaPay());
+      expect(pay.status).toBe(403);
+      expect(pay.body).toMatchObject({ status: "blocked", reason: "not_allowlisted", frozen: false });
+      expect((await call("GET", "/v1/me", plain.token)).body.agent.frozen).toBe(false);
+      expect(logs.some((l) => l.includes("directory unavailable") && l.includes("without freezing"))).toBe(true);
+      // Direct transfers to unknown addresses never depend on the directory: block + freeze.
+      expect((await call("POST", "/v1/transfer", plain.token, { to: ATTACKER, amount: "1.00" })).body).toMatchObject({ reason: "not_allowlisted", frozen: true });
+
+      // Connected services keep working without the directory.
+      const ok = await call("POST", "/v1/pay", withWeather.token, { paymentRequired: paymentRequired("0.05"), url: `${MERCHANT}/api/weather?city=Paris` });
+      expect(ok.status).toBe(200);
+      expect((await call("GET", "/v1/services", withWeather.token)).body.connected.map((s: { id: string }) => s.id)).toEqual(["acme-weather"]);
+    } finally {
+      w.close();
+      await new Promise((r) => srv.close(() => r(null)));
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("migrates old state (agents without services) and createAgentOffline stores services", () => {
+    const dir = mkdtempSync(join(tmpdir(), "allowance-migrate-"));
+    try {
+      const store = openStore(dir);
+      createAgentOffline(store, { name: "old" });
+      const raw = JSON.parse(readFileSync(join(dir, "wallet-state.json"), "utf8"));
+      delete raw.agents[0].services;
+      delete raw.serviceRequests;
+      writeFileSync(join(dir, "wallet-state.json"), JSON.stringify(raw));
+      const reopened = openStore(dir);
+      expect(reopened.state.agents[0].services).toEqual([]);
+      expect(reopened.state.serviceRequests).toEqual({});
+      const weather = buildCatalog({ merchantUrl: MERCHANT, directoryUrl: "http://d" })[1];
+      const { agent } = createAgentOffline(reopened, {
+        name: "new",
+        services: [
+          { ...weather, connectedAt: "2026-01-01T00:00:00.000Z", connectedBy: "default" },
+          { ...weather, connectedAt: "2026-01-01T00:00:00.000Z", connectedBy: "default" },
+        ],
+      });
+      expect(agent.services.map((s) => s.id)).toEqual(["acme-weather"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

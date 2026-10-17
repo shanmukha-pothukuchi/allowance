@@ -5,7 +5,9 @@
  * owner key. Owner actions (approve, unfreeze) stay on Telegram and the dashboard.
  */
 import express, { type Request, type Response } from "express";
-import { ChatAgent, BusyError, type AgentEvent } from "./agent.js";
+import { randomBytes } from "node:crypto";
+import { avatarFor, type Avatar } from "@allowance/shared/avatars";
+import { ChatAgent, BusyError, type AgentEvent, type LogEntry } from "./agent.js";
 import { groupMembers, type AgentSpec } from "./roster.js";
 import type { LlmConfig } from "./llm.js";
 import { renderChatPage, staticDir } from "./ui.js";
@@ -19,6 +21,47 @@ export interface WalletView {
   frozenReason?: string;
   limits?: { maxPerTx: string; dailyCap: string; approvalThreshold: string; remainingToday: string };
   error?: string;
+}
+
+/** A connected service as shown on the agent's chips (from the /v1/me poll). */
+export interface ServiceChip {
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+}
+
+/** Preview for the conversation list: the last user / assistant / error entry. */
+export interface LastMessage {
+  kind: "user" | "assistant" | "error";
+  text: string;
+  at: string;
+  groupId?: string;
+}
+
+/** One row of GET /api/agents (and the SSE snapshot). */
+export interface AgentSummary {
+  name: string;
+  role: string;
+  status: ChatAgent["status"];
+  busy: boolean;
+  wallet: WalletView;
+  avatar: Avatar;
+  services: ServiceChip[];
+  lastMessage: LastMessage | null;
+}
+
+const PREVIEW_CHARS = 280;
+
+export function lastMessageOf(log: LogEntry[]): LastMessage | null {
+  for (let i = log.length - 1; i >= 0; i--) {
+    const e = log[i];
+    if (e.kind === "user" || e.kind === "assistant" || e.kind === "error") {
+      const text = e.text.length > PREVIEW_CHARS ? `${e.text.slice(0, PREVIEW_CHARS - 1)}…` : e.text;
+      return { kind: e.kind, text, at: e.at, ...(e.kind === "user" && e.groupId ? { groupId: e.groupId } : {}) };
+    }
+  }
+  return null;
 }
 
 export interface ChatAppOptions {
@@ -47,6 +90,7 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
   const doFetch = opts.fetch ?? fetch;
   const clients = new Set<Response>();
   const wallets = new Map<string, WalletView>();
+  const services = new Map<string, ServiceChip[]>();
   const agents = new Map<string, ChatAgent>();
 
   const broadcast = (event: string, data: unknown) => {
@@ -81,12 +125,17 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
     const token = tokens.get(name);
     if (!token) return;
     let view: WalletView;
+    // Keep the last known chips when the wallet is unreachable (stale beats flicker).
+    let chips = services.get(name) ?? [];
     try {
       const res = await doFetch(`${opts.walletServiceUrl}/v1/me`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(3000) });
       if (!res.ok) {
         view = { error: res.status === 401 ? "token rejected (run npm run setup)" : `wallet error ${res.status}` };
       } else {
-        const me = (await res.json()) as { agent: WalletView & { address: string }; limits: WalletView["limits"] };
+        const me = (await res.json()) as { agent: WalletView & { address: string; services?: Array<Partial<ServiceChip> & { kind?: string }> }; limits: WalletView["limits"] };
+        chips = (Array.isArray(me.agent.services) ? me.agent.services : [])
+          .filter((x) => x && x.id && x.kind !== "directory")
+          .map((x) => ({ id: String(x.id), name: x.name ?? String(x.id), icon: x.icon ?? "", color: x.color ?? "" }));
         view = {
           address: me.agent.address,
           balance: me.agent.balance,
@@ -100,9 +149,10 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
     } catch {
       view = { error: "wallet service offline" };
     }
-    const prev = JSON.stringify(wallets.get(name));
+    const prev = JSON.stringify([wallets.get(name), services.get(name)]);
     wallets.set(name, view);
-    if (prev !== JSON.stringify(view)) broadcast("wallet", { agent: name, wallet: view });
+    services.set(name, chips);
+    if (prev !== JSON.stringify([view, chips])) broadcast("wallet", { agent: name, wallet: view, services: chips });
   }
   const refreshAll = () => Promise.all([...agents.keys()].map(refreshWallet));
   const poll = setInterval(() => void refreshAll(), opts.walletPollMs ?? 3000);
@@ -115,7 +165,17 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
     }
   })();
 
-  const summary = (a: ChatAgent) => ({ name: a.name, role: a.role, status: a.status, busy: a.busy, wallet: wallets.get(a.name) ?? {} });
+  const summary = (a: ChatAgent): AgentSummary => ({
+    name: a.name,
+    role: a.role,
+    status: a.status,
+    busy: a.busy,
+    wallet: wallets.get(a.name) ?? {},
+    avatar: avatarFor(a.name),
+    services: services.get(a.name) ?? [],
+    lastMessage: lastMessageOf(a.log),
+  });
+  const groups = () => ({ workers: groupMembers("workers", [...agents.keys()]) });
 
   const app = express();
   app.disable("x-powered-by");
@@ -138,7 +198,7 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
   });
 
   app.get("/api/agents", (_req, res) => {
-    res.json({ agents: [...agents.values()].map(summary), groups: { workers: groupMembers("workers", [...agents.keys()]) } });
+    res.json({ agents: [...agents.values()].map(summary), groups: groups() });
   });
 
   app.get("/api/agents/:name", (req, res) => {
@@ -147,8 +207,8 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
     res.json({ ...summary(a), log: a.log, tools: a.toolNames() });
   });
 
-  const sendTo = async (a: ChatAgent, text: string) => {
-    const { runId, done } = await a.send(text);
+  const sendTo = async (a: ChatAgent, text: string, groupId?: string) => {
+    const { runId, done } = await a.send(text, { groupId });
     void done.catch((err: Error) => console.warn(`[agent-chat] ${a.name}: ${err.message}`));
     return runId;
   };
@@ -171,17 +231,19 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
     if (members.length === 0) return void res.status(404).json({ error: "group_not_found", message: `No group ${req.params.group}` });
     const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
     if (!text) return void res.status(400).json({ error: "invalid_request", message: "Body must be { text }" });
+    // One id per broadcast: the UI renders one user bubble for the whole group thread.
+    const groupId = `grp_${randomBytes(6).toString("hex")}`;
     // Fire all at once: the workers really do race each other for bounty slots.
     const runs = await Promise.all(
       members.map(async (name) => {
         try {
-          return { agent: name, runId: await sendTo(agents.get(name)!, text) };
+          return { agent: name, runId: await sendTo(agents.get(name)!, text, groupId) };
         } catch (err) {
           return { agent: name, error: (err as Error).message };
         }
       }),
     );
-    res.status(202).json({ group: req.params.group, runs });
+    res.status(202).json({ group: req.params.group, groupId, runs });
   });
 
   app.post("/api/agents/:name/stop", (req, res) => {
@@ -203,7 +265,7 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
 
   app.get("/api/events", (req, res) => {
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
-    res.write(`event: snapshot\ndata: ${JSON.stringify({ agents: [...agents.values()].map(summary) })}\n\n`);
+    res.write(`event: snapshot\ndata: ${JSON.stringify({ agents: [...agents.values()].map(summary), groups: groups() })}\n\n`);
     clients.add(res);
     const ping = setInterval(() => res.write(": ping\n\n"), 15_000);
     req.on("close", () => {

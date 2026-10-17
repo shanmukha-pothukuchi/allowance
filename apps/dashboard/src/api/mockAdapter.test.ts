@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMockAdapter } from "./mockAdapter";
-import type { WalletEvent } from "../types";
+import type { Approval, WalletEvent } from "../types";
 
 describe("mockAdapter", () => {
   beforeEach(() => {
@@ -102,7 +102,9 @@ describe("mockAdapter", () => {
     for (let i = 0; i < 10; i++) m.tick();
     pending = m.getPendingApprovals();
     await vi.advanceTimersByTimeAsync(1);
-    expect(await pending).toHaveLength(1); // still pending
+    // the opening also asks to connect services; those are separate (kind "service") approvals
+    const payments = (xs: Approval[]) => xs.filter((a) => a.kind !== "service");
+    expect(payments(await pending)).toHaveLength(1); // still pending
 
     await vi.advanceTimersByTimeAsync(200); // flush settlements of earlier random payments
     const beforeP = m.getSummary();
@@ -120,7 +122,7 @@ describe("mockAdapter", () => {
     pending = m.getPendingApprovals();
     await vi.advanceTimersByTimeAsync(1);
     list = await pending;
-    expect(list).toHaveLength(0);
+    expect(payments(list)).toHaveLength(0);
 
     const summaryP = m.getSummary();
     await vi.advanceTimersByTimeAsync(1);
@@ -180,5 +182,147 @@ describe("mockAdapter", () => {
     for (let i = 0; i < 80; i++) events.push(...m.tick());
     expect(events.filter((e) => e.agentName === "naive-worker" && e.type === "payment.signed")).toHaveLength(0);
     m.stop();
+  });
+
+  describe("services", () => {
+    const flush = async <T>(p: Promise<T>) => {
+      await vi.advanceTimersByTimeAsync(1);
+      return p;
+    };
+    /** Attach the rejection handler before the fake timer fires, so nothing is unhandled. */
+    const rejects = async (p: Promise<unknown>, re: RegExp) => {
+      const check = expect(p).rejects.toThrow(re);
+      await vi.advanceTimersByTimeAsync(1);
+      await check;
+    };
+
+    it("serves the six directory services of §13.1, without docs in the list, with docs by id", async () => {
+      const m = createMockAdapter({ seed: 1, latencyMs: 0 });
+      const list = await flush(m.getDirectory());
+      expect(list.map((s) => s.id)).toEqual(["directory", "acme-weather", "acme-news", "acme-stocks", "acme-pizza", "acme-bounties"]);
+      expect(list.every((s) => s.docs === undefined)).toBe(true);
+      expect(list.find((s) => s.id === "acme-pizza")!.maxPrice).toBe("18.50");
+      expect(list.find((s) => s.id === "acme-bounties")!.kind).toBe("agent-work");
+      expect((await flush(m.getDirectory("pizza"))).map((s) => s.id)).toEqual(["acme-pizza"]);
+      const pizza = await flush(m.getService("acme-pizza"));
+      expect(pizza.docs).toMatch(/POST .*\/pizza\/order/);
+      await rejects(m.getService("nope"), /No service/);
+      m.stop();
+    });
+
+    it("seeds the default connections of §13.2 and reports them as connectedAgents", async () => {
+      const m = createMockAdapter({ seed: 1, latencyMs: 0 });
+      const agents = await flush(m.getAgents());
+      const ids = (name: string) => agents.find((a) => a.name === name)!.services.map((s) => s.id);
+      expect(ids("researcher")).toEqual(["acme-weather", "acme-news", "acme-stocks"]);
+      expect(ids("shopper")).toEqual([]);
+      expect(ids("claude-desktop")).toEqual(["acme-bounties", "acme-weather"]);
+      for (const n of ["naive-worker", "worker-1", "worker-2", "worker-3", "worker-4"]) expect(ids(n)).toEqual(["acme-bounties"]);
+      expect(agents.every((a) => a.services.every((s) => s.connectedBy === "default"))).toBe(true);
+      expect(agents.every((a) => a.policy.allowlist?.addresses.length === 0 && a.policy.allowlist.origins.length === 0)).toBe(true);
+      const weather = (await flush(m.getDirectory())).find((s) => s.id === "acme-weather")!;
+      expect(weather.connectedAgents!.map((id) => agents.find((a) => a.id === id)!.name).sort()).toEqual(["claude-desktop", "researcher"]);
+      m.stop();
+    });
+
+    it("the opening asks: shopper wants to connect Acme Pizza, with its reason", () => {
+      const m = createMockAdapter({ seed: 3 });
+      const got: WalletEvent[] = [];
+      for (let i = 0; i < 9; i++) got.push(...m.tick());
+      const req = got.at(-1)!;
+      expect(req.type).toBe("service.requested");
+      expect(req.agentName).toBe("shopper");
+      expect(req.approval).toMatchObject({ kind: "service", paymentId: "", amount: "18.50", status: "pending", service: { id: "acme-pizza", source: "directory" } });
+      expect(req.approval!.reason).toMatch(/pizza/i);
+      expect(req.message).toMatch(/^shopper wants to connect Acme Pizza/);
+      // later in the opening: an agent-proposed custom service
+      const later: WalletEvent[] = [];
+      for (let i = 0; i < 3; i++) later.push(...m.tick());
+      const custom = later.find((e) => e.type === "service.requested")!;
+      expect(custom.approval!.service).toMatchObject({ id: "custom-hacker-news-digest", source: "agent", baseUrl: "https://hn-digest.example.com/api" });
+      m.stop();
+    });
+
+    it("approving a service request connects it (approval.approved, then service.connected, by approval)", async () => {
+      const m = createMockAdapter({ seed: 3, latencyMs: 0 });
+      const got: WalletEvent[] = [];
+      m.subscribe((e) => got.push(e));
+      for (let i = 0; i < 9; i++) m.tick();
+      const id = got.find((e) => e.type === "service.requested")!.approval!.id;
+      const a = await flush(m.approve(id));
+      expect(a.status).toBe("approved");
+      expect(got.slice(-2).map((e) => e.type)).toEqual(["approval.approved", "service.connected"]);
+      expect(got.at(-1)!.data).toMatchObject({ connectedBy: "approval", service: { id: "acme-pizza" } });
+      expect(got.at(-1)!.message).toBe("Acme Pizza connected to shopper.");
+      const shopper = (await flush(m.getAgents())).find((x) => x.name === "shopper")!;
+      expect(shopper.services.map((s) => [s.id, s.connectedBy])).toEqual([["acme-pizza", "approval"]]);
+      expect((await flush(m.getPendingApprovals())).some((x) => x.id === id)).toBe(false);
+      await rejects(m.approve(id), /no longer pending/);
+      m.stop();
+    });
+
+    it("denying a service request connects nothing and makes no receipt", async () => {
+      const m = createMockAdapter({ seed: 3, latencyMs: 0 });
+      const got: WalletEvent[] = [];
+      m.subscribe((e) => got.push(e));
+      for (let i = 0; i < 9; i++) m.tick();
+      const before = (await flush(m.getReceipts())).length;
+      const id = got.find((e) => e.type === "service.requested")!.approval!.id;
+      expect((await flush(m.deny(id))).status).toBe("denied");
+      expect(got.at(-1)!.type).toBe("approval.denied");
+      expect((await flush(m.getAgents())).find((x) => x.name === "shopper")!.services).toEqual([]);
+      expect((await flush(m.getReceipts())).length).toBe(before);
+      m.stop();
+    });
+
+    it("the owner connects and disconnects directly (by you), with events", async () => {
+      const m = createMockAdapter({ seed: 1, latencyMs: 0 });
+      const got: WalletEvent[] = [];
+      m.subscribe((e) => got.push(e));
+      const shopper = (await flush(m.getAgents())).find((a) => a.name === "shopper")!;
+      let agent = await flush(m.connectService(shopper.id, "acme-weather"));
+      expect(agent.services.map((s) => [s.id, s.connectedBy])).toEqual([["acme-weather", "owner"]]);
+      expect(got.at(-1)!.type).toBe("service.connected");
+      agent = await flush(m.connectService(shopper.id, "acme-weather")); // idempotent, no second event
+      expect(agent.services).toHaveLength(1);
+      expect(got.filter((e) => e.type === "service.connected")).toHaveLength(1);
+      agent = await flush(m.disconnectService(shopper.id, "acme-weather"));
+      expect(agent.services).toEqual([]);
+      expect(got.at(-1)).toMatchObject({ type: "service.disconnected", message: "Acme Weather disconnected from shopper.", data: { serviceId: "acme-weather" } });
+      await rejects(m.connectService(shopper.id, "directory"), /always available/);
+      await rejects(m.connectService(shopper.id, "acme-nope"), /No service/);
+      m.stop();
+    });
+
+    it("getApproval finds scripted approvals by id on a fresh adapter (the embed), and null for unknown ids", async () => {
+      const m = createMockAdapter({ seed: 42, latencyMs: 0 });
+      const a = await flush(m.getApproval("apr_demo_connect"));
+      expect(a).toMatchObject({ id: "apr_demo_connect", kind: "service", agentName: "shopper", status: "pending" });
+      expect(await flush(m.getApproval("apr_demo_pizza"))).toMatchObject({ kind: "payment", amount: "18.50" });
+      expect(await flush(m.getApproval("apr_unknown"))).toBeNull();
+      m.stop();
+    });
+
+    it("random payments only go through services the agent has connected", () => {
+      const m = createMockAdapter({ seed: 13 });
+      const events: WalletEvent[] = [];
+      for (let i = 0; i < 120; i++) events.push(...m.tick());
+      const paid = events.filter((e) => e.type === "payment.signed");
+      expect(paid.length).toBeGreaterThan(5);
+      const allowed: Record<string, string[]> = { researcher: ["Acme Weather", "Acme News", "Acme Stocks"], "claude-desktop": ["Acme Weather"] };
+      for (const e of paid) expect(allowed[e.agentName!] ?? []).toContain(e.receipt!.description);
+      m.stop();
+    });
+
+    it("pairs the block and the freeze on one receiptId (§6)", () => {
+      const m = createMockAdapter({ seed: 3 });
+      const got: WalletEvent[] = [];
+      for (let i = 0; i < 7; i++) got.push(...m.tick());
+      const blocked = got.find((e) => e.type === "payment.blocked")!;
+      const frozen = got.find((e) => e.type === "agent.frozen")!;
+      expect(blocked.data).toMatchObject({ frozen: true, willFreeze: true, receiptId: blocked.receipt!.id });
+      expect(frozen.data).toMatchObject({ cause: "policy_violation", receiptId: blocked.receipt!.id });
+      m.stop();
+    });
   });
 });

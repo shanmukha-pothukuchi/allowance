@@ -1,33 +1,120 @@
-/* Allowance dashboard: tokens, reset, typography. Dark, projector-first. */
+/* Allowance dashboard: tokens, reset, typography. Dark by default, projector-first.
+   Light when the OS prefers it, or when the owner picks it (data-theme on <html>). */
 :root {
-  --bg: #0d1016;
-  --surface: #151923;
-  --surface-2: #1c2230;
-  --surface-3: #242c3b;
-  --border: #2a3242;
-  --border-strong: #3a4458;
+  --bg: #0a0d13;
+  --bg-glow: rgba(91, 124, 250, 0.09);
+  --surface: #11151e;
+  --surface-2: #171c27;
+  --surface-3: #202634;
+  --surface-hover: #283043;
+  --border: rgba(255, 255, 255, 0.075);
+  --border-strong: rgba(255, 255, 255, 0.14);
 
-  --text: #eef2f8;
-  --text-2: #b7c0d1;
-  --muted: #7f8aa3;
+  --text: #f2f5fa;
+  --text-2: #bac2d0;
+  --muted: #7f899c;
 
-  /* one accent for money-in, one for danger; amber only for "waiting on you" */
-  --in: #3fd37f;
-  --in-dim: rgba(63, 211, 127, 0.14);
+  /* blue for UI chrome; green = money in / yes; red = danger; amber only for "waiting on you" */
+  --accent: #0a84ff;
+  --accent-dim: rgba(10, 132, 255, 0.16);
+  --in: #34d27b;
+  --in-hover: #52e092;
+  --in-dim: rgba(52, 210, 123, 0.14);
+  --on-in: #04240f;
   --danger: #ff5a5f;
   --danger-dim: rgba(255, 90, 95, 0.14);
   --danger-glow: rgba(255, 90, 95, 0.45);
-  --warn: #f7b955;
-  --warn-dim: rgba(247, 185, 85, 0.14);
-  --live: #3fd37f;
+  --warn: #f5b041;
+  --warn-dim: rgba(245, 176, 65, 0.13);
+  --warn-fill: #f5b041;
+  --on-warn: #2b1d00;
+  /* agent-proposed (custom) services: not from the directory */
+  --custom: #ff8a3d;
+  --custom-dim: rgba(255, 138, 61, 0.13);
+  --live: #34d27b;
 
-  --radius: 14px;
-  --radius-sm: 9px;
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 10px 30px rgba(0, 0, 0, 0.28);
+  --shadow-pop: 0 24px 80px rgba(0, 0, 0, 0.55);
+  --backdrop: rgba(3, 5, 10, 0.55);
+  --tile-ring: rgba(255, 255, 255, 0.16);
+
+  --radius: 16px;
+  --radius-sm: 10px;
   --gap: 16px;
-  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --emoji: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
   color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f2f3f7;
+    --bg-glow: rgba(0, 122, 255, 0.06);
+    --surface: #ffffff;
+    --surface-2: #f6f7fa;
+    --surface-3: #eaedf2;
+    --surface-hover: #e1e5ec;
+    --border: rgba(16, 24, 40, 0.09);
+    --border-strong: rgba(16, 24, 40, 0.17);
+    --text: #0e1525;
+    --text-2: #384255;
+    --muted: #677084;
+    --accent: #007aff;
+    --accent-dim: rgba(0, 122, 255, 0.1);
+    --in: #12904b;
+    --in-hover: #0f7d41;
+    --in-dim: rgba(18, 144, 75, 0.1);
+    --on-in: #ffffff;
+    --danger: #d82c38;
+    --danger-dim: rgba(216, 44, 56, 0.08);
+    --danger-glow: rgba(216, 44, 56, 0.28);
+    --warn: #a86400;
+    --warn-dim: rgba(245, 166, 35, 0.13);
+    --warn-fill: #f5a623;
+    --custom: #c2410c;
+    --custom-dim: rgba(234, 88, 12, 0.09);
+    --live: #12904b;
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 8px 24px rgba(16, 24, 40, 0.06);
+    --shadow-pop: 0 24px 80px rgba(16, 24, 40, 0.22);
+    --backdrop: rgba(15, 23, 42, 0.28);
+    --tile-ring: rgba(255, 255, 255, 0.35);
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f2f3f7;
+  --bg-glow: rgba(0, 122, 255, 0.06);
+  --surface: #ffffff;
+  --surface-2: #f6f7fa;
+  --surface-3: #eaedf2;
+  --surface-hover: #e1e5ec;
+  --border: rgba(16, 24, 40, 0.09);
+  --border-strong: rgba(16, 24, 40, 0.17);
+  --text: #0e1525;
+  --text-2: #384255;
+  --muted: #677084;
+  --accent: #007aff;
+  --accent-dim: rgba(0, 122, 255, 0.1);
+  --in: #12904b;
+  --in-hover: #0f7d41;
+  --in-dim: rgba(18, 144, 75, 0.1);
+  --on-in: #ffffff;
+  --danger: #d82c38;
+  --danger-dim: rgba(216, 44, 56, 0.08);
+  --danger-glow: rgba(216, 44, 56, 0.28);
+  --warn: #a86400;
+  --warn-dim: rgba(245, 166, 35, 0.13);
+  --warn-fill: #f5a623;
+  --custom: #c2410c;
+  --custom-dim: rgba(234, 88, 12, 0.09);
+  --live: #12904b;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 8px 24px rgba(16, 24, 40, 0.06);
+  --shadow-pop: 0 24px 80px rgba(16, 24, 40, 0.22);
+  --backdrop: rgba(15, 23, 42, 0.28);
+  --tile-ring: rgba(255, 255, 255, 0.35);
+  color-scheme: light;
 }
 
 *,
@@ -48,7 +135,7 @@ html {
 }
 
 body {
-  background: var(--bg);
+  background: radial-gradient(1400px 700px at 15% -20%, var(--bg-glow), transparent 60%), var(--bg);
   color: var(--text);
   font-family: var(--font);
   line-height: 1.35;
@@ -64,7 +151,9 @@ dl,
 dd,
 dt,
 ol,
-ul {
+ul,
+figure,
+blockquote {
   margin: 0;
 }
 
@@ -78,15 +167,24 @@ a {
   color: var(--text-2);
 }
 
-code {
+code,
+pre {
   font-family: var(--mono);
+}
+code {
   font-size: 0.78em;
   color: var(--text-2);
 }
 
-button {
+button,
+input {
   font: inherit;
   color: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .muted {
@@ -110,10 +208,10 @@ button {
   font-weight: 600;
   font-size: 0.9rem;
   white-space: nowrap;
-  transition: background 120ms, transform 80ms, opacity 120ms;
+  transition: background 120ms, transform 80ms, opacity 120ms, border-color 120ms;
 }
 .btn:hover {
-  background: #2d3647;
+  background: var(--surface-hover);
 }
 .btn:active {
   transform: translateY(1px);
@@ -125,10 +223,10 @@ button {
 .btn-primary {
   background: var(--in);
   border-color: var(--in);
-  color: #06250f;
+  color: var(--on-in);
 }
 .btn-primary:hover {
-  background: #5ae395;
+  background: var(--in-hover);
 }
 .btn-danger {
   background: transparent;
@@ -142,6 +240,22 @@ button {
   font-size: 1.05rem;
   padding: 0.6em 1.2em;
 }
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 120ms, color 120ms;
+}
+.icon-btn:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
 
 /* Scrollbars that do not shout */
 *::-webkit-scrollbar {
@@ -150,7 +264,8 @@ button {
 *::-webkit-scrollbar-thumb {
   background: var(--border-strong);
   border-radius: 10px;
-  border: 2px solid var(--surface);
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 *::-webkit-scrollbar-track {
   background: transparent;

@@ -4,7 +4,7 @@
  * Messages use Telegram HTML parse mode; everything dynamic goes through esc().
  */
 import { InlineKeyboard } from "grammy";
-import type { Receipt, WalletEvent } from "@allowance/shared";
+import type { Approval, ConnectedService, Receipt, ServiceGrant, WalletEvent } from "@allowance/shared";
 
 export interface TelegramMessage {
   text: string;
@@ -54,7 +54,7 @@ export function helloText(): string {
     "👋 <b>Allowance is connected.</b>",
     "",
     "I will send you:",
-    "• 🔔 approval requests with Approve / Deny buttons",
+    "• 🔔 approval requests with Approve / Deny buttons (payments and new service connections)",
     "• 🛑 alerts when a payment is blocked and an agent is frozen",
     "• 🧾 receipts for payments, transfers, earnings and top-ups",
     "",
@@ -77,7 +77,21 @@ export function formatEvent(e: WalletEvent): TelegramMessage | null {
         keyboard: approvalKeyboard(a.id),
       };
     }
+    case "service.requested":
+      return e.approval ? serviceRequestMessage(e.approval) : null;
+    case "service.connected":
+    case "service.disconnected": {
+      const s = e.data?.service as Partial<ConnectedService> | undefined;
+      if (!s?.name) return { text: `🔌 ${esc(e.message)}` };
+      const verb = e.type === "service.connected" ? "connected to" : "disconnected from";
+      return { text: `🔌 ${esc(s.icon ?? "")}${s.icon ? " " : ""}<b>${esc(s.name)}</b> ${verb} ${agent}.` };
+    }
     case "payment.blocked": {
+      if (e.reason === "service_not_connected" || r?.reason === "service_not_connected") {
+        // Soft block (no freeze): the agent was told to ask, so this is a heads-up, not an alarm.
+        const name = /^(.+?) is not connected for /.exec(e.message)?.[1] ?? counterpartyLabel(r);
+        return { text: `🔌 ${agent} tried to pay ${esc(name)}, which is not connected yet. It can ask you to connect it.` };
+      }
       const frozen = Boolean(e.data?.frozen);
       return {
         text: `🛑 <b>${agent}</b>: ${esc(e.message)}`,
@@ -106,6 +120,25 @@ export function formatEvent(e: WalletEvent): TelegramMessage | null {
     default:
       return null;
   }
+}
+
+/** "🔌 shopper wants to connect 🍕 Acme Pizza (Acme APIs). It could: • … Reason (from the agent): “…”" */
+export function serviceRequestMessage(a: Approval): TelegramMessage | null {
+  const s: Partial<ServiceGrant> | undefined = a.service;
+  if (!s?.name) return null;
+  const agent = esc(a.agentName || "An agent");
+  const custom = s.source === "agent";
+  const lines = [`🔌 <b>${agent}</b> wants to connect ${s.icon ? `${esc(s.icon)} ` : ""}<b>${esc(s.name)}</b>${!custom && s.provider ? ` (${esc(s.provider)})` : ""}.`];
+  if (custom) lines.push(`⚠️ <b>Not in the directory</b> — proposed by ${agent}: <code>${esc(s.baseUrl)}</code>`);
+  if (s.summary) lines.push(`<i>${esc(s.summary)}</i>`);
+  const perms = (s.permissions ?? []).slice(0, 6);
+  if (perms.length) lines.push("", "It could:", ...perms.map((p) => `• ${esc(p)}`));
+  if (s.pricing) lines.push(`Pricing: ${esc(s.pricing)}`);
+  if (a.reason) {
+    const reason = a.reason.length > 300 ? `${a.reason.slice(0, 300)}…` : a.reason;
+    lines.push("", `Reason (from the agent): “${esc(reason)}”`);
+  }
+  return { text: lines.join("\n"), keyboard: approvalKeyboard(a.id) };
 }
 
 /** Text appended to an approval message once it is decided. */

@@ -11,8 +11,8 @@ import { DEFAULT_BLOCKED_URLS } from "@allowance/mcp/server";
 import { createChatApp } from "./app.js";
 import { loadRoster } from "./roster.js";
 
-export { createChatApp } from "./app.js";
-export { ChatAgent, systemPrompt } from "./agent.js";
+export { createChatApp, lastMessageOf, type AgentSummary, type ServiceChip, type LastMessage } from "./app.js";
+export { ChatAgent, systemPrompt, servicesBlock } from "./agent.js";
 export { chatCompletion, LlmError } from "./llm.js";
 export { loadRoster, groupMembers } from "./roster.js";
 

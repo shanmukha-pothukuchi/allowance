@@ -82,3 +82,18 @@ export function formatBody(text: string, contentType: string | null, maxChars = 
   }
   return out;
 }
+
+/** Fields every service shape (manifest, grant, connection) has. */
+export interface ServiceLike {
+  id: string;
+  name: string;
+  icon?: string;
+  summary?: string;
+  pricing?: string;
+}
+
+/** "- 🌤️ Acme Weather (acme-weather): Current weather for any city · $0.05 per call" */
+export function serviceLine(s: ServiceLike): string {
+  const summary = (s.summary ?? "").replace(/\s+/g, " ").trim();
+  return `- ${s.icon ? `${s.icon} ` : ""}${s.name} (${s.id})${summary ? `: ${summary}` : ""}${s.pricing ? ` · ${s.pricing}` : ""}`;
+}

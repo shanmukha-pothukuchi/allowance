@@ -7,7 +7,7 @@
  */
 import chalk from "chalk";
 import { loadConfig, toBaseUnits, toDollars } from "@allowance/shared";
-import type { BountyDoc } from "@allowance/shared";
+import type { Approval, BountyDoc } from "@allowance/shared";
 import { WalletClient, paidFetch } from "./lib/wallet-client.js";
 import { discover, claim, submit, AgentWorkError } from "./lib/agent-work-client.js";
 import { readTokens } from "./lib/tokens.js";
@@ -32,6 +32,7 @@ async function requireServices() {
   const checks: Array<[string, string]> = [
     ["wallet-service", `${config.walletServiceUrl}/v1/health`],
     ["merchant", `${config.merchantUrl}/`],
+    ["directory", `${config.directoryUrl}/health`],
   ];
   if (config.chainMode === "mock") checks.push(["mock-facilitator", `${config.facilitatorUrl}/health`]);
   for (const [name, url] of checks) {
@@ -126,10 +127,12 @@ async function actRace() {
 // ACT 2 — Spend: researcher buys from 3 paid APIs
 // ---------------------------------------------------------------------------------------------
 async function actSpend() {
-  act(2, "Spending within policy", "A research agent buys from three x402 APIs. Every payment is signed by the wallet, not the agent.");
+  act(2, "Spending within policy", "A research agent buys from its three connected x402 APIs. Every payment is signed by the wallet, not the agent.");
   const w = wallet("researcher");
   const me = await w.me();
   agentLine("researcher", `balance ${money(me.agent.balance)}, limit ${money(me.limits.maxPerTx)}/payment, ${money(me.limits.dailyCap)}/day`, chalk.cyan);
+  const connected = me.agent.services ?? [];
+  agentLine("researcher", `connected: ${connected.length ? connected.map((s) => `${s.icon} ${s.name}`).join(", ") : dim("none")}`, chalk.cyan);
   const buys: Array<[string, string]> = [
     ["Acme Weather", `${config.merchantUrl}/api/weather?city=Paris`],
     ["Acme News", `${config.merchantUrl}/api/news`],
@@ -141,6 +144,9 @@ async function actSpend() {
     if (r.kind === "ok" && r.receipt) {
       const preview = JSON.stringify(r.body).slice(0, 70);
       agentLine("researcher", `${receiptLine(r.receipt)} ${dim(preview)}`, chalk.cyan);
+    } else if (r.kind === "blocked" && r.reason === "service_not_connected") {
+      agentLine("researcher", warn(`${r.message} (run npm run setup to connect the default services)`), chalk.cyan);
+      process.exitCode = 1;
     } else {
       agentLine("researcher", bad(`unexpected: ${JSON.stringify(r)}`), chalk.cyan);
     }
@@ -199,16 +205,38 @@ async function actAttack() {
 // ACT 4 — Pizza: approval flow
 // ---------------------------------------------------------------------------------------------
 async function actPizza() {
-  act(4, "Pizza", "The shopper orders an $18.50 pizza. That is over its $10 threshold, so the owner must approve on their phone.");
+  act(4, "Pizza", "The shopper has no pizza service. It asks the owner to connect Acme Pizza, then orders an $18.50 pizza (over its $10 threshold, so the owner approves that too).");
   const w = wallet("shopper");
   const me = await w.me();
   agentLine("shopper", `balance ${money(me.agent.balance)}, approval needed above ${money(me.limits.approvalThreshold)}`, chalk.green);
   await pace(800);
 
+  // Step 1: connect the service. Agents can only pay connected services; the owner decides.
+  const req = await w.requestService({ serviceId: "acme-pizza", reason: "My owner asked me to order a large pizza for the team." });
+  if (req.status === "connected") {
+    agentLine("shopper", `${req.service.icon} ${req.service.name} is already connected ${dim("(re-run)")}`, chalk.green);
+  } else {
+    agentLine("shopper", `asks the owner to connect ${req.service.icon} ${chalk.bold(req.service.name)} (${req.service.pricing}) ${dim(`approval ${req.approvalId}`)}`, chalk.green);
+    for (;;) {
+      const r = await w.wait(req.approvalId, 45_000);
+      if (r.status === "approved") {
+        agentLine("shopper", `${ok("connected")} ${r.service?.icon ?? ""} ${r.service?.name ?? req.service.name} ${dim(`(by the owner, ${r.service?.connectedBy ?? "approval"})`)}`, chalk.green);
+        break;
+      }
+      if (r.status === "denied" || r.status === "expired") {
+        console.log(bad(`  ✖ the owner ${r.status} connecting ${req.service.name}; no pizza.`));
+        process.exitCode = 1;
+        return;
+      }
+      agentLine("shopper", `${warn("waiting")} for the owner to approve connecting ${req.service.name}…`, chalk.green);
+    }
+  }
+  await pace(800);
+
   const r = await paidFetch(w, `${config.merchantUrl}/pizza/order`, {
     method: "POST",
     body: { size: "large", toppings: ["mushroom", "olive"], address: "Hackathon Hall, Table 7" },
-    description: "Pizza Co",
+    description: "Acme Pizza",
     onWaiting: async (approvalId, amount) => {
       agentLine("shopper", `${warn("waiting")} for the owner to approve ${money(amount)} (approval ${dim(approvalId)})…`, chalk.green);
       return true; // keep waiting until decided
@@ -227,18 +255,22 @@ async function actPizza() {
   }
 }
 
-/** With --auto-approve, approve any pending approval for the shopper a moment after it appears. */
+/** With --auto-approve, approve any pending approval (payments and service connections) a moment after it appears. */
 function startAutoApprover(): () => void {
   if (!AUTO_APPROVE) return () => {};
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (config.ownerApiKey) headers["x-owner-key"] = config.ownerApiKey;
+  const seen = new Set<string>(); // the 1 s poll overlaps the pause below; approve each id once
   const timer = setInterval(async () => {
     try {
       const res = await fetch(`${config.walletServiceUrl}/v1/approvals?status=pending`, { headers });
-      const { approvals } = (await res.json()) as { approvals: Array<{ id: string; amount: string; agentName: string }> };
+      const { approvals } = (await res.json()) as { approvals: Approval[] };
       for (const a of approvals ?? []) {
+        if (seen.has(a.id)) continue;
+        seen.add(a.id);
         await pace(1500);
-        console.log(`  ${chalk.bgGreen.black(" OWNER ")} auto-approving ${money(a.amount)} for ${a.agentName} ${dim("(--auto-approve)")}`);
+        const what = a.kind === "service" ? `connect ${a.service?.name ?? "a service"}` : money(a.amount);
+        console.log(`  ${chalk.bgGreen.black(" OWNER ")} auto-approving ${what} for ${a.agentName} ${dim("(--auto-approve)")}`);
         await fetch(`${config.walletServiceUrl}/v1/approvals/${a.id}/approve`, { method: "POST", headers, body: JSON.stringify({ by: "auto" }) });
       }
     } catch {

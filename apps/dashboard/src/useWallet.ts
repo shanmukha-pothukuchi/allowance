@@ -6,7 +6,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { mockRequested, type WalletAdapter } from "./api/adapter";
 import { createHttpAdapter, walletServiceReachable } from "./api/httpAdapter";
 import { createMockAdapter } from "./api/mockAdapter";
-import { initialState, isMoneyEvent, reducer, type DashboardState } from "./state";
+import { initialState, reducer, refreshesSummary, serviceKey, type DashboardState } from "./state";
 import type { ConnectionStatus, WalletEvent } from "./types";
 
 export interface WalletActions {
@@ -15,6 +15,11 @@ export interface WalletActions {
   freeze(agentId: string): Promise<void>;
   unfreeze(agentId: string): Promise<void>;
   topup(agentId: string, amount?: string): Promise<void>;
+  connectService(agentId: string, serviceId: string): Promise<void>;
+  disconnectService(agentId: string, serviceId: string): Promise<void>;
+  /** Fetch usage docs for the detail sheet (once per service). */
+  loadServiceDocs(serviceId: string): Promise<void>;
+  reloadDirectory(): Promise<void>;
   toggleDetails(): void;
 }
 
@@ -24,6 +29,7 @@ export function useWallet(): { state: DashboardState; actions: WalletActions } {
   const [state, dispatch] = useReducer(reducer, initialState);
   const adapterRef = useRef<WalletAdapter | null>(null);
   const summaryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const docsRequested = useRef(new Set<string>());
 
   const refetchSummary = useCallback(() => {
     clearTimeout(summaryTimer.current);
@@ -36,6 +42,15 @@ export function useWallet(): { state: DashboardState; actions: WalletActions } {
         console.warn("[dashboard] summary refetch failed", err);
       }
     }, SUMMARY_DEBOUNCE_MS);
+  }, []);
+
+  const loadDirectory = useCallback(async (a: WalletAdapter) => {
+    dispatch({ type: "directoryLoading" });
+    try {
+      dispatch({ type: "directory", services: await a.getDirectory() });
+    } catch (err) {
+      dispatch({ type: "directoryError", message: `Could not load the service directory: ${(err as Error).message}` });
+    }
   }, []);
 
   const loadAll = useCallback(async (a: WalletAdapter) => {
@@ -76,11 +91,13 @@ export function useWallet(): { state: DashboardState; actions: WalletActions } {
         dispatch({ type: "error", message: `Could not load wallet data: ${(err as Error).message}` });
       }
       if (cancelled) return;
+      // The directory is a separate service behind the wallet; it failing never blocks the overview.
+      void loadDirectory(adapter);
 
       let wasLive = false;
       const onEvent = (e: WalletEvent) => {
         dispatch({ type: "event", event: e });
-        if (isMoneyEvent(e.type)) refetchSummary();
+        if (refreshesSummary(e.type)) refetchSummary();
       };
       const onStatus = (s: ConnectionStatus) => {
         if (adapter.kind === "mock") return; // stays "demo"
@@ -97,10 +114,10 @@ export function useWallet(): { state: DashboardState; actions: WalletActions } {
       unsubscribe?.();
       clearTimeout(summaryTimer.current);
     };
-  }, [loadAll, refetchSummary]);
+  }, [loadAll, loadDirectory, refetchSummary]);
 
   const run = useCallback(
-    async (busy: { type: "busyApproval" | "busyAgent"; id: string }, fn: (a: WalletAdapter) => Promise<unknown>) => {
+    async (busy: { type: "busyApproval" | "busyAgent"; id: string } | { type: "busyService"; key: string }, fn: (a: WalletAdapter) => Promise<unknown>) => {
       const a = adapterRef.current;
       if (!a) return;
       dispatch({ ...busy, busy: true });
@@ -123,6 +140,25 @@ export function useWallet(): { state: DashboardState; actions: WalletActions } {
     freeze: (id) => run({ type: "busyAgent", id }, async (a) => dispatch({ type: "agent", agent: await a.freeze(id) })),
     unfreeze: (id) => run({ type: "busyAgent", id }, async (a) => dispatch({ type: "agent", agent: await a.unfreeze(id) })),
     topup: (id, amount = "20.00") => run({ type: "busyAgent", id }, (a) => a.topup(id, amount)),
+    connectService: (agentId, serviceId) =>
+      run({ type: "busyService", key: serviceKey(agentId, serviceId) }, async (a) => dispatch({ type: "agent", agent: await a.connectService(agentId, serviceId) })),
+    disconnectService: (agentId, serviceId) =>
+      run({ type: "busyService", key: serviceKey(agentId, serviceId) }, async (a) => dispatch({ type: "agent", agent: await a.disconnectService(agentId, serviceId) })),
+    loadServiceDocs: async (serviceId) => {
+      const a = adapterRef.current;
+      if (!a || docsRequested.current.has(serviceId)) return;
+      docsRequested.current.add(serviceId);
+      try {
+        const svc = await a.getService(serviceId);
+        dispatch({ type: "serviceDocs", id: serviceId, docs: svc.docs ?? "" });
+      } catch {
+        docsRequested.current.delete(serviceId); // custom services may have no directory entry
+        dispatch({ type: "serviceDocs", id: serviceId, docs: "" });
+      }
+    },
+    reloadDirectory: async () => {
+      if (adapterRef.current) await loadDirectory(adapterRef.current);
+    },
     toggleDetails: () => dispatch({ type: "toggleDetails" }),
   };
 

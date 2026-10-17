@@ -15,7 +15,20 @@ import {
   toBaseUnits,
   toDollars,
 } from "@allowance/shared";
-import type { Address, AgentPublic, AgentToken, Approval, Hex, Policy, Receipt, WalletEvent, X402PaymentRequired, X402PaymentRequirements } from "@allowance/shared";
+import type {
+  Address,
+  AgentPublic,
+  AgentToken,
+  Approval,
+  ConnectedService,
+  Hex,
+  Policy,
+  Receipt,
+  ServiceGrant,
+  WalletEvent,
+  X402PaymentRequired,
+  X402PaymentRequirements,
+} from "@allowance/shared";
 
 export interface StoredAgent {
   id: string;
@@ -24,6 +37,8 @@ export interface StoredAgent {
   /** NEVER leaves this process. redact() strips this key name everywhere. */
   privateKey: Hex;
   policy: Policy;
+  /** Connected services (docs/ARCHITECTURE.md §13). The directory is implicit and never listed. */
+  services: ConnectedService[];
   createdAt: string;
   frozenReason?: string;
   /** Mock mode: dollars to mint at startup if not yet applied. */
@@ -61,6 +76,15 @@ export interface PendingPayment {
   createdAt: string;
 }
 
+/** A service connection waiting for the owner (keyed by approval id). Custom docs live here until approval. */
+export interface PendingServiceRequest {
+  approvalId: string;
+  agentId: string;
+  grant: ServiceGrant;
+  docs?: string;
+  createdAt: string;
+}
+
 export interface WalletState {
   version: 1;
   agents: StoredAgent[];
@@ -69,12 +93,13 @@ export interface WalletState {
   approvals: Approval[];
   events: WalletEvent[];
   pendingPayments: Record<string, PendingPayment>;
+  serviceRequests: Record<string, PendingServiceRequest>;
 }
 
 export const MAX_EVENTS = 500;
 
 export function emptyState(): WalletState {
-  return { version: 1, agents: [], tokens: [], receipts: [], approvals: [], events: [], pendingPayments: {} };
+  return { version: 1, agents: [], tokens: [], receipts: [], approvals: [], events: [], pendingPayments: {}, serviceRequests: {} };
 }
 
 export class Store {
@@ -90,7 +115,11 @@ export class Store {
     if (!existsSync(this.file)) return emptyState();
     try {
       const parsed = JSON.parse(readFileSync(this.file, "utf8")) as Partial<WalletState>;
-      return { ...emptyState(), ...parsed };
+      const state = { ...emptyState(), ...parsed };
+      // Migrate pre-services state: agents without `services` have none connected.
+      for (const a of state.agents) if (!Array.isArray(a.services)) a.services = [];
+      if (!state.serviceRequests || typeof state.serviceRequests !== "object") state.serviceRequests = {};
+      return state;
     } catch (err) {
       console.error(`[wallet-service] could not parse ${this.file}; starting empty`, (err as Error).message);
       return emptyState();
@@ -151,6 +180,7 @@ export function toAgentPublic(a: StoredAgent, figures: AgentFigures): AgentPubli
     name: a.name,
     address: a.address,
     policy: a.policy,
+    services: a.services ?? [],
     createdAt: a.createdAt,
     balance: toDollars(figures.balance),
     spentToday: toDollars(figures.spentToday),
@@ -195,6 +225,17 @@ export function normalizePolicy(base: Policy, patch: Partial<Policy> | undefined
   return p;
 }
 
+/** Setup-supplied connections: de-duplicated by id, the directory itself is never stored. */
+export function normalizeServices(services: ConnectedService[] | undefined): ConnectedService[] {
+  const out: ConnectedService[] = [];
+  for (const s of services ?? []) {
+    if (!s || typeof s.id !== "string" || typeof s.baseUrl !== "string") throw new Error("each service needs an id and a baseUrl");
+    if (s.kind === "directory" || out.some((o) => o.id === s.id)) continue;
+    out.push({ ...s, permissions: [...(s.permissions ?? [])], connectedAt: s.connectedAt ?? nowIso(), connectedBy: s.connectedBy ?? "default" });
+  }
+  return out;
+}
+
 export function issueToken(store: Store, agentId: string): { token: string; stored: StoredToken } {
   const token = newAgentToken();
   const stored: StoredToken = {
@@ -215,7 +256,7 @@ export function issueToken(store: Store, agentId: string): { token: string; stor
  */
 export function createAgentOffline(
   store: Store,
-  input: { name: string; policy?: Partial<Policy>; initialBalance?: string },
+  input: { name: string; policy?: Partial<Policy>; initialBalance?: string; services?: ConnectedService[] },
 ): { agent: AgentPublic; token: string; tokenId: string; stored: StoredAgent } {
   if (!input.name || typeof input.name !== "string") throw new Error("name is required");
   if (store.agentByName(input.name)) throw new Error(`agent "${input.name}" already exists`);
@@ -228,6 +269,7 @@ export function createAgentOffline(
     address: account.address,
     privateKey,
     policy: normalizePolicy(DEFAULT_POLICY, input.policy),
+    services: normalizeServices(input.services),
     createdAt: nowIso(),
     seedBalance: input.initialBalance ? toDollars(toBaseUnits(input.initialBalance)) : undefined,
     seedApplied: input.initialBalance ? false : undefined,

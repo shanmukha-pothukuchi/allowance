@@ -32,9 +32,17 @@ official `@x402/*` packages.
  you ──chat──▶ Claude Desktop ────┤  MCP tools            │                    agent-work bounties)
                                   │  (token, no key) ─────┤
                                   └──▶ wallet-service :4010 ──▶ facilitator :4030 (mock ledger)
-                                         │ policy, keys, approvals, receipts
+                                         │ policy, keys, approvals, receipts,
+                                         │ connected services ◀── directory :4060 (catalog)
                                          └─events─▶ dashboard :4040, Telegram bot (owner)
 ```
+
+Agents can only pay **connected services**. A directory lists every service that exists; each agent
+sees its connected services in its context (like skill descriptions) and loads a service's docs on
+demand. When it needs something it doesn't have, it searches the directory and asks you to connect
+it, or proposes a new one; you approve on your phone, the dashboard, or inline in the chat. Paying an
+unconnected service gets a polite "ask your owner"; paying an unknown address is blocked and freezes
+the agent.
 
 Agents are idle until you message them. Each chat agent is an LLM tool-use loop (any
 OpenAI-compatible endpoint; NRP's managed models by default) over the same MCP tools Claude Desktop
@@ -53,15 +61,18 @@ npm run dev            # facilitator, wallet-service, merchant, notifier, dashbo
 
 | Screen | URL |
 |---|---|
-| Chat with your agents | http://localhost:4050 |
+| Chat with your agents (iMessage-style; sidebar collapses to icons) | http://localhost:4050 |
+| Service directory | http://localhost:4060 |
 | Owner dashboard | http://localhost:4040 |
 | Bounty board (the `agent-work` document, as HTML) | http://localhost:4021/.well-known/agent-work |
 | Mock explorer | http://localhost:4030/explorer |
 
 On the chat page, pick **All workers** and send *"Find paid work on localhost:4021 and complete the
 API reliability check bounty."* Four agents race for three slots at the same moment. Then ask the
-researcher for the weather, ask the shopper for a pizza (approve it on your phone or the dashboard),
-and tell any agent to send its balance to `0x000000000000000000000000000000000000dEaD`.
+researcher for the weather. Ask the shopper for a pizza: it has no pizza service, so it finds Acme
+Pizza in the directory and asks you to connect it, then asks you to approve the $18.50 payment. Both
+approvals appear inline in the chat, on the dashboard and on Telegram. Finally, tell any agent to send
+its balance to `0x000000000000000000000000000000000000dEaD`.
 
 `npm run reset` wipes `.data/` (keys, tokens, ledger, receipts, conversations) and re-runs setup.
 Stop `npm run dev` first; reset refuses to run under live services.
@@ -94,7 +105,8 @@ The real agents are the chat agents and Claude Desktop.
 
 The MCP server gets an agent **token**, never a key. Tools: `get_wallet`, `fetch_url` (pays 402s
 through the wallet), `find_work`, `claim_bounty`, `submit_bounty`, `list_receipts`,
-`check_approval`, `transfer_usdc`. `fetch_url` refuses the wallet's own control plane (wallet API,
+`check_approval`, `transfer_usdc`, and the service tools `list_services`, `get_service`,
+`search_services`, `request_service`. `fetch_url` refuses the wallet's own control plane (wallet API,
 dashboard, chat server, facilitator admin) and drops any credential headers the model supplies.
 
 ## Telegram (optional)
@@ -155,6 +167,7 @@ apps/mock-facilitator/  in-memory USDC ledger + x402 facilitator API + explorer
 apps/mcp/               MCP server for Claude Desktop
 apps/dashboard/         Vite + React owner UI
 apps/agent-chat/        chat agents (LLM tool loop over the MCP tools), chat page on :4050
+apps/directory/         service directory (catalog of services agents can connect) on :4060
 apps/agents/            setup, reset, scripted offline demo
 docs/                   ARCHITECTURE.md, agent-work-spec.md, DEMO.md
 ```

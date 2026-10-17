@@ -6,9 +6,10 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startMerchantStub, startWalletStub, type MerchantStub, type WalletStub } from "@allowance/mcp/test-stubs";
-import { ChatAgent, sanitizeHistory, type AgentEvent } from "./agent.js";
+import { avatarFor } from "@allowance/shared/avatars";
+import { ChatAgent, sanitizeHistory, servicesBlock, systemPrompt, type AgentEvent, type LogEntry } from "./agent.js";
 import { chatCompletion, LlmError, type ChatMessage } from "./llm.js";
-import { createChatApp } from "./app.js";
+import { createChatApp, lastMessageOf, type AgentSummary } from "./app.js";
 import { groupMembers } from "./roster.js";
 
 // ---- stub OpenAI-compatible LLM ------------------------------------------------------------
@@ -55,6 +56,7 @@ let merchant: MerchantStub;
 
 beforeAll(async () => {
   [llm, wallet, merchant] = await Promise.all([startLlmStub(), startWalletStub({ approveUpTo: 5, blockAbove: 10, autoApproveAfterMs: 200 }), startMerchantStub()]);
+  wallet.merchantUrl = merchant.url;
 });
 afterAll(async () => {
   await Promise.all([llm.close(), wallet.close(), merchant.close()]);
@@ -171,6 +173,9 @@ describe("chat agent", () => {
     const { done } = await agent.send("Order me a pizza");
     await done;
     expect(events.some((e) => e.type === "status" && e.status.state === "waiting_approval")).toBe(true);
+    const waiting = events.find((e) => e.type === "status" && e.status.state === "waiting_approval") as { status: { approvalId?: string; approvalKind?: string } };
+    expect(waiting.status.approvalId).toMatch(/^apr_/);
+    expect(waiting.status.approvalKind).toBe("payment");
     expect((agent.log.find((e) => e.kind === "tool") as { result: string }).result).toMatch(/Paid \$8\.00/);
     await agent.close();
   });
@@ -243,6 +248,76 @@ describe("chat agent", () => {
   });
 });
 
+describe("services in the agent's context (§13.4)", () => {
+  const sys = (b: Body) => (b.messages[0] as { content: string }).content;
+
+  it("rebuilds the 'Your services' block from GET /v1/services at the start of each run", async () => {
+    const { agent } = makeAgent();
+    llm.script = () => reply("ok");
+    await (await agent.send("hi")).done;
+    const prompt = sys(llm.requests.at(-1)!);
+    expect(prompt).toContain("Your services (connected by your owner; these are the only paid services you can use):");
+    expect(prompt).toContain("- 🌤️ Acme Weather (acme-weather): Current weather for any city. · $0.05 per call");
+    expect(prompt).toContain("- 🍕 Acme Pizza (acme-pizza)");
+    expect(prompt).not.toContain("acme-stocks");
+    expect(prompt).toContain("The Service Directory is always available");
+    expect(prompt).toContain("Before using a service, call get_service for how to call it. If you need something you don't have, search_services and request_service; your owner approves.");
+
+    // the owner connects another service between runs → next run sees it
+    wallet.connect(wallet.token, "acme-stocks");
+    await (await agent.send("again")).done;
+    expect(sys(llm.requests.at(-1)!)).toContain("- 📈 Acme Stocks (acme-stocks)");
+    wallet.agents.get(wallet.token)!.services = wallet.agents.get(wallet.token)!.services.filter((s) => s.id !== "acme-stocks");
+    await agent.close();
+  });
+
+  it("says '(could not load your services)' when the wallet can't be asked", async () => {
+    const { agent } = makeAgent({ walletServiceUrl: "http://127.0.0.1:1" });
+    llm.script = () => reply("ok");
+    await (await agent.send("hi")).done;
+    expect(sys(llm.requests.at(-1)!)).toContain("(could not load your services)");
+    expect(agent.log.at(-1)).toMatchObject({ kind: "assistant", text: "ok" });
+    await agent.close();
+    expect(servicesBlock([])).toContain("(none connected yet)");
+    expect(systemPrompt("x", "y")).not.toContain("Your services");
+  });
+
+  it("flags a service request as waiting_approval (approvalKind service) and refreshes services mid-run", async () => {
+    const tok = wallet.addToken("shopper", []);
+    const { agent, events } = makeAgent({ name: "shopper", token: tok });
+    let step = 0;
+    // null for an optional parameter (common with open-weight models) is treated as absent
+    llm.script = () => (++step === 1 ? callTool("request_service", { service_id: "acme-pizza", custom: null, reason: "Owner wants pizza" }) : reply("Acme Pizza is connected."));
+    await (await agent.send("Order me a pizza")).done;
+    const first = llm.requests.at(-2)!;
+    const second = llm.requests.at(-1)!;
+    expect(sys(first)).toContain("(none connected yet)");
+    expect(sys(second)).toContain("- 🍕 Acme Pizza (acme-pizza)");
+    const waiting = events.find((e) => e.type === "status" && e.status.state === "waiting_approval") as { status: { approvalId?: string; approvalKind?: string } } | undefined;
+    expect(waiting?.status.approvalId).toMatch(/^apr_/);
+    expect(waiting?.status.approvalKind).toBe("service");
+    const tool = agent.log.find((e) => e.kind === "tool") as { name: string; result: string; isError: boolean };
+    expect(tool).toMatchObject({ name: "request_service", isError: false });
+    expect(tool.result).toMatch(/^Connected Acme Pizza\./);
+    await agent.close();
+  });
+
+  it("lastMessageOf skips tool entries and truncates long text", () => {
+    const log: LogEntry[] = [
+      { kind: "user", id: "1", text: "hi", at: "t1", groupId: "grp_1" },
+      { kind: "assistant", id: "2", text: "x".repeat(400), at: "t2" },
+      { kind: "tool", id: "3", name: "get_wallet", args: {}, at: "t3" },
+    ];
+    const m = lastMessageOf(log)!;
+    expect(m.kind).toBe("assistant");
+    expect(m.at).toBe("t2");
+    expect(m.text.length).toBe(280);
+    expect(m.text.endsWith("…")).toBe(true);
+    expect(lastMessageOf(log.slice(0, 1))).toEqual({ kind: "user", text: "hi", at: "t1", groupId: "grp_1" });
+    expect(lastMessageOf([])).toBeNull();
+  });
+});
+
 describe("chat server", () => {
   it("serves the page, lists agents with wallets, runs messages and group broadcasts", async () => {
     const chat = createChatApp({
@@ -303,6 +378,102 @@ describe("chat server", () => {
       expect((await fetch(`${base}/api/agents/researcher/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) })).status).toBe(400);
       ctrl.abort();
     } finally {
+      await chat.close();
+      await new Promise((r) => server.close(() => r(null)));
+    }
+  });
+
+  it("summaries carry avatar, services and lastMessage; group broadcasts share one groupId", async () => {
+    const w1 = wallet.addToken("worker-1", []);
+    const w2 = wallet.addToken("worker-2", ["acme-stocks"]);
+    const chat = createChatApp({
+      walletServiceUrl: wallet.url,
+      llm: { baseUrl: llm.url, apiKey: "k", model: "qwen3", backoffMs: 5 },
+      roster: [
+        { name: "researcher", role: "r", token: wallet.token },
+        { name: "worker-1", role: "w", token: w1 },
+        { name: "worker-2", role: "w", token: w2 },
+      ],
+      walletPollMs: 60_000,
+      approvalWaitMs: 2000,
+    });
+    await chat.ready;
+    const server: Server = await new Promise((r) => {
+      const s = chat.app.listen(0, "127.0.0.1", () => r(s));
+    });
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const post = (path: string, body: unknown) => fetch(`${base}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const idle = async () => {
+      for (let i = 0; i < 100 && [...chat.agents.values()].some((a) => a.busy); i++) await new Promise((r) => setTimeout(r, 25));
+    };
+    const ctrl = new AbortController();
+    try {
+      const list = (await (await fetch(`${base}/api/agents`)).json()) as { agents: AgentSummary[] };
+      const [researcher, worker1, worker2] = list.agents;
+      expect(researcher.avatar).toEqual(avatarFor("researcher"));
+      expect(researcher.avatar.emoji).toBe("🔎");
+      expect(worker1.avatar).toEqual(avatarFor("worker-1"));
+      expect(researcher.services).toEqual([
+        { id: "acme-weather", name: "Acme Weather", icon: "🌤️", color: "#3AA0E0" },
+        { id: "acme-pizza", name: "Acme Pizza", icon: "🍕", color: "#E5527A" },
+      ]);
+      expect(worker1.services).toEqual([]);
+      expect(worker2.services.map((s) => s.id)).toEqual(["acme-stocks"]);
+      expect(researcher.lastMessage).toBeNull();
+      expect(Object.keys(researcher).sort()).toEqual(["avatar", "busy", "lastMessage", "name", "role", "services", "status", "wallet"]);
+
+      // SSE snapshot has the same shape
+      const frames: string[] = [];
+      void fetch(`${base}/api/events`, { signal: ctrl.signal }).then(async (r) => {
+        const reader = r.body!.getReader();
+        const dec = new TextDecoder();
+        for (;;) {
+          const { value, done } = await reader.read().catch(() => ({ value: undefined, done: true }));
+          if (done) break;
+          frames.push(dec.decode(value));
+        }
+      });
+      for (let i = 0; i < 40 && !frames.join("").includes("snapshot"); i++) await new Promise((r) => setTimeout(r, 25));
+      const snap = JSON.parse(frames.join("").split("event: snapshot\ndata: ")[1].split("\n")[0]) as { agents: AgentSummary[]; groups: { workers: string[] } };
+      expect(snap.agents[0]).toMatchObject({ name: "researcher", avatar: avatarFor("researcher"), lastMessage: null });
+      expect(snap.agents[0].services).toHaveLength(2);
+      expect(snap.groups.workers).toEqual(["worker-1", "worker-2"]);
+
+      // group broadcast: one groupId for every member's user entry
+      llm.script = () => reply("on it");
+      const g1 = await post("/api/groups/workers/messages", { text: "find work" });
+      expect(g1.status).toBe(202);
+      const g1body = (await g1.json()) as { group: string; groupId: string; runs: Array<{ agent: string; runId?: string }> };
+      expect(g1body.group).toBe("workers");
+      expect(g1body.groupId).toMatch(/^grp_[0-9a-f]+$/);
+      expect(g1body.runs.map((r) => r.agent)).toEqual(["worker-1", "worker-2"]);
+      await idle();
+      for (const name of ["worker-1", "worker-2"]) {
+        const d = (await (await fetch(`${base}/api/agents/${name}`)).json()) as AgentSummary & { log: LogEntry[]; tools: string[] };
+        expect(d.log[0]).toMatchObject({ kind: "user", text: "find work", groupId: g1body.groupId });
+        expect(d.lastMessage).toMatchObject({ kind: "assistant", text: "on it" });
+        expect(d.avatar).toEqual(avatarFor(name));
+        expect(d.tools).toContain("request_service");
+      }
+      const g2 = (await (await post("/api/groups/workers/messages", { text: "again" })).json()) as { groupId: string };
+      expect(g2.groupId).not.toBe(g1body.groupId);
+      await idle();
+
+      // a direct message has no groupId
+      expect((await post("/api/agents/researcher/messages", { text: "hello" })).status).toBe(202);
+      await idle();
+      const r = (await (await fetch(`${base}/api/agents/researcher`)).json()) as AgentSummary & { log: LogEntry[] };
+      expect(r.log[0]).toEqual({ kind: "user", id: expect.any(String), text: "hello", at: expect.any(String) });
+      expect(r.lastMessage).toEqual({ kind: "assistant", text: "on it", at: expect.any(String) });
+
+      // services change → the wallet event carries the new chips
+      wallet.connect(w1, "acme-pizza");
+      expect((await post("/api/agents/worker-1/messages", { text: "anything new?" })).status).toBe(202);
+      for (let i = 0; i < 80 && !/"agent":"worker-1","wallet":\{[^}]*\},"services":\[\{"id":"acme-pizza"/.test(frames.join("")); i++) await new Promise((r) => setTimeout(r, 25));
+      expect(frames.join("")).toMatch(/event: wallet\ndata: \{"agent":"worker-1","wallet":\{.*\},"services":\[\{"id":"acme-pizza","name":"Acme Pizza","icon":"🍕","color":"#E5527A"\}\]\}/);
+      await idle();
+    } finally {
+      ctrl.abort();
       await chat.close();
       await new Promise((r) => server.close(() => r(null)));
     }

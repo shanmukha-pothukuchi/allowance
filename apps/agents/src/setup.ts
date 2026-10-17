@@ -4,61 +4,52 @@
  * Creates the demo agents with sensible policies, stores their tokens for the scripted agents in
  * DATA_DIR/agent-tokens.json, and prints the Claude Desktop MCP config snippet.
  *
- * If the wallet-service is running, agents are created through its HTTP API. Otherwise they are
- * written directly to its state file via the offline store helper (the service picks them up on
- * next start). Re-running is safe: existing agents are kept and get a fresh token only if missing.
+ * Every agent gets a closed allowlist and its default connected services (docs §13.2): it can only
+ * pay what is connected. If the wallet-service is running, agents are created through its HTTP API
+ * and services connected with POST /v1/agents/:id/services. Otherwise they are written directly to
+ * its state file via the offline store helper (the service picks them up on next start).
+ * Re-running is safe: existing agents are kept (policy untouched), get a fresh token only if
+ * missing, and get any missing default services.
  */
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import chalk from "chalk";
 import { loadConfig, DEFAULT_POLICY, ensureOwnerKey } from "@allowance/shared";
-import type { CreateAgentRequest, CreateAgentResponse, Policy, AgentPublic } from "@allowance/shared";
+import type { CreateAgentRequest, CreateAgentResponse, AgentPublic } from "@allowance/shared";
 import { readTokens, writeTokens, tokensPath, type TokenFile } from "./lib/tokens.js";
+import { buildCatalog, buildSeeds, defaultServices, type Seed } from "./lib/seeds.js";
 
 const config = loadConfig();
 // Owner endpoints always need a key; generate one on first setup (services and the dashboard read it).
 if (!config.ownerApiKey) config.ownerApiKey = ensureOwnerKey(config.dataDir);
-const merchantOrigin = config.merchantUrl;
+const SEEDS: Seed[] = buildSeeds();
+const CATALOG = buildCatalog({ merchantUrl: config.merchantUrl, directoryUrl: config.directoryUrl });
 
-interface Seed {
-  name: string;
-  policy: Partial<Policy>;
-  initialBalance: string;
-  note: string;
+function ownerJsonHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (config.ownerApiKey) headers["x-owner-key"] = config.ownerApiKey;
+  return headers;
 }
 
-const SEEDS: Seed[] = [
-  {
-    name: "claude-desktop",
-    policy: { maxPerTx: "20.00", dailyCap: "50.00", approvalThreshold: "10.00", allowlist: { addresses: [], origins: [merchantOrigin] } },
-    initialBalance: "20.00",
-    note: "the agent inside Claude Desktop (MCP)",
-  },
-  {
-    name: "researcher",
-    policy: { maxPerTx: "1.00", dailyCap: "5.00", approvalThreshold: "1.00", allowlist: null },
-    initialBalance: "20.00",
-    note: "buys from paid APIs (act 2)",
-  },
-  {
-    name: "shopper",
-    policy: { maxPerTx: "20.00", dailyCap: "50.00", approvalThreshold: "10.00", allowlist: { addresses: [], origins: [merchantOrigin] } },
-    initialBalance: "20.00",
-    note: "orders the pizza; needs approval (act 4)",
-  },
-  {
-    name: "naive-worker",
-    policy: { maxPerTx: "25.00", dailyCap: "50.00", approvalThreshold: "25.00", allowlist: { addresses: [], origins: [merchantOrigin] } },
-    initialBalance: "20.00",
-    note: "falls for the poisoned bounty (act 3)",
-  },
-  ...[1, 2, 3, 4].map((i) => ({
-    name: `worker-${i}`,
-    policy: { maxPerTx: "1.00", dailyCap: "5.00", approvalThreshold: "1.00", allowlist: { addresses: [], origins: [merchantOrigin] } },
-    initialBalance: "20.00",
-    note: "races for bounty slots (act 1)",
-  })),
-];
+/** Online path: connect each default service through the owner endpoint (idempotent). */
+async function connectViaHttp(agent: AgentPublic, seed: Seed): Promise<string[]> {
+  const have = new Set((agent.services ?? []).map((s) => s.id));
+  const problems: string[] = [];
+  for (const serviceId of seed.services) {
+    if (have.has(serviceId)) continue;
+    try {
+      const r = await fetch(`${config.walletServiceUrl}/v1/agents/${agent.id}/services`, {
+        method: "POST",
+        headers: ownerJsonHeaders(),
+        body: JSON.stringify({ serviceId }),
+      });
+      if (!r.ok) problems.push(`${serviceId} (${r.status} ${((await r.json().catch(() => ({}))) as { error?: string }).error ?? ""})`);
+    } catch (err) {
+      problems.push(`${serviceId} (${(err as Error).message})`);
+    }
+  }
+  return problems;
+}
 
 async function serviceUp(): Promise<boolean> {
   try {
@@ -70,10 +61,8 @@ async function serviceUp(): Promise<boolean> {
 }
 
 async function createViaHttp(seed: Seed): Promise<CreateAgentResponse> {
-  const headers: Record<string, string> = { "content-type": "application/json" };
-  if (config.ownerApiKey) headers["x-owner-key"] = config.ownerApiKey;
   const body: CreateAgentRequest = { name: seed.name, policy: { ...DEFAULT_POLICY, ...seed.policy }, initialBalance: seed.initialBalance };
-  const r = await fetch(`${config.walletServiceUrl}/v1/agents`, { method: "POST", headers, body: JSON.stringify(body) });
+  const r = await fetch(`${config.walletServiceUrl}/v1/agents`, { method: "POST", headers: ownerJsonHeaders(), body: JSON.stringify(body) });
   if (!r.ok) throw new Error(`POST /v1/agents ${r.status}: ${await r.text()}`);
   return (await r.json()) as CreateAgentResponse;
 }
@@ -98,32 +87,53 @@ async function main() {
     up ? (await listViaHttp()).map((a) => a.name) : store!.state.agents.map((a) => a.name),
   );
 
+  const serviceProblems: string[] = [];
+  const servicesLabel = (seed: Seed) => chalk.dim(seed.services.length ? `  [${seed.services.join(", ")}]` : "  [no services]");
   for (const seed of SEEDS) {
-    if (existingNames.has(seed.name) && tokens[seed.name]) {
-      console.log(`  ${chalk.dim("keep")}   ${seed.name.padEnd(15)} ${chalk.dim(seed.note)}`);
-      continue;
+    const keep = existingNames.has(seed.name) && Boolean(tokens[seed.name]);
+    if (!keep) {
+      let res: CreateAgentResponse;
+      if (up) {
+        res = existingNames.has(seed.name) ? await reissueViaHttp(seed.name) : await createViaHttp(seed);
+      } else if (existingNames.has(seed.name)) {
+        const stored = store!.agentByName(seed.name)!;
+        const { token, stored: tok } = ws!.issueToken(store!, stored.id);
+        store!.save();
+        res = { agent: { id: stored.id, name: stored.name, address: stored.address } as AgentPublic, token, tokenId: tok.id };
+      } else {
+        res = ws!.createAgentOffline(store!, {
+          name: seed.name,
+          policy: { ...DEFAULT_POLICY, ...seed.policy },
+          initialBalance: seed.initialBalance,
+          services: defaultServices(CATALOG, seed.services),
+        });
+      }
+      tokens[seed.name] = { agentId: res.agent.id, name: seed.name, address: res.agent.address, token: res.token };
     }
-    let res: CreateAgentResponse;
+
+    // Default services, for new and kept agents alike (missing ones only).
     if (up) {
-      res = existingNames.has(seed.name)
-        ? await reissueViaHttp(seed.name)
-        : await createViaHttp(seed);
-    } else if (existingNames.has(seed.name)) {
-      const stored = store!.agentByName(seed.name)!;
-      const { token, stored: tok } = ws!.issueToken(store!, stored.id);
-      store!.save();
-      res = { agent: { id: stored.id, name: stored.name, address: stored.address } as AgentPublic, token, tokenId: tok.id };
+      const agent = (await listViaHttp()).find((a) => a.name === seed.name);
+      if (agent) for (const p of await connectViaHttp(agent, seed)) serviceProblems.push(`${seed.name}: ${p}`);
     } else {
-      res = ws!.createAgentOffline(store!, {
-        name: seed.name,
-        policy: { ...DEFAULT_POLICY, ...seed.policy },
-        initialBalance: seed.initialBalance,
-      });
+      const stored = store!.agentByName(seed.name);
+      if (stored) {
+        stored.services ??= [];
+        const missing = seed.services.filter((id) => !stored.services.some((s) => s.id === id));
+        if (missing.length) {
+          stored.services.push(...defaultServices(CATALOG, missing));
+          store!.save();
+        }
+      }
     }
-    tokens[seed.name] = { agentId: res.agent.id, name: seed.name, address: res.agent.address, token: res.token };
-    console.log(`  ${chalk.green("create")} ${seed.name.padEnd(15)} ${chalk.dim(seed.note)}`);
+    console.log(`  ${keep ? chalk.dim("keep  ") : chalk.green("create")} ${seed.name.padEnd(15)} ${chalk.dim(seed.note)}${servicesLabel(seed)}`);
   }
   writeTokens(config.dataDir, tokens);
+  if (serviceProblems.length) {
+    console.log(chalk.yellow(`  ! could not connect some default services (is the directory running at ${config.directoryUrl}?):`));
+    for (const p of serviceProblems) console.log(chalk.yellow(`    ${p}`));
+    console.log(chalk.yellow("    Connect them from the dashboard, or re-run npm run setup once the directory is up."));
+  }
 
   const cd = tokens["claude-desktop"];
   // Claude Desktop spawns servers with a minimal PATH, so use absolute paths to node and tsx.
