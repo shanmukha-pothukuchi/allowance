@@ -1,204 +1,185 @@
-/* Approval cards (payment + service), the Services gallery, the detail sheet, and the embed. */
+/* The approval card (inbox, service sheet, chat embed), the Services list, the sheet frame and the
+   Shopify bits. Cards only for decisions and results: one header line, a few muted lines, one
+   primary action (docs/ui-rules.md rule 3). */
 
 /* ---------- approval card ---------- */
-.approval-card {
-  background: var(--surface);
-  border: 1px solid color-mix(in srgb, var(--warn) 30%, var(--border));
+.ap-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
   border-radius: var(--radius);
-  padding: 14px 16px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  animation: rowIn 400ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.approval-head {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-}
-.approval-who {
-  font-size: 0.98rem;
-  color: var(--text-2);
-}
-.approval-who strong {
-  color: var(--text);
-  font-weight: 500;
-}
-.approval-time {
-  font-size: 0.78rem;
-  color: var(--muted);
-  white-space: nowrap;
-}
-.approval-pay-row {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.approval-amount {
-  font-size: 2.1rem;
-  font-weight: 500;
-  line-height: 1.1;
-  letter-spacing: -0.01em;
-  font-variant-numeric: tabular-nums;
-}
-.approval-to {
-  font-size: 0.98rem;
-}
-.approval-desc {
-  color: var(--muted);
-  font-size: 0.9rem;
-}
-.approval-service-row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-.approval-service-name {
-  display: flex;
-  flex-direction: column;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  animation: rowIn 360ms cubic-bezier(0.2, 0.8, 0.2, 1);
   min-width: 0;
 }
-.approval-service-name .svc-name {
-  font-size: 1.2rem;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-  line-height: 1.15;
+.ap-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
 }
-.approval-service-name .svc-provider {
-  font-size: 0.85rem;
+.ap-head > .svc-tile,
+.ap-head > .ap-pay-ic {
+  margin-top: 1px;
 }
-.perm-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 0.92rem;
+.ap-head > .ap-time {
+  line-height: 22px;
+}
+.ap-pay-ic {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  background: var(--surface-3);
   color: var(--text-2);
 }
-.perm-list li {
-  position: relative;
-  padding-left: 22px;
+.ap-title {
+  font-size: 1.07rem;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.005em;
+  overflow-wrap: anywhere;
 }
-.perm-list li::before {
-  content: "";
-  position: absolute;
-  left: 4px;
-  top: 0.32em;
-  width: 9px;
-  height: 5px;
-  border-left: 2px solid var(--muted);
-  border-bottom: 2px solid var(--muted);
-  transform: rotate(-45deg);
-}
-.price-cap {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  font-weight: 500;
-}
-.agent-quote {
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
-}
-.agent-quote figcaption {
-  font-size: 0.78rem;
+.ap-time {
+  font-size: 0.82rem;
   color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
-.agent-quote blockquote {
-  margin-top: 2px;
+.ap-meta,
+.ap-perms {
+  font-size: 0.9rem;
+  color: var(--muted);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.ap-meta {
+  color: var(--text-2);
+}
+.ap-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  vertical-align: bottom;
+}
+.ap-who .avatar-xs {
+  --size: 16px;
+  font-size: 7px;
+}
+.ap-reason {
+  margin: 2px 0 0;
+  padding: 0 0 0 10px;
+  border-left: 2px solid var(--border-strong);
+  font-size: 0.9rem;
+  line-height: 1.45;
   color: var(--text-2);
   quotes: "\201C" "\201D";
   overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
-.agent-quote blockquote::before {
+.ap-reason::before {
   content: open-quote;
 }
-.agent-quote blockquote::after {
+.ap-reason::after {
   content: close-quote;
 }
-.custom-warning {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--custom-dim);
-  border: 1px solid color-mix(in srgb, var(--custom) 30%, transparent);
-  font-size: 0.9rem;
+.ap-reason-more {
+  cursor: pointer;
+}
+.ap-reason-more:hover {
   color: var(--text);
 }
-.custom-warning > svg {
-  flex: none;
-  color: var(--custom);
-  margin-top: 1px;
-}
-.custom-warning strong {
-  color: var(--custom);
-}
-.custom-url {
+.ap-reason-open {
   display: block;
-  margin-top: 6px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--text);
-  font-size: 0.85rem;
-  word-break: break-all;
+  -webkit-line-clamp: unset;
 }
-.approval-custom {
-  border-color: color-mix(in srgb, var(--custom) 35%, var(--border));
-}
-.approval-actions {
+.ap-warn {
   display: flex;
-  gap: 10px;
-  margin-top: 4px;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 0.86rem;
+  line-height: 1.4;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
 }
-.approval-actions .btn {
-  flex: 1;
-  justify-content: center;
+.ap-warn svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--custom);
 }
-/* In the panel a tall service card can be taller than the panel: keep Approve / Deny in view
-   (sticky to the bottom of the scrolling list while any part of the card is visible). */
-.approval-panel .approval-actions {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
-  margin: 0 -16px -16px;
-  padding: 10px 16px 16px;
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-  border-radius: 0 0 var(--radius) var(--radius);
+.ap-warn code {
+  color: var(--text);
 }
-.approval-done {
-  border-color: var(--border-strong);
-  animation: none;
+.ap-details {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  font-size: 0.86rem;
 }
-.approval-outcome {
+.ap-details > div {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 8px;
+}
+.ap-details dt {
+  color: var(--muted);
+}
+.ap-details dd {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.ap-actions {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  font-weight: 500;
+  margin-top: 6px;
+}
+.ap-actions .btn {
+  min-width: 92px;
+}
+.ap-more {
+  margin-left: auto;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+.ap-more:hover {
+  color: var(--text);
   background: var(--surface-3);
 }
-.approval-outcome svg {
+.ap-done {
+  animation: none;
+}
+.ap-outcome {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9rem;
+  color: var(--text-2);
+}
+.ap-outcome svg {
   flex: none;
 }
-.outcome-approved {
-  background: var(--in-dim);
+.outcome-approved svg {
   color: var(--in);
 }
-.outcome-denied {
-  background: var(--danger-dim);
+.outcome-denied svg {
   color: var(--danger);
 }
-.outcome-expired {
-  color: var(--muted);
-}
-.approval-id {
+.outcome-expired svg {
   color: var(--muted);
 }
 
@@ -207,39 +188,51 @@
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   min-height: 0;
-  padding: 32px 40px 0;
-  gap: 18px;
+  padding: 24px 32px 0;
+  gap: 16px;
   flex: 1;
 }
 .services-head {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 24px;
+  gap: 16px;
+}
+.services-title {
+  min-width: 0;
 }
 .services-title h1 {
-  font-size: 1.75rem;
-  font-weight: 500;
+  font-size: 1.3rem;
+  font-weight: 600;
   letter-spacing: -0.01em;
 }
 .services-title p {
   margin-top: 2px;
+  font-size: 0.9rem;
+}
+.services-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.services-seg {
+  justify-self: start;
 }
 .search {
   display: flex;
   align-items: center;
-  gap: 10px;
-  width: min(420px, 40vw);
-  padding: 0 16px;
-  height: 42px;
+  gap: 8px;
+  width: 220px;
+  padding: 0 10px;
+  height: 28px;
   border-radius: 6px;
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   color: var(--muted);
 }
 .search:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-dim);
 }
 .search input {
   flex: 1;
@@ -248,161 +241,108 @@
   outline: 0;
   background: transparent;
   color: var(--text);
-  font-size: 1rem;
+  font-size: 0.93rem;
 }
 .search input::placeholder {
   color: var(--muted);
 }
-.chips {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.chip {
-  padding: 6px 16px;
-  border-radius: 6px;
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
-  color: var(--text);
-  font-weight: 500;
-  font-size: 0.9rem;
-  cursor: pointer;
-  transition: background 140ms, color 140ms, border-color 140ms;
-}
-.chip:hover {
-  background: var(--surface-2);
-}
-.chip-on,
-.chip-on:hover {
-  background: var(--accent-dim);
-  border-color: var(--accent);
-  color: var(--accent);
-}
 .services-scroll {
   overflow-y: auto;
-  padding: 2px 2px 24px;
-  margin: 0 -2px;
+  padding-bottom: 32px;
 }
 .directory-error {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  margin-bottom: 14px;
-  border-radius: var(--radius);
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  border-radius: 8px;
   background: var(--warn-dim);
   color: var(--warn);
+  font-size: 0.9rem;
 }
 .directory-error span {
   flex: 1;
 }
-.svc-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
-  gap: 16px;
+.svc-group + .svc-group {
+  margin-top: 18px;
 }
-.svc-card {
-  width: 100%;
-  height: 100%;
-  text-align: left;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 18px 18px 14px;
-  border-radius: 10px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow);
-  cursor: pointer;
-  transition: transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1), border-color 160ms, box-shadow 160ms;
-  animation: rowIn 360ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.svc-card:hover {
-  border-color: var(--border-strong);
-  box-shadow: 0 4px 16px rgba(15, 15, 20, 0.06);
-}
-.svc-card-custom {
-  border-color: color-mix(in srgb, var(--custom) 35%, var(--border));
-}
-.svc-card-waiting {
-  border-color: color-mix(in srgb, var(--warn) 35%, var(--border));
-}
-.svc-card-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-.svc-badges {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
-}
-.badge {
-  padding: 3px 10px;
-  border-radius: 6px;
-  background: var(--surface-3);
-  color: var(--text-2);
-  font-size: 0.75rem;
+.svc-group-head {
+  padding: 0 4px 6px;
+  font-size: 0.86rem;
   font-weight: 500;
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border);
+}
+.svc-list > li + li {
+  border-top: 1px solid var(--border);
+}
+.svc-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto 170px 92px;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+  padding: 6px 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.svc-row:hover {
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+}
+.svc-row-main {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.svc-row-name {
+  flex: none;
+  font-size: 0.93rem;
+  font-weight: 500;
+  color: var(--text);
+}
+.svc-row-meta {
+  min-width: 0;
+  font-size: 0.86rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
-.badge-warn {
-  background: var(--warn-dim);
-  color: var(--warn);
+.svc-row-marks {
+  display: inline-flex;
+  gap: 6px;
 }
-.badge-custom {
+.svc-row-price {
+  font-size: 0.86rem;
+  color: var(--text-2);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.svc-row-conn {
+  display: flex;
+  justify-content: flex-end;
+  font-size: 0.86rem;
+}
+.ln-chip-custom {
   background: var(--custom-dim);
   color: var(--custom);
 }
-.svc-card .svc-name {
-  font-size: 1.1rem;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-}
-.svc-provider {
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-.svc-summary {
-  /* not flex: 1, which stretches the clamped box and shows a third line in tall cards */
-  flex: none;
-  margin-top: 4px;
-  margin-bottom: 12px;
-  color: var(--text-2);
-  font-size: 0.92rem;
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.svc-card-foot {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  margin-top: auto;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
-  min-height: 42px;
-}
-.svc-price {
-  font-weight: 500;
-  font-size: 0.92rem;
-}
-.svc-conn {
-  font-size: 0.85rem;
-}
 
-/* ---------- detail sheet ---------- */
+/* ---------- sheet frame (shared by the service sheet and the owner sheets) ---------- */
 .sheet-backdrop {
   position: fixed;
   inset: 0;
   background: var(--backdrop);
-  animation: fadeIn 200ms ease-out;
+  animation: fadeIn 180ms ease-out;
   z-index: 20;
 }
 .sheet {
@@ -410,172 +350,63 @@
   top: 0;
   right: 0;
   bottom: 0;
-  width: min(620px, 94vw);
+  width: min(560px, 94vw);
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   background: var(--surface);
   border-left: 1px solid var(--border-strong);
   box-shadow: var(--shadow-pop);
   z-index: 21;
-  animation: sheetIn 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.sheet-head {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 16px;
-  padding: 22px 24px 18px;
-  border-bottom: 1px solid var(--border);
-}
-.sheet-title h2 {
-  font-size: 1.4rem;
-  font-weight: 500;
-  letter-spacing: -0.01em;
+  animation: sheetIn 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .sheet-close {
   align-self: start;
 }
 .sheet-body {
   overflow-y: auto;
-  padding: 18px 24px 32px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
 }
 .sheet-body > * {
   flex-shrink: 0;
 }
-.sheet-desc {
-  font-size: 0.98rem;
-  line-height: 1.5;
-  color: var(--text-2);
-}
-.sheet-facts {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1px;
-  border-radius: 10px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  background: var(--border);
-}
-.sheet-facts > div {
-  padding: 10px 14px;
-  background: var(--surface);
-}
-.sheet-facts .fact-wide {
-  grid-column: 1 / -1;
-}
-.sheet-facts dt {
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-.sheet-facts dd {
-  font-weight: 500;
-  overflow-wrap: anywhere;
-}
-.sheet-facts code {
-  font-size: 0.85rem;
-}
-.sheet-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.sheet-section h3 {
-  font-size: 0.95rem;
-  font-weight: 500;
-  color: var(--text);
-}
-.sheet-note {
-  font-size: 0.85rem;
-}
-.switch-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.switch-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 10px 8px 10px;
-  border-radius: 10px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  transition: background 200ms, border-color 200ms;
-}
-.switch-name {
-  font-weight: 500;
-}
-.switch-meta {
-  font-size: 0.82rem;
-  white-space: nowrap;
-}
-.by-approval {
-  background: var(--surface-3);
-  color: var(--text-2);
-}
-.by-default {
-  background: var(--surface-3);
-  color: var(--text-2);
-}
+/* the iOS-style switch, flat */
 .switch {
   position: relative;
   flex: none;
-  width: 44px;
-  height: 26px;
+  width: 30px;
+  height: 18px;
   padding: 0;
-  border-radius: 6px;
+  border-radius: 9px;
   border: 0;
   background: var(--surface-hover);
   box-shadow: inset 0 0 0 1px var(--border-strong);
   cursor: pointer;
-  transition: background 200ms;
+  transition: background 160ms;
 }
 .switch-knob {
   position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 20px;
-  height: 20px;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
-  transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .switch-on {
-  background: var(--accent);
+  background: var(--accent-fill);
   box-shadow: none;
 }
 .switch-on .switch-knob {
-  transform: translateX(18px);
+  transform: translateX(12px);
 }
 .switch:disabled {
   cursor: wait;
   opacity: 0.6;
 }
-.docs {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-}
-.docs summary {
-  padding: 12px 14px;
-  cursor: pointer;
-  font-weight: 500;
-}
-.docs summary .muted {
-  font-weight: 500;
-  font-size: 0.85rem;
-}
-.docs pre,
-.docs > p {
+.docs-pre {
   margin: 0;
-  padding: 0 14px 14px;
-}
-.docs pre {
   font-size: 0.8rem;
   line-height: 1.55;
   color: var(--text-2);
@@ -592,7 +423,7 @@
 }
 @keyframes sheetIn {
   from {
-    transform: translateX(40px);
+    transform: translateX(32px);
     opacity: 0;
   }
 }
@@ -607,38 +438,15 @@ html.embed #root {
   overflow: hidden;
 }
 html.embed {
-  font-size: 16px;
+  font-size: 15px;
 }
 .embed {
-  padding: 4px;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
-.approval-embed {
-  background: var(--surface);
-  box-shadow: 0 0 0 4px var(--warn-dim), 0 6px 20px rgba(0, 0, 0, 0.12);
-  padding: 12px 14px 14px;
-  gap: 9px;
-}
-.approval-embed.approval-custom {
-  box-shadow: 0 0 0 4px var(--custom-dim), 0 6px 20px rgba(0, 0, 0, 0.12);
-}
-.approval-embed.approval-done {
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
-}
-.approval-embed .approval-amount {
-  font-size: 2.2rem;
-}
-.approval-embed .approval-service-name .svc-name {
-  font-size: 1.2rem;
-}
-.approval-embed .btn-big {
-  font-size: 1rem;
-  padding: 0.55em 1em;
-}
 .embed-note {
-  padding: 14px 16px;
+  padding: 12px 14px;
   border-radius: 10px;
   background: var(--surface);
   border: 1px solid var(--border-strong);
@@ -652,87 +460,37 @@ html.embed {
 .embed-error {
   font-size: 0.85rem;
   color: var(--danger);
-  padding: 0 6px;
+  padding: 0 14px;
 }
 .embed-foot {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  font-size: 0.72rem;
+  gap: 5px;
+  font-size: 0.75rem;
   color: var(--muted);
 }
 
 /* ---------- Shopify stores (§15.5) ---------- */
-/* The tile: a white bag on solid Shopify green, same as the chat. */
 .svc-tile-shopify {
   background: var(--tile);
   color: #fff;
 }
 .svc-tile-bag {
-  width: 54%;
-  height: 54%;
+  width: 58%;
+  height: 58%;
   stroke-width: 2;
-}
-.badge-shopify {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: color-mix(in srgb, #95bf47 18%, var(--surface));
-  color: color-mix(in srgb, #5e8e3e 70%, var(--text));
-}
-/* how paying works: USDC from the wallet, then a single-use card (simulated) */
-.shop-how-block {
-  padding: 12px 14px;
-  border-radius: 10px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-}
-.shop-domain,
-.sheet-shop-sub {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  overflow-wrap: anywhere;
-}
-.shop-domain svg,
-.sheet-shop-sub svg {
-  flex: none;
-}
-.sheet-shop-sub {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 6px;
-}
-.sheet-shop-domain {
-  font-size: 0.9rem;
-  overflow-wrap: anywhere;
-}
-.sheet-shop-sub > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  white-space: nowrap;
-}
-.shop-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  font-size: 0.88rem;
-  color: var(--text-2);
-  line-height: 1.4;
-}
-.shop-note svg {
-  flex: none;
-  margin-top: 2px;
-  color: var(--muted);
 }
 .shop-link {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   color: var(--accent);
   text-decoration: none;
+}
+.shop-link svg {
+  width: 12px;
+  height: 12px;
 }
 .shop-link:hover {
   text-decoration: underline;
@@ -740,52 +498,11 @@ html.embed {
 .shop-link-quiet {
   color: inherit;
 }
-.shop-card-fact {
-  font-size: 0.88rem;
+.inline-ic {
+  vertical-align: -1px;
 }
-
-/* gallery header + the "Add a Shopify store" card */
-.services-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-.btn-shopify {
-  height: 48px;
-  padding: 0 18px;
-  border-radius: 6px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-}
-.btn-shopify svg {
-  color: #5e8e3e;
-}
-.svc-card-add {
-  border: 1.5px dashed var(--border-strong);
-  background: transparent;
-  box-shadow: none;
-}
-.svc-card-add:hover {
-  border-color: #95bf47;
-  background: color-mix(in srgb, #95bf47 6%, transparent);
-}
-.svc-add-plus {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: var(--surface-3);
-  color: var(--text-2);
-}
-.svc-card-add .svc-price {
-  color: var(--text-2);
-}
-
-/* the add sheet */
 .shop-link-input {
-  font-size: 1.05rem;
+  font-size: 1rem;
 }
 .shop-preview-slot:empty {
   display: none;
@@ -793,14 +510,14 @@ html.embed {
 .shop-checking {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   color: var(--text-2);
-  font-size: 0.95rem;
-  padding: 4px 2px;
+  font-size: 0.9rem;
+  padding: 2px;
 }
 .spinner {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   flex: none;
   border-radius: 50%;
   border: 2px solid color-mix(in srgb, currentColor 22%, transparent);
@@ -819,46 +536,24 @@ html.embed {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 14px;
+  padding: 10px 12px 12px;
   border-radius: 10px;
-  background: var(--surface-2);
   border: 1px solid var(--border);
-  animation: popIn 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  background: var(--surface-2);
+  animation: popIn 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-.shop-preview-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 12px;
+.shop-preview .shop-preview-row {
+  padding: 0;
+  min-height: 0;
 }
-.shop-preview-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  line-height: 1.3;
-}
-.shop-preview-text .muted {
-  font-size: 0.88rem;
-  overflow-wrap: anywhere;
-}
-.shop-preview-name {
-  font-size: 1.15rem;
-  font-weight: 750;
-  letter-spacing: -0.01em;
-  overflow-wrap: anywhere;
-}
-.shop-preview-site {
-  display: flex;
-  min-width: 0;
-}
-/* a few of the store's products, square and calm, a bag while they load or if they fail */
+/* a few of the store's products: square and calm, a bag while they load or if they fail */
 .shop-samples {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px;
 }
 .shop-sample {
   position: relative;
@@ -869,14 +564,6 @@ html.embed {
   overflow: hidden;
   background: var(--surface-3);
   color: var(--muted);
-}
-.shop-sample::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  box-shadow: inset 0 0 0 1px rgba(15, 15, 20, 0.05);
-  pointer-events: none;
 }
 .shop-sample img {
   position: absolute;
@@ -893,95 +580,59 @@ html.embed {
   background: color-mix(in srgb, #95bf47 14%, var(--surface));
   color: color-mix(in srgb, #5e8e3e 80%, var(--text));
 }
-.shop-card-ok {
-  display: inline-flex;
-  align-items: center;
-  align-self: flex-start;
-  gap: 6px;
-  margin: 0;
-  padding: 4px 11px;
-  border-radius: 6px;
-  font-size: 0.82rem;
-  font-weight: 600;
-  background: var(--in-dim);
-  color: var(--in);
-}
-.shop-card-ok svg {
-  flex: none;
-}
-.shop-how {
-  margin-top: 2px;
-}
 .shop-exists {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-}
-.shop-exists span {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-weight: 650;
+  font-size: 0.86rem;
+  color: var(--text-2);
+}
+.shop-exists svg {
   color: var(--in);
 }
 
+/* ---------- narrow ---------- */
 @media (max-width: 760px) {
   .services-view {
-    padding: 14px 16px 0;
+    padding: 16px 16px 0;
   }
   .services-head {
     flex-direction: column;
     align-items: stretch;
-    gap: 12px;
-  }
-  .services-actions {
-    flex-wrap: wrap;
+    gap: 10px;
   }
   .services-actions .search {
-    width: auto;
-    flex: 1 1 220px;
-  }
-  .btn-shopify {
     flex: 1 1 auto;
-    justify-content: center;
-  }
-}
-/* the service detail sheet at phone width (the owner sheets have their own rules in sheets.css) */
-@media (max-width: 560px) {
-  .sheet:not(.osheet) {
-    left: 0;
     width: auto;
   }
-  .sheet:not(.osheet) .sheet-head {
-    padding: 16px 16px 14px;
-    gap: 12px;
+  .svc-row {
+    grid-template-columns: 20px minmax(0, 1fr) auto auto;
   }
-  .sheet:not(.osheet) .sheet-head .svc-tile-xl {
-    --size: 52px;
+  .svc-row-price {
+    display: none;
   }
-  .sheet:not(.osheet) .sheet-title h2 {
-    font-size: 1.35rem;
+  .svc-row-sum {
+    display: none;
   }
-  .sheet:not(.osheet) .sheet-body {
-    padding: 16px 16px 28px;
-  }
-  .sheet-facts {
-    grid-template-columns: 1fr;
+  .services-seg {
+    overflow-x: auto;
+    max-width: 100%;
   }
 }
-@media (max-width: 480px) {
-  .shop-samples {
-    gap: 6px;
+@media (max-width: 420px) {
+  .svc-row {
+    grid-template-columns: 20px minmax(0, 1fr) auto;
+  }
+  .svc-row-conn {
+    display: none;
+  }
+  .ap-actions .btn {
+    flex: 1;
+    min-width: 0;
   }
 }
 @media (prefers-reduced-motion: reduce) {
   .spinner {
     animation-duration: 2s;
-  }
-  .shop-preview {
-    animation: none;
   }
 }

@@ -1,5 +1,6 @@
-/* Owner sheets (§14.3): New agent and Add money. A right-hand sheet in the dashboard, a card in the
-   chat embed. Tokens come from base.css, so light/dark follow it. */
+/* Owner sheets (§14.3) and the service sheet: a right-hand sheet in the dashboard, a flat card in the
+   chat embed. One header (small icon, 16px title, one muted line), fields as muted labels over
+   grouped rows, one primary action in the footer (docs/ui-rules.md D5). */
 
 textarea {
   font: inherit;
@@ -10,50 +11,55 @@ a.btn {
   text-decoration: none;
 }
 a.btn.btn-primary {
-  color: var(--on-in);
+  color: var(--on-accent);
 }
 
 /* ---------- frame ---------- */
-.sheet.osheet {
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  width: min(640px, 96vw);
-}
 .osheet-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
+  padding: 14px 12px 14px 20px;
+  border-bottom: 1px solid var(--border);
 }
 .osheet-title {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
   min-width: 0;
 }
 .osheet-titles {
   min-width: 0;
 }
 .osheet-name {
-  font-size: 1.35rem;
-  font-weight: 500;
-  letter-spacing: -0.01em;
+  font-size: 1.12rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  line-height: 1.3;
   overflow-wrap: anywhere;
-  line-height: 1.15;
 }
-.osheet-balance {
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
+.osheet-sub {
+  font-size: 0.9rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.osheet-sub-danger {
+  color: var(--danger);
 }
 .osheet-body {
-  gap: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 16px 20px 24px;
 }
 .osheet-foot {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
-  padding: 14px 24px 18px;
+  gap: 8px;
+  padding: 12px 20px;
   border-top: 1px solid var(--border);
   background: var(--surface);
 }
@@ -64,7 +70,6 @@ a.btn.btn-primary {
 .avatar-empty {
   --tile: var(--surface-3);
   background: var(--surface-3);
-  box-shadow: none;
   color: var(--text-2);
 }
 .osheet .icon-btn:disabled,
@@ -72,17 +77,45 @@ a.btn.btn-primary {
   opacity: 0.35;
   cursor: not-allowed;
 }
-.btn-new-agent {
+.osheet-desc {
+  font-size: 0.93rem;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.osheet-note {
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.osheet-warn-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 0.9rem;
+  color: var(--text-2);
+}
+.osheet-warn-line svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--custom);
+}
+.osheet-row-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: var(--text-2);
+}
+.osheet-row-action > :last-child {
   margin-left: auto;
-  text-transform: none;
-  letter-spacing: 0;
-  font-size: 0.85rem;
-  padding: 0.35em 0.8em;
-  color: var(--text);
+}
+.osheet-row-warn svg {
+  flex: none;
+  color: var(--warn);
 }
 
-/* embedded in the chat: a card on a transparent page. Unlike the approval card it may be taller
-   than the iframe the chat gives it, so the page scrolls instead of clipping. */
+/* embedded in the chat: a flat card on a transparent page. It may be taller than the iframe the
+   chat gives it, so the page scrolls instead of clipping. */
 html.embed.embed-sheet-doc {
   overflow-x: hidden;
   overflow-y: auto;
@@ -100,40 +133,21 @@ html.embed.embed-sheet-doc #root {
 .esheet {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 .esheet-card {
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: 10px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
   overflow: hidden;
-}
-.esheet .osheet-head {
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--border);
-}
-.esheet .osheet-body {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  padding: 16px;
-}
-.esheet .osheet-foot {
-  padding: 12px 16px 14px;
-}
-.esheet .osheet-title .avatar-xl {
-  --size: 56px;
-}
-.esheet .osheet-name {
-  font-size: 1.35rem;
 }
 
 /* ---------- fields ---------- */
 .ofield {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
+  min-width: 0;
 }
 .ofield-label {
   display: flex;
@@ -143,17 +157,17 @@ html.embed.embed-sheet-doc #root {
 }
 .ofield-label label,
 .ofield-label h3 {
-  font-size: 0.9rem;
+  font-size: 0.86rem;
   font-weight: 500;
-  color: var(--text);
+  color: var(--text-2);
 }
 .ofield-aside {
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 .ofield-hint {
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   color: var(--muted);
   line-height: 1.4;
 }
@@ -161,24 +175,16 @@ html.embed.embed-sheet-doc #root {
   color: var(--warn);
   font-weight: 500;
 }
-.test-badge {
-  font-size: 0.75rem;
-  font-weight: 500;
-  padding: 2px 10px;
-  border-radius: 6px;
-  background: var(--accent-dim);
-  color: var(--accent);
-}
 .text-input {
   width: 100%;
-  padding: 10px 14px;
-  border-radius: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
   border: 1px solid var(--border-strong);
-  background: var(--surface);
+  background: var(--surface-2);
   color: var(--text);
-  font-size: 1rem;
+  font-size: 0.97rem;
   outline: none;
-  transition: border-color 120ms, box-shadow 120ms;
+  transition: border-color 120ms;
 }
 .text-input::placeholder {
   color: var(--muted);
@@ -186,33 +192,27 @@ html.embed.embed-sheet-doc #root {
 }
 .text-input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-dim);
-}
-.name-input {
-  font-weight: 400;
 }
 .purpose-input {
   resize: vertical;
-  min-height: 84px;
+  min-height: 64px;
   line-height: 1.45;
 }
 .input-ok {
-  border-color: color-mix(in srgb, var(--in) 65%, transparent);
+  border-color: color-mix(in srgb, var(--in) 55%, transparent);
 }
-
 .name-status {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-weight: 500;
-  font-size: 0.88rem;
+  gap: 5px;
+  font-size: 0.82rem;
+  line-height: 1.4;
 }
 .name-status svg {
   flex: none;
 }
 .name-idle {
-  color: var(--text-2);
-  font-weight: 400;
+  color: var(--muted);
 }
 .name-ok {
   color: var(--in);
@@ -222,7 +222,7 @@ html.embed.embed-sheet-doc #root {
 }
 .field-error {
   color: var(--danger);
-  font-size: 0.85rem;
+  font-size: 0.86rem;
   font-weight: 500;
 }
 
@@ -231,19 +231,17 @@ html.embed.embed-sheet-doc #root {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 44px;
-  padding: 0 12px;
-  border-radius: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 6px;
   border: 1px solid var(--border-strong);
-  background: var(--surface);
+  background: var(--surface-2);
   color: var(--muted);
-  font-weight: 500;
-  font-size: 1rem;
-  transition: border-color 120ms, box-shadow 120ms;
+  font-size: 0.97rem;
+  transition: border-color 120ms;
 }
 .money-input:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-dim);
 }
 .money-input input {
   width: 100%;
@@ -252,337 +250,286 @@ html.embed.embed-sheet-doc #root {
   outline: none;
   background: transparent;
   color: var(--text);
-  font-size: 1rem;
-  font-weight: 500;
+  font-size: 0.97rem;
   font-variant-numeric: tabular-nums;
 }
-
 /* after .money-input so a bad value stays red while focused */
 .text-input.input-bad,
 .text-input.input-bad:focus,
 .money-input.input-bad,
 .money-input.input-bad:focus-within {
   border-color: var(--danger);
-  box-shadow: 0 0 0 3px var(--danger-dim);
 }
 
-/* ---------- amounts ---------- */
+/* ---------- chips (amounts, caps) ---------- */
+.chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.chip {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-weight: 500;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+.chip:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.chip-on,
+.chip-on:hover {
+  background: var(--surface-3);
+  border-color: var(--text-2);
+  color: var(--text);
+}
 .amount-picker {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 .amount-chip {
-  min-width: 60px;
-  height: 38px;
-  font-size: 0.95rem;
+  min-width: 52px;
   font-variant-numeric: tabular-nums;
 }
 .amount-picker .money-input {
-  width: 180px;
+  width: 160px;
 }
 
 /* ---------- limits ---------- */
-.preset-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-}
-.preset-card {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 12px 14px;
-  border-radius: 8px;
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 140ms, background 140ms;
-}
-.preset-card:hover {
-  background: var(--surface-2);
-}
-.preset-on,
-.preset-on:hover {
-  border-color: var(--accent);
-  background: var(--accent-dim);
-  box-shadow: inset 0 0 0 1px var(--accent);
-}
-.preset-name {
-  font-weight: 500;
-  font-size: 1rem;
-}
-.preset-nums {
-  display: flex;
-  flex-direction: column;
-  font-size: 0.8rem;
-  line-height: 1.35;
-  color: var(--text-2);
-  font-variant-numeric: tabular-nums;
-}
-.preset-blurb {
-  font-size: 0.74rem;
-  color: var(--muted);
+.preset-seg {
+  align-self: flex-start;
 }
 .limit-inputs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 .limit-field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
 }
 .limit-label {
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: var(--text-2);
+  font-size: 0.82rem;
+  color: var(--muted);
 }
 .limit-field .money-input {
   width: 100%;
 }
-.limits-meaning {
-  font-size: 0.92rem;
-  color: var(--text-2);
-  line-height: 1.4;
-}
 
-/* ---------- services ---------- */
-.svc-picks {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 8px;
+/* ---------- grouped rows, like a Linear settings list ---------- */
+.ln-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  overflow: hidden;
 }
-.svc-pick {
-  position: relative;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+.ln-group > li + li {
+  border-top: 1px solid var(--border);
+}
+.ln-group > .ln-row {
+  padding: 8px 12px;
+  border-bottom: 0;
+}
+.grow {
+  width: 100%;
+  display: flex;
   align-items: center;
   gap: 10px;
-  padding: 9px 12px 9px 9px;
-  border-radius: 8px;
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
+  min-height: 38px;
+  padding: 7px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.grow-btn,
+label.grow {
   cursor: pointer;
-  transition: border-color 140ms, background 140ms;
 }
-.svc-pick:hover {
-  background: var(--surface-2);
+.grow-btn:hover,
+label.grow:hover {
+  background: var(--surface-3);
 }
-.svc-pick input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
+.grow-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
-.svc-pick:focus-within {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.grow-title {
+  font-size: 0.93rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
 }
-.svc-pick-on,
-.svc-pick-on:hover {
-  border-color: var(--accent);
-  background: var(--accent-dim);
+.grow-meta {
+  font-size: 0.86rem;
+  font-weight: 400;
+  color: var(--muted);
+  white-space: nowrap;
 }
-.svc-pick-text {
+.grow-main .grow-meta {
+  white-space: normal;
+}
+.grow-end {
+  font-size: 0.93rem;
+  white-space: nowrap;
+}
+.grow-amt {
+  font-variant-numeric: tabular-nums;
+}
+.grow-meta .grow-amt {
+  color: var(--text-2);
+}
+.grow-chev {
+  flex: none;
+  color: var(--muted);
+}
+/* checkable rows: a plain checkbox at the end */
+.pick input {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent-fill);
+}
+.pick-locked {
+  cursor: default;
+}
+.pick-locked:hover {
+  background: transparent;
+}
+.switch-list .grow {
+  cursor: default;
+}
+
+/* label / value facts */
+.facts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.93rem;
+}
+.facts > div {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+}
+.facts dt {
+  color: var(--muted);
+}
+.facts dd {
+  color: var(--text);
+  overflow-wrap: anywhere;
   min-width: 0;
 }
-.svc-pick-text strong {
-  display: block;
-  font-weight: 500;
-  font-size: 0.95rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.facts code {
+  font-size: 0.82rem;
 }
-.svc-pick-text small {
-  display: block;
-  color: var(--muted);
-  font-size: 0.78rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.facts-num {
+  font-variant-numeric: tabular-nums;
 }
-.svc-pick-tick {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
-  border: 1.5px solid var(--border-strong);
-  color: transparent;
+.facts-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
 }
-.svc-pick-on .svc-pick-tick {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-.svc-pick-locked,
-.svc-pick-locked:hover {
-  cursor: default;
-  border-color: var(--border-strong);
-  background: var(--surface);
-}
-.svc-pick-locked .svc-pick-tick {
-  background: var(--surface-3);
-  border-color: var(--surface-3);
-  color: var(--text-2);
+.facts-tile {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* ---------- notes ---------- */
-.osheet-info {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: 8px;
-  background: var(--surface-2);
-  color: var(--text);
-  line-height: 1.4;
-}
-.osheet-info svg {
-  flex: none;
-  color: var(--text-2);
-}
-.osheet-warn {
-  align-items: center;
-  background: var(--warn-dim);
-  color: var(--warn);
-}
-.osheet-warn svg {
-  color: var(--warn);
-}
-.osheet-warn .btn {
-  margin-left: auto;
-}
 .osheet-banner {
-  padding: 10px 14px;
+  padding: 8px 12px;
   border-radius: 8px;
   background: var(--warn-dim);
   color: var(--warn);
+  font-size: 0.9rem;
   font-weight: 500;
 }
 .osheet-details {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  padding: 0 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
 }
 .osheet-details summary {
-  padding: 12px 0;
   cursor: pointer;
+  font-size: 0.86rem;
   font-weight: 500;
+  color: var(--text-2);
 }
-.osheet-details[open] {
-  padding-bottom: 14px;
+.osheet-details summary:hover {
+  color: var(--text);
 }
 .osheet-details[open] > * + * {
   margin-top: 8px;
 }
-.frozen-note {
-  font-size: 0.88rem;
-}
 
 /* ---------- done ---------- */
-.created {
+.done-line {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  gap: 8px;
-  padding: 14px 0 4px;
-  animation: popIn 360ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.created > .avatar-xl {
-  --size: 72px;
-}
-.created-title {
-  font-size: 1.4rem;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-  overflow-wrap: anywhere;
-}
-.created-balance {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-.created-amount {
-  font-size: 2rem;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-  color: var(--in);
-  font-variant-numeric: tabular-nums;
-}
-.created-limits {
-  font-size: 0.95rem;
-}
-.created-services {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 4px;
-}
-.created-service {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 3px 12px 3px 3px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  font-weight: 500;
-  font-size: 0.9rem;
-}
-.created-service .svc-tile-sm {
-  --size: 28px;
-}
-.created-note {
-  color: var(--text-2);
+  align-items: flex-start;
+  gap: 10px;
+  animation: popIn 300ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .done-check {
+  flex: none;
   display: grid;
   place-items: center;
-  width: 76px;
-  height: 76px;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
   border-radius: 50%;
-  background: var(--in);
-  color: var(--on-in);
+  background: var(--in-dim);
+  color: var(--in);
+}
+.done-title {
+  font-size: 1rem;
+  font-weight: 500;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 .token-box {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 14px 16px;
-  border-radius: 10px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--warn) 30%, var(--border));
   background: var(--warn-dim);
 }
 .token-why {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: 6px;
   color: var(--warn);
   font-weight: 500;
-  line-height: 1.35;
+  line-height: 1.4;
 }
 .token-why svg {
   flex: none;
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
 }
 .token-label {
-  font-size: 0.8rem;
-  font-weight: 500;
+  font-size: 0.82rem;
   color: var(--text-2);
 }
 .token-note {
-  font-size: 0.92rem;
+  font-size: 0.9rem;
   color: var(--text);
-  font-weight: 500;
 }
 .copy-field {
   display: flex;
@@ -593,19 +540,18 @@ html.embed.embed-sheet-doc #root {
 .copy-value {
   flex: 1 1 220px;
   min-width: 0;
-  padding: 10px 12px;
-  border-radius: 10px;
+  padding: 7px 10px;
+  border-radius: 6px;
   border: 1px solid var(--border-strong);
   background: var(--surface);
   color: var(--text);
-  font-size: 0.86rem;
+  font-size: 0.84rem;
   line-height: 1.4;
   word-break: break-all;
   user-select: all;
   cursor: text;
 }
 .copy-done {
-  border-color: var(--in);
   color: var(--in);
 }
 .copy-manual {
@@ -613,143 +559,68 @@ html.embed.embed-sheet-doc #root {
   font-size: 0.82rem;
   color: var(--text-2);
 }
-.receipt-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 12px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--surface-2);
-}
-/* scoped: the Receipts panel's own .receipt-row is a grid (app.css) */
-.receipt-card .receipt-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 4px 12px;
-}
-.receipt-card .receipt-row strong {
-  font-size: 1.1rem;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-.receipt-card .receipt-row.muted {
-  font-size: 0.88rem;
-}
-.receipt-ids code,
-.receipt-ids a {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 0.78rem;
-}
-
-/* ---------- agent picker (add money with no / unknown agent) ---------- */
-.agent-picks {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 8px;
-}
-.agent-pick {
-  width: 100%;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px 8px 8px;
-  border-radius: 8px;
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
-  cursor: pointer;
-  text-align: left;
-}
-.agent-pick:hover {
-  background: var(--surface-2);
-}
-.agent-pick-name {
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-@keyframes popIn {
-  from {
-    transform: scale(0.96);
-    opacity: 0;
-  }
-}
 
 /* ---------- phone width (dashboard sheet, or a narrow chat iframe) ---------- */
 @media (max-width: 560px) {
   /* left: 0 rather than 100vw, which would include the page scrollbar and clip the left edge */
-  .sheet.osheet {
+  .sheet {
     left: 0;
     width: auto;
   }
-  .sheet.osheet .sheet-head,
-  .sheet.osheet .sheet-body {
-    padding-left: 16px;
-    padding-right: 16px;
+  .osheet-head {
+    padding: 12px 8px 12px 16px;
   }
-  .sheet.osheet .osheet-foot {
-    padding: 12px 16px 16px;
+  .osheet-body {
+    padding: 14px 16px 20px;
   }
-  .preset-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .limit-inputs {
-    gap: 8px;
+  .osheet-foot {
+    padding: 10px 16px 14px;
   }
   .osheet-foot .btn {
     flex: 1 1 auto;
-    justify-content: center;
   }
   .osheet-error {
     text-align: left;
   }
-  .osheet-name {
-    font-size: 1.3rem;
+  .facts > div {
+    grid-template-columns: 96px minmax(0, 1fr);
   }
-  .sheet.osheet .osheet-title .avatar-xl {
-    --size: 52px;
+  .limit-inputs {
+    gap: 6px;
   }
-  .created-title {
-    font-size: 1.35rem;
+}
+@media (max-width: 420px) {
+  .grow-meta {
+    white-space: normal;
+    text-align: right;
   }
 }
 
-/* narrow chat iframe: keep the form as short as it can be */
-@media (max-width: 480px) {
-  .amount-chips {
-    gap: 6px;
-  }
-  .amount-chip {
-    min-width: 50px;
-    padding: 7px 12px;
-  }
-  .preset-blurb {
-    display: none;
-  }
-  .preset-card {
-    padding: 9px 10px;
-  }
-  .svc-picks {
-    gap: 6px;
-  }
-  .svc-pick {
-    padding: 6px 10px 6px 6px;
-  }
-  .osheet-body,
-  .esheet .osheet-body {
-    gap: 16px;
-  }
+/* ---------- Add service (§18) ---------- */
+.search.search-wide {
+  width: 100%;
+  height: 34px;
 }
-
-@media (prefers-reduced-motion: reduce) {
-  .created {
-    animation: none;
-  }
+.pick-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  animation: popIn 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.pick-card .pick-head {
+  padding: 0;
+  min-height: 0;
+}
+.pick-card .grow-main .grow-meta {
+  white-space: normal;
+}
+.pick-sum {
+  font-size: 0.86rem;
+}
+.money-input.money-input-sm {
+  width: 140px;
 }

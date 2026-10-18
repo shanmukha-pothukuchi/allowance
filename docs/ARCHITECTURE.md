@@ -516,7 +516,7 @@ the model to call `request_service` with the matching service id.
   `approvalKind`. The system prompt's services block is rebuilt each run and after
   `request_service` / `check_approval`.
 - `LogEntry` tool entries are unchanged; the UI derives cards from tool names (`fetch_url` paid →
-  receipt card, `request_service` → connection card, `transfer_usdc` blocked → blocked card).
+  receipt event line, `request_service` → one decision card that collapses to an event line once decided, `transfer_usdc` blocked → blocked card; see docs/ui-rules.md).
 
 ### 13.5 Approval embed (dashboard ↔ chat)
 
@@ -950,6 +950,13 @@ The §15.3 Shopify endpoints stay for compatibility.
   - No separate "Add a Shopify store" entry: stores are rows in the services list like everything else.
 - Chat: request and connected cards are the same for every kind. A store shows its storefront domain
   as its meta line, an x402 API its host.
+
+**As built (§18 additions):**
+- **Preview fields:** the preview adds `listed` (store already in the directory) and, for `x402`, `price` (the challenge amount). A 422 `unrecognized_service_url` carries `details.reason` (why the probe failed).
+- **Resolution:** directory resolution takes the longest matching `baseUrl` prefix, or an origin match when exactly one directory service lives on that origin. The probe follows at most 2 redirects and checks each hop. It refuses private, loopback, link-local and CGNAT targets except the local service origins.
+- **Owner-added x402 APIs:** these have `source: "owner"` and ids `custom-<slug>`. They are connected per agent and are not listed in the directory.
+- **`/v1/directory/add` caps:** a directory match connects on its listed terms (`maxPrice` ignored, except for a listed store). An x402 cap must be ≥ the challenge price and ≤ `MAX_TOPUP`. Re-adding a link raises the cap in place.
+- **Agent x402 requests:** an agent's request uses the challenge amount as `maxPrice`. If that is over the agent's `maxPerTx`, the answer is `400 invalid_request`. An unreachable directory during resolution gives `503 directory_unavailable`.
 
 ## 19. Computer use: a queued desktop paid by time and execution (Phase 8, branch `feature/computer-use`)
 

@@ -1,7 +1,7 @@
 /**
  * Shopify stores as services (§15), from the shopper's side: any public store, no store admin.
- * Pure helpers: is it a store, its storefront and cap, the owner sentences, the "Add a Shopify
- * store" link check, the sample images, and the request body. No React, no fetch. Unit-tested in
+ * Pure helpers: is it a store, its storefront and cap, the owner sentences, the store link check
+ * (used by "Add service", §18), the sample images, and the request body. No React, no fetch. Unit-tested in
  * shopify.test.ts.
  */
 import { isShopifyGrant, money, toCents } from "./format";

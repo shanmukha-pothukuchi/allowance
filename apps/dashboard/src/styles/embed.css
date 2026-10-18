@@ -1,80 +1,44 @@
-/* The wallet's views as the agent chat embeds them (an approval card, the New agent and Add money
-   sheets). The chat draws the frame around the iframe, so these render flat and keep their own
+/* The wallet's views as the agent chat embeds them (an approval card, the New agent, Add money and
+   bank sheets). The chat draws the frame around the iframe, so these render flat and keep their own
    "Allowance wallet" footer line. Colors, type and controls come from base.css / sheets.css. */
 
 html.embed body {
   letter-spacing: 0;
 }
-html.embed .chip {
-  height: 38px;
-  padding: 0 16px;
-}
-html.embed .btn {
-  height: 40px;
-  padding: 0 20px;
-}
-html.embed .embed-foot {
-  gap: 6px;
-  padding: 2px 0 4px;
-  font-size: 0.78rem;
-  color: var(--muted);
-}
 
 /* ---------- owner sheets ---------- */
-html.embed .esheet {
-  gap: 0;
-}
 html.embed .esheet-card {
   border: 0;
   border-radius: 0;
-  box-shadow: none;
   background: transparent;
 }
 html.embed .esheet .osheet-head {
-  padding: 20px 14px 14px 24px;
+  padding: 14px 10px 10px 16px;
   border-bottom: 0;
 }
-html.embed .esheet .osheet-title .avatar-xl {
-  --size: 44px;
-}
-html.embed .esheet .osheet-name {
-  font-size: 1.25rem;
-}
-html.embed .osheet-titles .muted {
-  font-size: 0.9rem;
-}
 html.embed .esheet .osheet-body {
-  gap: 22px;
-  padding: 6px 24px 22px;
+  gap: 18px;
+  padding: 4px 16px 16px;
 }
 html.embed .esheet .osheet-foot {
-  padding: 14px 20px 16px;
+  padding: 10px 16px 12px;
   background: transparent;
 }
 html.embed .esheet .embed-foot {
-  padding: 0 0 14px;
+  padding: 0 0 10px;
 }
 
-/* ---------- approval card ---------- */
-html.embed .embed {
-  padding: 0;
-  gap: 0;
-}
-html.embed .approval-embed,
-html.embed .approval-embed.approval-custom,
-html.embed .approval-embed.approval-done {
-  box-shadow: none;
+/* ---------- approval card: flat, the chat draws the frame ---------- */
+html.embed .ap-embed {
   border: 0;
   border-radius: 0;
   background: transparent;
-  padding: 14px 16px 16px;
+  padding: 12px 14px 12px;
+  animation: none;
 }
-html.embed .approval-embed .approval-amount {
-  font-size: 2rem;
-}
-html.embed .approval-embed .btn-big {
+html.embed .ap-embed .ap-actions .btn {
   flex: 1;
-  height: 42px;
+  height: 32px;
 }
 html.embed .embed-note {
   border: 0;
@@ -82,10 +46,5 @@ html.embed .embed-note {
   background: transparent;
 }
 html.embed .embed > .embed-foot {
-  padding: 0 0 12px;
-}
-
-/* Shopify approval card (§15.5) in the chat's lighter type */
-html.embed .shop-note {
-  font-size: 0.86rem;
+  padding: 0 0 10px;
 }

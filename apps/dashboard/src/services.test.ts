@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MOCK_DIRECTORY } from "./api/mockAdapter";
-import { buildCatalog, CATEGORIES, connectedByLabel, filterCatalog, matchService, priceCapLabel, requestsFor, withProposals } from "./services";
+import { buildCatalog, CATEGORIES, checkApiCap, connectedByLabel, filterCatalog, looksLikeLink, matchService, priceCapLabel, requestsFor, serviceLinkError, withProposals } from "./services";
 import type { AgentPublic, Approval, ConnectedService, DirectoryService } from "./types";
 
 const directory: DirectoryService[] = MOCK_DIRECTORY.map(({ docs: _docs, ...m }) => (void _docs, m));
@@ -203,5 +203,23 @@ describe("labels", () => {
     expect(priceCapLabel("18.5")).toBe("Up to $18.50 per payment");
     expect(priceCapLabel("0.00")).toMatch(/^Free/);
     expect(priceCapLabel(undefined)).toMatch(/^Free/);
+  });
+});
+
+describe("Add service (§18)", () => {
+  it("tells a link from a search", () => {
+    for (const s of ["allbirds.com", "https://www.allbirds.com/products/x", "localhost:4321/api/weather", "x.myshopify.com", "http://127.0.0.1:4080/quantcomm"]) expect(looksLikeLink(s)).toBe(true);
+    for (const s of ["weather", "acme news", "", "flood research", "pizza."]) expect(looksLikeLink(s)).toBe(false);
+  });
+  it("puts the wallet's link errors in plain words", () => {
+    expect(serviceLinkError({ status: 422, code: "unrecognized_service_url", message: "unrecognized_service_url" })).toMatch(/^That link isn't something Allowance can pay/);
+    expect(serviceLinkError({ status: 422, code: "store_unsupported", message: "This store only sells in EUR." })).toBe("This store only sells in EUR.");
+    expect(serviceLinkError({ status: 503 })).toMatch(/couldn't reach/);
+    expect(serviceLinkError({ status: 503, code: "directory_unavailable", message: "directory_unavailable" })).toMatch(/directory isn't answering/);
+  });
+  it("an API's cap is at least what it asks", () => {
+    expect(checkApiCap("0.10", "0.05")).toEqual({ ok: true, amount: "0.10" });
+    expect(checkApiCap("0.01", "0.05")).toEqual({ ok: false, message: "At least $0.05, what it asks for." });
+    expect(checkApiCap("abc", "0.05").ok).toBe(false);
   });
 });

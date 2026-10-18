@@ -249,8 +249,11 @@ export interface ServiceManifest {
   permissions: string[];
   /** Usage docs loaded on demand (like SKILL.md): endpoints, parameters, examples. Plain text. */
   docs: string;
-  /** "directory" for catalog entries, "agent" for custom services an agent proposed and the owner approved. */
-  source?: "directory" | "agent";
+  /**
+   * "directory" for catalog entries, "agent" for custom services an agent proposed and the owner approved,
+   * "owner" for an x402 API the owner added by link (§18; connected per agent, not listed in the directory).
+   */
+  source?: "directory" | "agent" | "owner";
   /** Shopify stores only (see docs/ARCHITECTURE.md §15). */
   shopify?: ShopifyStoreRef;
 }
@@ -303,12 +306,43 @@ export interface ServiceRequest {
   serviceId?: string;
   /** Custom service not in the directory (Muse-style "write a connector"). Owner sees it flagged as agent-proposed. */
   custom?: { name: string; baseUrl: string; summary: string; maxPrice: string; docs?: string };
-  /** A Shopify store to add (e.g. "https://crypto-app-test.myshopify.com"); discovered via the bridge. */
+  /** A Shopify store to add (e.g. "https://crypto-app-test.myshopify.com"); discovered via the bridge. Alias of `url` for stores. */
   shopifyStoreUrl?: string;
-  /** Shopify only: per-order cap the agent asks for (dollars). Defaults to the agent's max per payment. */
+  /**
+   * Any link (§18): a directory service's URL, a Shopify store or product page, or an API that charges over
+   * x402. The wallet works out which and follows the normal approval.
+   */
+  url?: string;
+  /** Shopify only (via `shopifyStoreUrl` or a store `url`): per-order cap the agent asks for (dollars). Defaults to the agent's max per payment. */
   maxPrice?: string;
   /** The agent's reason, shown to the owner verbatim (untrusted). */
   reason?: string;
+}
+
+/** What a pasted link turned out to be (§18). */
+export type ServiceLinkKind = "directory" | "shopify" | "x402";
+
+/** GET /v1/directory/preview?url= (owner). */
+export interface ServicePreviewResponse {
+  kind: ServiceLinkKind;
+  /** directory: the listing · shopify: the listing, or the manifest it would get · x402: the manifest built from the 402 challenge. */
+  service: ServiceManifest;
+  /** shopify only: the bridge's store preview (images, product count, card checkout). */
+  store?: ShopifyStore;
+  /** Agent ids that already have it connected. */
+  connectedAgents?: string[];
+  /** shopify only: the directory already lists it. */
+  listed?: boolean;
+  /** x402 only: the price the link asked for, dollars (also `service.maxPrice` unless the cap was raised). */
+  price?: string;
+}
+
+/** POST /v1/directory/add (owner): `{ url, maxPrice?, connectTo? }`. */
+export interface ServiceAddResponse {
+  kind: ServiceLinkKind;
+  service: ServiceManifest;
+  /** Agent ids that have it connected after this call. */
+  connected: string[];
 }
 
 export type ServiceRequestResponse =

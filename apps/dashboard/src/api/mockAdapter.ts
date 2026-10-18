@@ -5,8 +5,8 @@
  * approval, a poisoned-bounty block + freeze, shopper asking to connect Acme Pizza, an
  * agent-proposed custom service, the owner creating a new agent, shopper asking to add a Shopify
  * store), then a steady random mix. The directory also lists a public Shopify store the owner
- * added (Allbirds, with inline SVG pictures), and "Add a Shopify store" previews and adds any store
- * link like the wallet (§15.3). It
+ * added (Allbirds, with inline SVG pictures), and "Add service" previews and adds any link like the
+ * wallet (§18: a directory service, a store, or an x402 API). It
  * also creates agents and adds money with the wallet's validation and error codes (§14.2), so both
  * owner sheets work against it. Deterministic given a seed; timers
  * are plain setTimeout so tests can drive it with fake timers or call `tick()` directly.
@@ -16,6 +16,8 @@ import { matchService } from "../services";
 import { AGENT_NAME_RE, MAX_TOPUP } from "../sheets";
 import { ADMIN_LINK_MESSAGE, checkCap, checkStoreLink, DEFAULT_CAP, hostOf, isShopify, prettyHandle, serviceIdFor, SHOPIFY_GREEN, shopifyRefOf } from "../shopify";
 import type {
+  ServicePreview,
+  AddServiceResponse,
   Address,
   AgentPublic,
   Approval,
@@ -401,6 +403,35 @@ export function mockStorePreview(raw: string): ShopifyStore {
     currency: "USD",
     productCount: 6 + (h % 240),
     sampleImages,
+  };
+}
+
+/** The wallet's answer for a link it can't pay (§18). */
+export const UNRECOGNIZED_MESSAGE = "That link isn't something Allowance can pay: it's not in the directory, not a Shopify store, and it doesn't ask for payment over x402.";
+
+/**
+ * A pasted link as an x402 API (§18 rule 3), as the mock "probes" it: any URL with "/api/" in it
+ * answers 402 for $0.05 per request. The manifest is built the way the wallet builds it from a challenge.
+ */
+export function mockX402Manifest(u: URL, source: "owner" | "agent" = "owner"): ServiceManifest {
+  const host = u.host;
+  const baseUrl = `${u.origin}${u.pathname.replace(/\/$/, "")}`;
+  return {
+    id: `custom-${(host + u.pathname).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`,
+    name: host,
+    provider: host,
+    icon: "🧩",
+    color: "#8E62D9",
+    category: "tools",
+    kind: "x402",
+    summary: "An API that charges per call over x402.",
+    description: `${baseUrl} answers 402 Payment Required and asks for $0.05 in test USDC per call.`,
+    baseUrl,
+    pricing: "$0.05 per request",
+    maxPrice: "0.05",
+    permissions: [`Pay ${host} up to $0.05 per request`, `Send requests to ${host}`],
+    docs: `GET ${baseUrl}\n  402 Payment Required: $0.05 USDC (x402, Base Sepolia). Pay with fetch_url.`,
+    source,
   };
 }
 
@@ -1033,6 +1064,39 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
 
   const copyAgent = (a: AgentPublic): AgentPublic => ({ ...a, policy: { ...a.policy }, services: a.services.map((x) => ({ ...x, permissions: [...x.permissions] })) });
 
+  /**
+   * §18, in the mock: a directory service (under its baseUrl, on its origin, or a listed store's
+   * storefront), else a URL with "/api/" in it is an x402 API, else a store link is a Shopify store.
+   * Anything with "nope" in it is a link Allowance can't pay.
+   */
+  function resolveLink(raw: string): ServicePreview {
+    const s = raw.trim();
+    if (/nope/i.test(s)) throw new HttpError(UNRECOGNIZED_MESSAGE, 422, "unrecognized_service_url");
+    let u: URL;
+    try {
+      u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : `https://${s}`);
+    } catch {
+      throw new HttpError("That doesn't look like a link.", 400, "invalid_store_url");
+    }
+    if (u.protocol !== "https:" && u.protocol !== "http:") throw new HttpError("That doesn't look like a link.", 400, "invalid_store_url");
+    const href = `${u.origin}${u.pathname}`;
+    const listed = directory.filter((m) => m.id !== "directory");
+    const has = (id: string) => agents.filter((a) => hasService(a, id)).map((a) => a.id);
+    const match =
+      listed.filter((m) => href.startsWith(m.baseUrl)).sort((a, b) => b.baseUrl.length - a.baseUrl.length)[0] ??
+      listed.find((m) => !m.shopify && new URL(m.baseUrl).origin === u.origin);
+    if (match) return { kind: "directory", service: { ...match, permissions: [...match.permissions] }, connectedAgents: has(match.id) };
+    if (`${u.pathname}/`.includes("/api/")) {
+      const m = mockX402Manifest(u);
+      // Already added: the agents that have it, at the cap they have.
+      const held = agents.flatMap((a) => a.services).find((x) => x.id === m.id);
+      return { kind: "x402", price: m.maxPrice, service: held ? { ...m, maxPrice: held.maxPrice } : m, connectedAgents: has(m.id) };
+    }
+    const store = mockStorePreview(s);
+    const listing = manifest(serviceIdFor(store.handle));
+    return { kind: "shopify", service: listing ? { ...listing, permissions: [...listing.permissions] } : shopifyManifest(store, DEFAULT_CAP), store, listed: !!listing, connectedAgents: listing ? has(listing.id) : [] };
+  }
+
   const directoryView = (m: ServiceManifest): DirectoryService => {
     const { docs: _docs, ...rest } = m;
     void _docs;
@@ -1225,6 +1289,61 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
           emitConnected(agent, svc);
         }
         return { service: directoryView(m), agents: targets.map(copyAgent) };
+      }),
+    previewService: (url) =>
+      new Promise((res, rej) =>
+        later(previewLatency, () => {
+          try {
+            res(resolveLink(url));
+          } catch (err) {
+            rej(err);
+          }
+        }),
+      ),
+    addService: (req) =>
+      delay((): AddServiceResponse => {
+        const found = resolveLink(String(req?.url ?? ""));
+        const targets = [...new Set(req.connectTo ?? [])].map((agentId) => {
+          const agent = byId(agentId);
+          if (!agent) throw new HttpError(`No agent ${agentId}`, 404, "agent_not_found");
+          return agent;
+        });
+        let m = found.service;
+        if (found.kind === "shopify") {
+          let cap = found.listed ? m.maxPrice : DEFAULT_CAP;
+          if (req.maxPrice !== undefined) {
+            const c = checkCap(String(req.maxPrice));
+            if (!c.ok) throw new HttpError(`maxPrice must be a dollar amount from $0.01 to $${MAX_TOPUP}`, 400, "invalid_request");
+            cap = c.amount;
+          }
+          if (found.listed) {
+            // A listed store takes the cap (§18).
+            const at = directory.findIndex((x) => x.id === m.id);
+            m = { ...directory[at], maxPrice: cap };
+            directory[at] = m;
+          } else {
+            m = shopifyManifest(found.store!, cap);
+            directory.push(m);
+          }
+        } else if (found.kind === "x402") {
+          if (!targets.length && !found.connectedAgents?.length) throw new HttpError("Pick at least one agent: an x402 API is connected to agents, not listed in the directory.", 400, "invalid_request");
+          if (req.maxPrice !== undefined) {
+            const c = checkCap(String(req.maxPrice));
+            if (!c.ok || toCents(c.amount) < toCents(found.price)) throw new HttpError(`maxPrice must be at least ${money(found.price)}, what the API asks for`, 400, "invalid_request");
+            m = { ...m, maxPrice: c.amount };
+          }
+          customDocs.set(m.id, m.docs ?? "");
+          // Re-adding raises the cap in place for the agents that have it.
+          for (const agent of agents) agent.services = agent.services.map((x) => (x.id === m.id ? { ...x, maxPrice: m.maxPrice } : x));
+        }
+        for (const agent of targets) {
+          if (hasService(agent, m.id)) continue;
+          const svc = connection(m, "owner", found.kind === "x402" ? m.docs : undefined);
+          agent.services = [...agent.services, svc];
+          emitConnected(agent, svc);
+        }
+        // directory: on its listed terms (maxPrice ignored); `connected` is every agent that has it.
+        return { kind: found.kind, service: { ...m, permissions: [...m.permissions] }, connected: agents.filter((a) => hasService(a, m.id)).map((a) => a.id) };
       }),
     getBank: () => delay(bankSummary),
     getBankStatement: (agentId, limit = 50) =>

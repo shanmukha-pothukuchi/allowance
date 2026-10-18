@@ -55,6 +55,8 @@ import type {
   ServiceGrant,
   ServiceManifest,
   ServiceRequest,
+  ServiceAddResponse,
+  ServicePreviewResponse,
   ServiceRequestResponse,
   SettledRequest,
   ShopifyStore,
@@ -80,6 +82,8 @@ import type { DirectoryClient } from "./directory-client.js";
 import { ShopifyBridgeError, ShopifyBridgeUnavailableError, httpShopifyBridgeClient } from "./shopify-bridge-client.js";
 import type { ShopifyBridgeClient } from "./shopify-bridge-client.js";
 import { BankError, createBank } from "./bank.js";
+import { probeX402Link } from "./link-probe.js";
+import type { ProbeResult, X402Probe } from "./link-probe.js";
 import type { Bank, BankOptions } from "./bank.js";
 // Relative import on purpose (like the agents' seeds): the proposal an agent makes is built exactly
 // like the manifest the directory will list once the owner approves.
@@ -108,6 +112,8 @@ export interface AppDeps {
   shopifyBridge?: ShopifyBridgeClient;
   /** Capital One / Nessie tuning (§16): fetch, timeouts, retry delays. Enabled only by `config.nessie.apiKey`. */
   bank?: BankOptions;
+  /** The x402 step of link resolution (§18). Defaults to a live GET probe (8 s, no credentials, private targets refused). */
+  probeLink?: (url: string, allowOrigins: readonly string[]) => Promise<ProbeResult>;
 }
 
 export type VerifyChallenge = (
@@ -719,9 +725,137 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     return cap;
   }
 
+  // ---- any service by link (§18) ---------------------------------------------
+
+  const probeLink =
+    deps.probeLink ??
+    ((url: string, allowOrigins: readonly string[]) => probeX402Link(url, { network: config.network, asset: config.usdcAddress, allowOrigins }));
+
+  /** A pasted link: trimmed, ≤ 500 chars, http(s) (https:// added when there is no scheme), no credentials. */
+  function linkParam(raw: unknown, field: string): URL {
+    const bad = () =>
+      new HttpError(400, "invalid_request", `\`${field}\` must be a link, like https://api.example.com/v1/quote, a shop's address, or a directory service's URL`);
+    if (typeof raw !== "string") throw bad();
+    const s = raw.trim();
+    if (!s || s.length > 500 || /\s/.test(s)) throw bad();
+    let url: URL;
+    try {
+      url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : `https://${s}`);
+    } catch {
+      throw bad();
+    }
+    if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password || !url.hostname) throw bad();
+    return url;
+  }
+
+  type LinkMatch =
+    | { kind: "directory"; manifest: ServiceManifest }
+    | { kind: "shopify"; store: ShopifyStore; listed: ServiceManifest | null }
+    | { kind: "x402"; probe: X402Probe };
+
+  const UNRECOGNIZED =
+    "That link isn't something Allowance can pay: it's not in the directory, not a Shopify store, and it doesn't ask for payment over x402.";
+
+  /** §18, in order: directory (prefix, or the only service on that origin) → Shopify bridge → x402 probe → 422. */
+  async function resolveLink(url: URL): Promise<LinkMatch> {
+    const listing = (await directoryCall(() => directory.list())).filter((s) => s.kind !== "directory");
+    const prefix = findService(url.href, listing);
+    if (prefix) return { kind: "directory", manifest: prefix };
+    const sameOrigin = listing.filter((s) => originOf(s.baseUrl) === url.origin);
+    if (sameOrigin.length === 1) return { kind: "directory", manifest: sameOrigin[0] };
+
+    try {
+      const store = await shopifyBridge.discover(url.href);
+      let listed: ServiceManifest | null = null;
+      try {
+        listed = await directory.get(shopifyServiceId(store.handle));
+      } catch (err) {
+        console.warn(`${LOG} link: directory lookup for ${store.handle} failed (${(err as Error).message})`);
+      }
+      return { kind: "shopify", store, listed };
+    } catch (err) {
+      if (err instanceof ShopifyBridgeError) {
+        // A store we can't use, or a store admin link: say so as the bridge does. Anything else isn't a store.
+        if (err.status === 422 || (err.status === 400 && /admin link/i.test(err.message))) {
+          throw new HttpError(err.status, err.code, err.message, err.reason ? { reason: err.reason } : undefined);
+        }
+      } else if (err instanceof ShopifyBridgeUnavailableError) {
+        console.warn(`${LOG} link: ${err.message}; trying it as an x402 API`);
+      } else {
+        throw err;
+      }
+    }
+
+    const allow = [config.merchantUrl, config.shopifyBridgeUrl, config.quantcommBridgeUrl, ...listing.map((s) => s.baseUrl)];
+    const probed = await probeLink(url.href, allow);
+    if (probed.ok) return { kind: "x402", probe: probed.probe };
+    throw new HttpError(422, "unrecognized_service_url", UNRECOGNIZED, { reason: probed.reason });
+  }
+
+  const slugOf = (name: string) => name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "service";
+
+  /** `custom-<slug>`, unless that id is already this agent's for a different URL. */
+  function customId(agent: StoredAgent | null, name: string, baseUrl: string): string {
+    const id = `custom-${slugOf(name)}`;
+    if (!agent) return id;
+    const clash =
+      agent.services.some((s) => s.id === id && s.baseUrl !== baseUrl) ||
+      store.state.approvals.some((a) => a.status === "pending" && a.agentId === agent.id && a.service?.id === id && a.service.baseUrl !== baseUrl);
+    return clash ? `${id}-${randomBytes(2).toString("hex")}` : id;
+  }
+
+  /** The manifest an x402 link gets (§18): named by its challenge, capped at its price unless a higher cap is given. */
+  function x402Manifest(p: X402Probe, source: "owner" | "agent", agent: StoredAgent | null, capUnits?: bigint): ServiceManifest {
+    const price = BigInt(p.requirements.amount);
+    const cap = capUnits ?? price;
+    const summary = p.description ?? `An API at ${p.host} that charges over x402`;
+    const pricing = cap === price ? `${formatUsd(price)} per request` : `${formatUsd(price)} per request · up to ${formatUsd(cap)}`;
+    return {
+      id: customId(agent, p.name, p.baseUrl),
+      name: p.name,
+      provider: p.host,
+      icon: "🔌",
+      color: "#8A8F98",
+      category: "tools",
+      kind: "x402",
+      summary,
+      description: summary,
+      baseUrl: p.baseUrl,
+      pricing,
+      maxPrice: toDollars(cap),
+      permissions: [`Pay up to ${formatUsd(cap)} per payment to ${p.name} (${p.host})`],
+      docs: [
+        `${p.name} is an API at ${p.host} that charges over x402 (USDC on Base Sepolia).`,
+        "",
+        `Call it with fetch_url: GET ${p.url}`,
+        `It asked ${formatUsd(price)} for that request when it was connected. Any URL under ${p.baseUrl} may be paid, up to ${formatUsd(cap)} per payment.`,
+        "Its 402 response is the only description it published; try the link above first and read what it returns.",
+      ].join("\n"),
+      source,
+    };
+  }
+
+  /** Owner cap for an x402 link: dollars, at least the price it asks, at most MAX_TOPUP. */
+  function x402Cap(raw: unknown, price: bigint): bigint | undefined {
+    if (raw === undefined || raw === null || raw === "") return undefined;
+    let units: bigint;
+    try {
+      if (typeof raw !== "string" && typeof raw !== "number") throw new Error("type");
+      units = toBaseUnits(String(raw));
+    } catch {
+      throw new HttpError(400, "invalid_request", "maxPrice must be a dollar amount like \"0.50\"");
+    }
+    if (units < price) throw new HttpError(400, "invalid_request", `maxPrice ${formatUsd(units)} is below the ${formatUsd(price)} this API asks per request`);
+    if (units > toBaseUnits(MAX_TOPUP)) throw new HttpError(400, "invalid_request", `maxPrice must be at most ${formatUsd(toBaseUnits(MAX_TOPUP))}`);
+    return units;
+  }
+
+  /** Agents with a connection under this exact base URL (custom ids can differ per agent). */
+  const connectedByBase = (baseUrl: string) => store.state.agents.filter((a) => a.services.some((s) => s.baseUrl === baseUrl && s.kind === "x402")).map((a) => a.id);
+
   /** A connected custom service rendered as a manifest (its docs are the agent's own). */
   function customManifest(c: ConnectedService): ServiceManifest {
-    return { ...toGrant(c), description: c.summary, category: "tools", docs: c.docs ?? "", source: "agent" };
+    return { ...toGrant(c), description: c.summary, category: "tools", docs: c.docs ?? "", source: c.source === "owner" ? "owner" : "agent" };
   }
 
   /** The directory never appears in agent.services; a synthetic connection answers requests for it. */
@@ -1496,13 +1630,29 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     res.json({ services: services.map(({ docs: _docs, ...s }) => decorate(agent, s)) });
   });
 
+  // Owner: what a pasted link is (§18), before adding it. No side effects. (Before /directory/:id.)
+  router.get("/directory/preview", ownerAuth, async (req, res) => {
+    const match = await resolveLink(linkParam(req.query.url, "url"));
+    let out: ServicePreviewResponse;
+    if (match.kind === "directory") {
+      out = { kind: "directory", service: noDocs(match.manifest), connectedAgents: connectedAgents(match.manifest.id) };
+    } else if (match.kind === "shopify") {
+      const service = match.listed ?? shopifyManifest(match.store, { bridgeUrl: config.shopifyBridgeUrl });
+      out = { kind: "shopify", service: noDocs(service), store: match.store, listed: Boolean(match.listed), connectedAgents: connectedAgents(service.id) };
+    } else {
+      const service = x402Manifest(match.probe, "owner", null);
+      out = { kind: "x402", service, price: toDollars(BigInt(match.probe.requirements.amount)), connectedAgents: connectedByBase(service.baseUrl) };
+    }
+    res.json(out);
+  });
+
   router.get("/directory/:id", async (req, res) => {
     const agent = viewer(req);
     const id = String(req.params.id);
     // Custom services are not in the directory: the agent's own connection (or, for the owner, any) answers.
     const custom = (agent ? [agent] : store.state.agents)
       .flatMap((a) => a.services)
-      .find((s) => s.id === id && s.source === "agent" && !s.shopify);
+      .find((s) => s.id === id && (s.source === "agent" || s.source === "owner") && !s.shopify);
     if (custom) {
       res.json(decorate(agent, customManifest(custom)));
       return;
@@ -1527,24 +1677,31 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
   router.post("/services/requests", agentAuth, async (req: AuthedRequest, res) => {
     const agent = req.agent!;
     const body = (req.body ?? {}) as Partial<ServiceRequest>;
-    if (typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "invalid_request", "Body must be { serviceId }, { custom } or { shopifyStoreUrl }, plus reason");
+    if (typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "invalid_request", "Body must be { serviceId }, { url }, { custom } or { shopifyStoreUrl }, plus reason");
     if (body.reason !== undefined && typeof body.reason !== "string") throw new HttpError(400, "invalid_request", "`reason` must be a string");
     const reason = body.reason?.trim().slice(0, 500) || undefined;
     const hasId = body.serviceId !== undefined && body.serviceId !== null;
     const hasCustom = body.custom !== undefined && body.custom !== null;
     const hasShopify = body.shopifyStoreUrl !== undefined && body.shopifyStoreUrl !== null;
-    if (Number(hasId) + Number(hasCustom) + Number(hasShopify) !== 1) {
-      throw new HttpError(400, "invalid_request", "Send exactly one of `serviceId` (a directory id), `custom` (a proposal) or `shopifyStoreUrl` (a Shopify store link)");
+    const hasUrl = body.url !== undefined && body.url !== null;
+    if (Number(hasId) + Number(hasCustom) + Number(hasShopify) + Number(hasUrl) !== 1) {
+      throw new HttpError(
+        400,
+        "invalid_request",
+        "Send exactly one of `serviceId` (a directory id), `url` (any link: a Shopify store or an API that charges over x402), `custom` (a proposal) or `shopifyStoreUrl` (a Shopify store link)",
+      );
     }
 
     let grant: ServiceGrant;
     let docs: string | undefined;
-    if (hasShopify) {
+    // Any link (§18): resolved to a directory service, a Shopify store or an x402 API, then the normal flow.
+    const match = hasUrl ? await resolveLink(linkParam(body.url, "url")) : undefined;
+    if (hasShopify || match?.kind === "shopify") {
       // A Shopify store by link (§15.3): already in the directory → a normal request; otherwise the
       // owner is asked to add it (the proposed manifest, flagged source "agent").
-      const url = storeUrlParam(body.shopifyStoreUrl, "shopifyStoreUrl");
+      const url = match ? "" : storeUrlParam(body.shopifyStoreUrl, "shopifyStoreUrl");
       const cap = agentShopifyCap(agent, body.maxPrice); // validated before any network call
-      const shop = await discoverShopify(url);
+      const shop = match?.kind === "shopify" ? match.store : await discoverShopify(url);
       const id = shopifyServiceId(shop.handle);
       const already = agent.services.find((s) => s.id === id);
       if (already) {
@@ -1552,13 +1709,34 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
         res.json(out);
         return;
       }
-      const listed = await directoryCall(() => directory.get(id));
+      const listed = match?.kind === "shopify" ? match.listed : await directoryCall(() => directory.get(id));
       grant = listed
         ? toGrant({ ...listed, source: "directory" })
         : toGrant({ ...shopifyManifest(shop, { bridgeUrl: config.shopifyBridgeUrl, maxPrice: cap }), source: "agent" });
-    } else if (hasId) {
-      if (typeof body.serviceId !== "string") throw new HttpError(400, "invalid_request", "`serviceId` must be a string");
-      const id = body.serviceId.trim();
+    } else if (match?.kind === "x402") {
+      // An API that charges over x402: a custom proposal capped at the price it asked (≤ maxPerTx).
+      const p = match.probe;
+      const already = agent.services.find((s) => s.kind === "x402" && s.baseUrl === p.baseUrl);
+      if (already) {
+        const out: ServiceRequestResponse = { status: "connected", service: already };
+        res.json(out);
+        return;
+      }
+      const price = BigInt(p.requirements.amount);
+      const limit = toBaseUnits(agent.policy.maxPerTx);
+      if (price > limit) {
+        throw new HttpError(
+          400,
+          "invalid_request",
+          `${p.name} (${p.host}) asks ${formatUsd(price)} per request, over this agent's ${formatUsd(limit)} per-payment limit. Ask your owner to raise the limit or to add it from the dashboard.`,
+        );
+      }
+      const m = x402Manifest(p, "agent", agent);
+      grant = toGrant(m);
+      docs = m.docs;
+    } else if (hasId || match?.kind === "directory") {
+      if (match?.kind !== "directory" && typeof body.serviceId !== "string") throw new HttpError(400, "invalid_request", "`serviceId` must be a string");
+      const id = match?.kind === "directory" ? match.manifest.id : body.serviceId!.trim();
       const already = id === "directory" ? directoryConnection(agent) : agent.services.find((s) => s.id === id);
       if (already) {
         const out: ServiceRequestResponse = { status: "connected", service: already };
@@ -1594,7 +1772,9 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
       message:
         grant.shopify && grant.source === "agent"
           ? `Waiting for your owner to approve adding the Shopify store ${grant.name} (${storefrontHost(grant.shopify)}). Approval id ${approval.id}.`
-          : `Waiting for your owner to approve connecting ${grant.name}. Approval id ${approval.id}.`,
+          : hasUrl && !grant.shopify
+            ? `Waiting for your owner to approve connecting ${grant.name} (${hostOf(grant.baseUrl)}). Approval id ${approval.id}.`
+            : `Waiting for your owner to approve connecting ${grant.name}. Approval id ${approval.id}.`,
     };
     res.status(202).json(out);
   });
@@ -1638,14 +1818,21 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     // Resolve agents before anything is added, so a bad id doesn't leave a half-done change.
     const agents = [...new Set((body.connectTo as string[] | undefined) ?? [])].map((id) => requireAgentById(id));
     const { service, created } = await addShopifyToDirectory(url, maxPrice);
-    // Caps are per connection: the owner's cap for this add applies to the agents connected now, even
-    // when the store was already listed with a different default.
+    connectStoreWithCap(agents, service, maxPrice);
+    res.status(created ? 201 : 200).json({ service, created, connectedAgents: connectedAgents(service.id) });
+  });
+
+  /**
+   * Caps are per connection: the owner's cap for this add applies to the agents connected now, even
+   * when the store was already listed with a different default.
+   */
+  function connectStoreWithCap(agents: StoredAgent[], service: ServiceManifest, maxPrice: string | undefined): void {
     const cap = maxPrice ?? service.maxPrice;
     const grant = toGrant({
       ...service,
       source: "directory",
       maxPrice: cap,
-      ...(cap === service.maxPrice ? {} : shopifyCapTexts(service.name, cap)),
+      ...(cap === service.maxPrice || !service.shopify ? {} : shopifyCapTexts(service.name, cap)),
     });
     for (const agent of agents) {
       const existing = agent.services.find((x) => x.id === service.id);
@@ -1658,8 +1845,65 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
         connectService(agent, grant, "owner");
       }
     }
-    res.status(created ? 201 : 200).json({ service, created, connectedAgents: connectedAgents(service.id) });
+  }
+
+  const noDocs = ({ docs: _docs, ...m }: ServiceManifest): ServiceManifest => m as ServiceManifest;
+
+  /** `connectTo`: an optional array of agent ids, all resolved (404) before anything changes. */
+  function agentsParam(raw: unknown): StoredAgent[] {
+    if (raw !== undefined && raw !== null && (!Array.isArray(raw) || raw.some((x) => typeof x !== "string"))) {
+      throw new HttpError(400, "invalid_request", "`connectTo` must be an array of agent ids");
+    }
+    return [...new Set((raw as string[] | null | undefined) ?? [])].map((id) => requireAgentById(id));
+  }
+
+  // Owner: add whatever a link is (§18) and connect it to `connectTo`.
+  router.post("/directory/add", ownerAuth, async (req, res) => {
+    const body = (req.body ?? {}) as { url?: unknown; maxPrice?: unknown; connectTo?: unknown };
+    const url = linkParam(body.url, "url");
+    const agents = agentsParam(body.connectTo);
+    const match = await resolveLink(url);
+    let out: ServiceAddResponse;
+    if (match.kind === "directory") {
+      const m = match.manifest;
+      if (m.kind === "directory") throw new HttpError(400, "invalid_request", "The Service Directory is always available; it does not need connecting");
+      // A listed store takes the owner's cap; other directory services connect on their listed terms.
+      const cap = m.shopify && body.maxPrice !== undefined && body.maxPrice !== null ? shopifyCapParam(body.maxPrice) : undefined;
+      connectStoreWithCap(agents, m, cap);
+      out = { kind: "directory", service: noDocs(m), connected: connectedAgents(m.id) };
+    } else if (match.kind === "shopify") {
+      const cap = body.maxPrice !== undefined && body.maxPrice !== null ? shopifyCapParam(body.maxPrice) : undefined;
+      const { service } = await addShopifyToDirectory(url.href, cap);
+      connectStoreWithCap(agents, service, cap);
+      out = { kind: "shopify", service: noDocs(service), connected: connectedAgents(service.id) };
+    } else {
+      // An x402 API: a custom connection per agent (not listed in the directory).
+      const p = match.probe;
+      const cap = x402Cap(body.maxPrice, BigInt(p.requirements.amount));
+      for (const agent of agents) {
+        const m = x402Manifest(p, "owner", agent, cap);
+        const existing = agent.services.find((x) => x.kind === "x402" && x.baseUrl === p.baseUrl);
+        if (existing) {
+          if (existing.maxPrice !== m.maxPrice) {
+            Object.assign(existing, { maxPrice: m.maxPrice, pricing: m.pricing, permissions: m.permissions });
+            store.save();
+          }
+        } else {
+          connectService(agent, toGrant(m), "owner", m.docs);
+        }
+      }
+      out = { kind: "x402", service: x402Manifest(p, "owner", null, cap), connected: connectedByBase(p.baseUrl) };
+    }
+    res.json(out);
   });
+
+  function shopifyCapParam(raw: unknown): string {
+    try {
+      return parseShopifyCap(raw);
+    } catch (err) {
+      throw new HttpError(400, "invalid_request", (err as Error).message);
+    }
+  }
 
   router.post("/agents/:id/services", ownerAuth, async (req, res) => {
     const agent = requireAgentById(String(req.params.id));

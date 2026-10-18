@@ -6,6 +6,8 @@
  * and an unreachable wallet-service shows "offline" (never a silent fallback, §12).
  */
 import type {
+  AddServiceRequest,
+  AddServiceResponse,
   AddShopifyStoreRequest,
   AgentPublic,
   Approval,
@@ -16,6 +18,7 @@ import type {
   CreateAgentResponse,
   DirectoryService,
   Receipt,
+  ServicePreview,
   ShopifyStore,
   SummaryResponse,
   WalletEvent,
@@ -60,6 +63,10 @@ export interface WalletAdapter {
   previewShopifyStore(url: string): Promise<ShopifyStore>;
   /** `POST /v1/directory/shopify` (§15.3): add the store to the directory, optionally connecting agents. */
   addShopifyStore(req: AddShopifyStoreRequest): Promise<{ service: DirectoryService; agents?: AgentPublic[] }>;
+  /** `GET /v1/directory/preview?url=` (§18): what a pasted link is (directory, Shopify store, x402 API). No side effects. */
+  previewService(url: string): Promise<ServicePreview>;
+  /** `POST /v1/directory/add` (§18): connect (and for a store, list) what the link resolved to. */
+  addService(req: AddServiceRequest): Promise<AddServiceResponse>;
   /**
    * Capital One (Nessie sandbox, §16.4). Called only when the summary carries `bank`, so a wallet
    * without a Nessie key is never asked.

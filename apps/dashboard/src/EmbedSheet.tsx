@@ -7,9 +7,10 @@
  */
 import { useLayoutEffect, useRef } from "react";
 import { AddMoneySheet } from "./components/AddMoneySheet";
+import { AddServiceSheet } from "./components/AddServiceSheet";
 import { BankSheet } from "./components/BankSheet";
 import { NewAgentSheet } from "./components/NewAgentSheet";
-import { agentCreatedMessage, chatUrlFrom, moneyAddedMessage, postSheetMessage, sheetCloseMessage, sheetSizeMessage, type EmbedSheetRoute } from "./sheets";
+import { agentCreatedMessage, chatUrlFrom, moneyAddedMessage, postSheetMessage, serviceAddedMessage, sheetCloseMessage, sheetSizeMessage, type EmbedSheetRoute } from "./sheets";
 import { useStandaloneAdapter } from "./useAdapter";
 
 export function EmbedSheet({ route }: { route: EmbedSheetRoute }) {
@@ -37,6 +38,18 @@ export function EmbedSheet({ route }: { route: EmbedSheetRoute }) {
         <NewAgentSheet adapter={adapter} offline={offline} embed chatUrl={chatUrl} onClose={close} onReady={(name) => postSheetMessage(agentCreatedMessage(name), chatUrl)} />
       ) : route.sheet === "bank" ? (
         <BankSheet adapter={adapter} offline={offline} embed onClose={close} />
+      ) : route.sheet === "add-service" ? (
+        <AddServiceSheet
+          adapter={adapter}
+          offline={offline}
+          embed
+          preselect={route.agent}
+          onClose={close}
+          onDone={(serviceId, _listed, name) => {
+            postSheetMessage(serviceAddedMessage(serviceId, name ?? serviceId), chatUrl);
+            close();
+          }}
+        />
       ) : (
         <AddMoneySheet adapter={adapter} offline={offline} embed agentName={route.agent} onClose={close} onAdded={(name, amount) => postSheetMessage(moneyAddedMessage(name, amount), chatUrl)} />
       )}

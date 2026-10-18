@@ -11,3 +11,6 @@ keys/
 .DS_Store
 .vite/
 coverage/
+
+# Agent worktrees (Claude Code)
+.claude/worktrees/

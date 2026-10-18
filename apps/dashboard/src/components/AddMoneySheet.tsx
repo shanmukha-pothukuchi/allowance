@@ -5,14 +5,16 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { HttpError, type WalletAdapter } from "../api/adapter";
-import { bankMarker, masked, movedLine, short, sourceLine, topupBankError } from "../bank";
-import { addDollars, money, relativeTime, shortHex, toCents } from "../format";
+import { bankMarker, bankNote, masked, movedLine, SANDBOX_NOTE, short, topupBankError } from "../bank";
+import { addDollars, money, shortHex, toCents } from "../format";
+import { receiptAmount, shortAgo } from "../lines";
 import { parseAmount, shortMoney, type AmountCheck } from "../sheets";
 import type { AgentPublic, Receipt, SummaryResponse } from "../types";
 import { useNow } from "../useWallet";
 import { AgentAvatar } from "./Avatar";
-import { BankMarkerView, BankTile } from "./BankParts";
-import { ArrowOut, Check, Info, Plus, Snowflake } from "./Icons";
+import { BankTile } from "./BankParts";
+import { ArrowOut, Check, Snowflake } from "./Icons";
+import { BankLine, BankProblem, LineRow } from "./Lines";
 import { AmountPicker, CopyField, CUSTOM, Field, SheetShell } from "./SheetParts";
 
 interface Props {
@@ -102,24 +104,12 @@ export function AddMoneySheet({ adapter, offline = false, embed, agentName, show
     }
   };
 
-  const head = agent ? (
+  const head = (
     <div className="osheet-title">
-      <AgentAvatar name={agent.name} size="xl" badge={agent.frozen ? <Snowflake width={14} height={14} /> : undefined} />
+      {agent && <AgentAvatar name={agent.name} size="sm" badge={agent.frozen ? <Snowflake width={10} height={10} /> : undefined} />}
       <div className="osheet-titles">
-        <h2 className="osheet-name">{agent.name}</h2>
-        <p className="muted">
-          Balance <strong className="osheet-balance">{money(done ? done.balance : agent.balance)}</strong>
-        </p>
-      </div>
-    </div>
-  ) : (
-    <div className="osheet-title">
-      <span className="avatar avatar-xl avatar-empty" aria-hidden>
-        <Plus width={30} height={30} />
-      </span>
-      <div className="osheet-titles">
-        <h2 className="osheet-name">Add money</h2>
-        <p className="muted">Test money for one of your agents</p>
+        <h2 className="osheet-name">{agent ? `Add money to ${agent.name}` : "Add money"}</h2>
+        <p className="osheet-sub">{agent ? `Balance ${money(done ? done.balance : agent.balance)}` : "Pick one of your agents"}</p>
       </div>
     </div>
   );
@@ -127,6 +117,7 @@ export function AddMoneySheet({ adapter, offline = false, embed, agentName, show
   // ---- done ----
   if (done && agent) {
     const r = done.receipt;
+    const mark = bankMarker(r, linked);
     return (
       <SheetShell
         embed={embed}
@@ -135,59 +126,53 @@ export function AddMoneySheet({ adapter, offline = false, embed, agentName, show
         onClose={onClose}
         footer={
           <>
-            <button type="button" className="btn btn-big" onClick={() => setDone(null)}>
-              <Plus width={18} height={18} /> Add more
+            <button type="button" className="btn" onClick={() => setDone(null)}>
+              Add more
             </button>
-            <button type="button" className="btn btn-primary btn-big" onClick={onClose}>
+            <button type="button" className="btn btn-primary" onClick={onClose}>
               Done
             </button>
           </>
         }
       >
-        <div className="created" role="status">
+        <div className="done-line" role="status">
           <span className="done-check" aria-hidden>
-            <Check width={34} height={34} />
+            <Check width={14} height={14} />
           </span>
-          <h3 className="created-title">{r.bank || linked ? movedLine(r.amount, agent.name) : `Added ${money(r.amount)} to ${agent.name}`}</h3>
-          <p className="created-balance">
-            <span className="muted">New balance</span>
-            <span className="created-amount">{money(done.balance)}</span>
-          </p>
-          {linked && bank?.checkingBalance !== undefined && (
-            <p className="muted bank-after">
-              Capital One Checking {masked(bank.checkingLast4)} now {money(bank.checkingBalance)}
-            </p>
-          )}
-        </div>
-        <div className="receipt-card" aria-label="Receipt">
-          <div className="receipt-row">
-            <span>{r.description || "Top-up"}</span>
-            <strong className="earned">+{money(r.amount)}</strong>
-          </div>
-          {bankMarker(r, linked) && (
-            <div className="receipt-row">
-              <BankMarkerView marker={bankMarker(r, linked)} />
-              {r.bank?.account && <span className="muted">Allowance account {masked(r.bank.account)}</span>}
-            </div>
-          )}
-          <div className="receipt-row muted">
-            <span>{r.counterparty?.name ?? "Mock USDC faucet"}</span>
-            <span>
-              {r.status === "settled" ? "done" : r.status} · {relativeTime(r.settledAt ?? r.createdAt, now)}
-            </span>
-          </div>
-          <div className="receipt-row receipt-ids muted">
-            <code title={r.id}>{r.id}</code>
-            {r.txHash &&
-              (r.explorerUrl && !embed ? (
-                <a href={r.explorerUrl} target="_blank" rel="noopener noreferrer" title={r.txHash}>
-                  tx {shortHex(r.txHash)} <ArrowOut width={14} height={14} />
-                </a>
-              ) : (
-                <code title={r.txHash}>tx {shortHex(r.txHash)}</code>
-              ))}
+          <div>
+            <h3 className="done-title">{r.bank || linked ? movedLine(r.amount, agent.name) : `Added ${money(r.amount)} to ${agent.name}`}</h3>
+            {linked && bank?.checkingBalance !== undefined && (
+              <p className="osheet-sub">
+                Checking {masked(bank.checkingLast4)} now {money(bank.checkingBalance)}
+              </p>
+            )}
           </div>
         </div>
+        <ul className="ln-list ln-group" aria-label="Receipt">
+          <LineRow
+            lead={null}
+            className="ln-row-nolead"
+            line={{ verb: r.description || "Top-up", tail: ` · ${r.counterparty?.name ?? "Mock USDC faucet"}` }}
+            time={shortAgo(r.settledAt ?? r.createdAt, now)}
+            amount={receiptAmount(r)}
+          >
+            {mark?.tone !== "failed" && <BankLine note={mark ? bankNote(r, bank?.checkingLast4) : null} />}
+            <BankProblem marker={mark} />
+            {(showDetails || r.txHash) && (
+              <p className="ln-details">
+                <code title={r.id}>{r.id}</code>
+                {r.txHash &&
+                  (r.explorerUrl && !embed ? (
+                    <a href={r.explorerUrl} target="_blank" rel="noopener noreferrer" title={r.txHash}>
+                      tx {shortHex(r.txHash)} <ArrowOut width={12} height={12} />
+                    </a>
+                  ) : (
+                    <code title={r.txHash}>tx {shortHex(r.txHash)}</code>
+                  ))}
+              </p>
+            )}
+          </LineRow>
+        </ul>
       </SheetShell>
     );
   }
@@ -201,18 +186,14 @@ export function AddMoneySheet({ adapter, offline = false, embed, agentName, show
             {error}
           </p>
         )}
-        <button type="button" className="btn btn-big" onClick={onClose} disabled={busy}>
+        <button type="button" className="btn" onClick={onClose} disabled={busy}>
           Cancel
         </button>
-        <button type="button" className="btn btn-primary btn-big" onClick={() => void add()} disabled={busy || !adapter}>
+        <button type="button" className="btn btn-primary" onClick={() => void add()} disabled={busy || !adapter}>
           {busy ? (linked ? "Moving…" : "Adding…") : linked ? (amount.ok ? `Move ${shortMoney(amount.amount)} from Checking` : "Move from Checking") : amount.ok ? `Add ${shortMoney(amount.amount)} test money` : "Add test money"}
         </button>
       </>
-    ) : (
-      <button type="button" className="btn btn-big" onClick={onClose}>
-        Close
-      </button>
-    );
+    ) : undefined;
 
   return (
     <SheetShell embed={embed} label={agent ? `Add money to ${agent.name}` : "Add money"} head={head} footer={footer} locked={busy} onClose={onClose}>
@@ -221,29 +202,27 @@ export function AddMoneySheet({ adapter, offline = false, embed, agentName, show
       {adapter && !agents && !loadError && <p className="muted">Loading…</p>}
 
       {agents && !agent && (
-        <Field label="Which agent?">
-          {picked && <p className="osheet-info">No agent named {picked}. Pick one of yours:</p>}
-          <ul className="agent-picks">
+        <Field label={picked ? `No agent named ${picked}. Pick one:` : "Which agent?"}>
+          <ul className="ln-group">
             {agents.map((a) => (
               <li key={a.id}>
-                <button type="button" className="agent-pick" onClick={() => setPicked(a.name)}>
-                  <AgentAvatar name={a.name} size="sm" />
-                  <span className="agent-pick-name">{a.name}</span>
-                  <span className="muted">{money(a.balance)}</span>
+                <button type="button" className="grow grow-btn" onClick={() => setPicked(a.name)}>
+                  <AgentAvatar name={a.name} size="xs" />
+                  <span className="grow-main">
+                    <span className="grow-title">{a.name}</span>
+                  </span>
+                  <span className="grow-end grow-amt">{money(a.balance)}</span>
                 </button>
               </li>
             ))}
-            {agents.length === 0 && <li className="muted">No agents yet.</li>}
+            {agents.length === 0 && <li className="grow muted">No agents yet.</li>}
           </ul>
         </Field>
       )}
 
       {agent && chain && (
         <>
-          <p className="osheet-info">
-            <Info width={20} height={20} />
-            <span>Top-ups aren't available on Base Sepolia. Fund {agent.name}'s address with test USDC instead (a Base Sepolia faucet works).</span>
-          </p>
+          <p className="muted">Top-ups aren't available on Base Sepolia. Fund {agent.name}'s address with test USDC instead (a Base Sepolia faucet works).</p>
           <details className="osheet-details">
             <summary>Address to fund</summary>
             <CopyField value={agent.address} label={`${agent.name} address`} />
@@ -252,24 +231,28 @@ export function AddMoneySheet({ adapter, offline = false, embed, agentName, show
       )}
 
       {agent && !chain && linked && bank && (
-        <div className="bank-source" title="Capital One's Nessie sandbox: sandbox accounts and money">
-          <BankTile />
-          <span className="bank-source-text">
-            <strong>{sourceLine(bank)}</strong>
-            <span className="muted">To {agent.name}'s allowance account · Nessie sandbox</span>
-          </span>
-        </div>
+        <Field label="From">
+          <ul className="ln-group">
+            <li className="grow" title={SANDBOX_NOTE}>
+              <BankTile size="xs" />
+              <span className="grow-main">
+                <span className="grow-title">Capital One Checking {masked(bank.checkingLast4)}</span>
+              </span>
+              {bank.checkingBalance !== undefined && (
+                <span className="grow-meta">
+                  <span className="grow-amt">{money(bank.checkingBalance)}</span> available
+                </span>
+              )}
+            </li>
+          </ul>
+        </Field>
       )}
 
       {agent && !chain && (
         <Field
           label="Amount"
-          aside={<span className="test-badge">{linked ? "Sandbox money" : "Test money"}</span>}
-          hint={
-            linked
-              ? "Capital One moves the dollars first, then the same amount is added as test USDC. Up to $1,000 at a time."
-              : "Test USDC minted on the mock ledger, up to $1,000 at a time. Nothing real is charged."
-          }
+          aside="Up to $1,000"
+          hint={linked ? "Sandbox money: Capital One moves it from Checking, then the same amount is added as test USDC." : "Test USDC on the mock ledger. Nothing real is charged."}
         >
           <AmountPicker
             id="am-amount"
@@ -291,7 +274,7 @@ export function AddMoneySheet({ adapter, offline = false, embed, agentName, show
               That's more than Checking has ({money(bank!.checkingBalance)}).
             </p>
           )}
-          {agent.frozen && <p className="muted frozen-note">{agent.name} is frozen. Money you add stays put until you unfreeze it.</p>}
+          {agent.frozen && <p className="muted">{agent.name} is frozen. Money you add stays put until you unfreeze it.</p>}
           {showDetails && <code className="muted">{shortHex(agent.address, 8, 6)}</code>}
         </Field>
       )}

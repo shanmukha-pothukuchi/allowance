@@ -51,7 +51,7 @@ describe("Shopify stores in the MCP tools (ARCHITECTURE §15.4)", () => {
     expect(props.shopify_store_url.description).toMatch(/Never a store admin link/);
     expect(props.max_price.description).toMatch(/Defaults to your max per payment/);
     expect(tool.inputSchema.required).toEqual(["reason"]);
-    expect(tool.description).toMatch(/To shop at any Shopify store, pass its link as shopify_store_url/);
+    expect(tool.description).toMatch(/To shop at any Shopify store, pass its link as url \(shopify_store_url still works too/);
   });
 
   it("a new store by its own address: the owner is asked to add it, then the agent finds it, reads its docs and shops (simulated order)", async () => {

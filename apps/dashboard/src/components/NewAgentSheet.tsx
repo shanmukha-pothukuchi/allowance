@@ -3,10 +3,11 @@
  * wallet (owner key via the dashboard proxy), then hands its token to the chat server. The token
  * lives only in this component's state, and only when the chat could not take it.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { HttpError, type WalletAdapter } from "../api/adapter";
 import { isShopifyGrant, money, toCents } from "../format";
 import { DIRECTORY_ID } from "../services";
+import { capLabel } from "../shopify";
 import {
   amountInput,
   chatLinkFor,
@@ -31,8 +32,8 @@ import {
 } from "../sheets";
 import type { AgentPublic, DirectoryService, SummaryResponse } from "../types";
 import { AgentAvatar, ServiceTile } from "./Avatar";
-import { ArrowOut, Check, Cross, Info, Plus, Warn } from "./Icons";
-import { AmountPicker, CopyField, CUSTOM, Field, SheetShell } from "./SheetParts";
+import { ArrowOut, Check, Cross, Warn } from "./Icons";
+import { AmountPicker, CopyField, CUSTOM, Facts, Field, SheetShell } from "./SheetParts";
 
 type Phase = "form" | "creating" | "registering" | "done";
 
@@ -201,16 +202,10 @@ export function NewAgentSheet({ adapter, offline = false, embed, chatUrl, knownN
 
   const head = (
     <div className="osheet-title">
-      {name ? (
-        <AgentAvatar name={result?.agent.name ?? name} size="xl" />
-      ) : (
-        <span className="avatar avatar-xl avatar-empty" aria-hidden>
-          <Plus width={22} height={22} />
-        </span>
-      )}
+      {(result || name) && <AgentAvatar name={result?.agent.name ?? name} size="sm" />}
       <div className="osheet-titles">
         <h2 className="osheet-name">{result ? result.agent.name : name || "New agent"}</h2>
-        <p className="muted">{result ? "New agent" : "Its own wallet, limits and services"}</p>
+        <p className="osheet-sub">{result ? "New agent" : "Its own wallet, limits and services"}</p>
       </div>
     </div>
   );
@@ -221,15 +216,15 @@ export function NewAgentSheet({ adapter, offline = false, embed, chatUrl, knownN
     const ready = chat.ok;
     const footer = ready ? (
       embed ? (
-        <button type="button" className="btn btn-primary btn-big" onClick={onClose}>
+        <button type="button" className="btn btn-primary" onClick={onClose}>
           Start chatting with {agent.name}
         </button>
       ) : (
         <>
-          <button type="button" className="btn btn-big" onClick={onClose}>
+          <button type="button" className="btn" onClick={onClose}>
             Done
           </button>
-          <a className="btn btn-primary btn-big" href={chatLinkFor(chatUrl, agent.name)} target="_blank" rel="noopener noreferrer">
+          <a className="btn btn-primary" href={chatLinkFor(chatUrl, agent.name)} target="_blank" rel="noopener noreferrer">
             Open chat <ArrowOut width={18} height={18} />
           </a>
         </>
@@ -237,7 +232,7 @@ export function NewAgentSheet({ adapter, offline = false, embed, chatUrl, knownN
     ) : (
       <button
         type="button"
-        className="btn btn-primary btn-big"
+        className="btn btn-primary"
         onClick={() => {
           onReady?.(agent.name);
           onClose();
@@ -248,25 +243,35 @@ export function NewAgentSheet({ adapter, offline = false, embed, chatUrl, knownN
     );
     return (
       <SheetShell embed={embed} label={`${agent.name} created`} head={head} footer={footer} locked={!!token} onClose={onClose}>
-        <div className="created" role="status">
-          <AgentAvatar name={agent.name} size="xl" badge={<Check width={14} height={14} />} />
-          <h3 className="created-title">{ready ? `${agent.name} is ready` : `${agent.name} is created`}</h3>
-          <p className="created-balance">
-            <span className="created-amount">{money(agent.balance)}</span>
-            <span className="muted">{chain ? "on Base Sepolia" : "test money"}</span>
-          </p>
-          <p className="muted created-limits">{limitsLine(limits)}</p>
-          {agent.services.length > 0 && (
-            <div className="created-services" aria-label="Connected services">
-              {agent.services.map((s) => (
-                <span key={s.id} className="created-service">
-                  <ServiceTile name={s.name} color={s.color} size="sm" shopify={isShopifyGrant(s)} /> {s.name}
-                </span>
-              ))}
-            </div>
-          )}
-          {ready && <p className="created-note">{embed ? "It's in your chat list now." : "The chat server is hosting it. Say hello."}</p>}
+        <div className="done-line" role="status">
+          <span className="done-check" aria-hidden>
+            <Check width={14} height={14} />
+          </span>
+          <div>
+            <h3 className="done-title">{ready ? `${agent.name} is ready` : `${agent.name} is created`}</h3>
+            {ready && <p className="osheet-sub">{embed ? "It's in your chat list now." : "The chat server is hosting it. Say hello."}</p>}
+          </div>
         </div>
+        <Facts
+          rows={[
+            ["Balance", <span className="facts-num">{money(agent.balance)} <span className="muted">{chain ? "on Base Sepolia" : "test money"}</span></span>],
+            ["Limits", limitsLine(limits)],
+            ...(agent.services.length > 0
+              ? ([
+                  [
+                    "Services",
+                    <span className="facts-tiles">
+                      {agent.services.map((s) => (
+                        <span key={s.id} className="facts-tile">
+                          <ServiceTile name={s.name} color={s.color} size="xs" shopify={isShopifyGrant(s)} /> {s.name}
+                        </span>
+                      ))}
+                    </span>,
+                  ],
+                ] as [string, ReactNode][])
+              : []),
+          ]}
+        />
         {chain && (
           <details className="osheet-details">
             <summary>Fund it with test USDC</summary>
@@ -300,10 +305,10 @@ export function NewAgentSheet({ adapter, offline = false, embed, chatUrl, knownN
           {formError}
         </p>
       )}
-      <button type="button" className="btn btn-big" onClick={onClose} disabled={busy}>
+      <button type="button" className="btn" onClick={onClose} disabled={busy}>
         Cancel
       </button>
-      <button type="button" className="btn btn-primary btn-big" onClick={() => void submit()} disabled={busy || !adapter}>
+      <button type="button" className="btn btn-primary" onClick={() => void submit()} disabled={busy || !adapter}>
         {createLabel}
       </button>
     </>
@@ -326,23 +331,18 @@ export function NewAgentSheet({ adapter, offline = false, embed, chatUrl, knownN
           spellCheck={false}
           maxLength={40}
           aria-invalid={nameState === "bad"}
-          aria-describedby="na-name-status na-name-rule"
+          aria-describedby="na-name-status"
           onChange={(e) => setName(normalizeNameInput(e.target.value))}
           onKeyDown={(e) => e.key === "Enter" && void submit()}
         />
         <p id="na-name-status" className={`name-status name-${nameState}`} aria-live="polite">
-          {nameState === "ok" && <Check width={16} height={16} />}
-          {nameState === "bad" && <Cross width={16} height={16} />}
-          {nameState === "idle" ? "Pick a short name you'd say out loud." : nameCheck.message}
+          {nameState === "ok" && <Check width={14} height={14} />}
+          {nameState === "bad" && <Cross width={14} height={14} />}
+          {nameState === "idle" ? NAME_RULE : nameCheck.message}
         </p>
-        {!(nameState === "bad" && nameCheck.message === NAME_RULE) && (
-          <p id="na-name-rule" className="ofield-hint">
-            {NAME_RULE}
-          </p>
-        )}
       </Field>
 
-      <Field label="What it's for" htmlFor="na-purpose" aside={<span className={purpose.length > MAX_PURPOSE - 60 ? "count-near" : ""}>{purpose.length}/{MAX_PURPOSE}</span>} hint="A sentence or two. It becomes the agent's role in its instructions.">
+      <Field label="What it's for" htmlFor="na-purpose" aside={<span className={purpose.length > MAX_PURPOSE - 60 ? "count-near" : ""}>{purpose.length}/{MAX_PURPOSE}</span>} hint="It becomes the agent's role in its instructions.">
         <textarea
           id="na-purpose"
           className="text-input purpose-input"
@@ -354,11 +354,9 @@ export function NewAgentSheet({ adapter, offline = false, embed, chatUrl, knownN
         />
       </Field>
 
-      <Field label="Starting money" aside={!chain && <span className="test-badge">Test money</span>}>
+      <Field label="Starting money" aside={!chain && "Up to $1,000"}>
         {chain ? (
-          <p className="osheet-info">
-            <Info width={20} height={20} /> <span>On Base Sepolia nothing is minted. Fund its address with test USDC after you create it.</span>
-          </p>
+          <p className="muted">On Base Sepolia nothing is minted. Fund its address with test USDC after you create it.</p>
         ) : (
           <div ref={startRef}>
             <AmountPicker
@@ -370,34 +368,20 @@ export function NewAgentSheet({ adapter, offline = false, embed, chatUrl, knownN
               onChoice={setStartChoice}
               onCustom={setStartCustom}
             />
-            <p className="ofield-hint">Test USDC on the mock ledger, up to $1,000. Nothing real is charged.</p>
+            <p className="ofield-hint">Test USDC on the mock ledger. Nothing real is charged.</p>
           </div>
         )}
       </Field>
 
       <Field label="Limits">
-        <div className="preset-grid" role="radiogroup" aria-label="Limits preset">
+        <div className="seg preset-seg" role="radiogroup" aria-label="Limits preset">
           {LIMIT_PRESETS.map((p) => (
-            <button key={p.id} type="button" role="radio" aria-checked={preset === p.id} className={`preset-card${preset === p.id ? " preset-on" : ""}`} onClick={() => pickPreset(p.id)}>
-              <span className="preset-name">{p.label}</span>
-              <span className="preset-nums">
-                {limitsLine(p.limits)
-                  .split(" · ")
-                  .map((part) => (
-                    <span key={part}>{part}</span>
-                  ))}
-              </span>
-              <span className="preset-blurb">{p.blurb}</span>
+            <button key={p.id} type="button" role="radio" aria-checked={preset === p.id} className={preset === p.id ? "seg-on" : ""} title={`${p.blurb}: ${limitsLine(p.limits)}`} onClick={() => pickPreset(p.id)}>
+              {p.label}
             </button>
           ))}
-          <button type="button" role="radio" aria-checked={preset === "custom"} className={`preset-card${preset === "custom" ? " preset-on" : ""}`} onClick={() => pickPreset("custom")}>
-            <span className="preset-name">Custom</span>
-            <span className="preset-nums">
-              {(preset === "custom" && limitsCheck.ok ? limitsLine(limitsCheck.limits).split(" · ") : ["Your own", "numbers"]).map((part) => (
-                <span key={part}>{part}</span>
-              ))}
-            </span>
-            <span className="preset-blurb">Edit below</span>
+          <button type="button" role="radio" aria-checked={preset === "custom"} className={preset === "custom" ? "seg-on" : ""} onClick={() => pickPreset("custom")}>
+            Custom
           </button>
         </div>
         <div className="limit-inputs" ref={limitsRef}>
@@ -415,15 +399,15 @@ export function NewAgentSheet({ adapter, offline = false, embed, chatUrl, knownN
             );
           })}
         </div>
-        {limitsCheck.ok && <p className="limits-meaning">{limitsMeaning(limitsCheck.limits)}</p>}
+        {limitsCheck.ok && <p className="ofield-hint">{limitsMeaning(limitsCheck.limits)}</p>}
       </Field>
 
-      <Field label="Services to connect now" hint="It can ask you for more services later, and you approve each one.">
+      <Field label="Services" hint="It can ask you for more later; you approve each one.">
         {dirError && (
-          <p className="osheet-info osheet-warn">
-            <Warn width={20} height={20} /> <span>{dirError}</span>
+          <p className="osheet-row-action osheet-row-warn">
+            <Warn width={14} height={14} /> <span>{dirError}</span>
             {adapter && (
-              <button type="button" className="btn" onClick={() => void loadDirectory(adapter)}>
+              <button type="button" className="btn btn-sm" onClick={() => void loadDirectory(adapter)}>
                 Retry
               </button>
             )}
@@ -431,34 +415,28 @@ export function NewAgentSheet({ adapter, offline = false, embed, chatUrl, knownN
         )}
         {!directory && !dirError && <p className="muted">Loading services…</p>}
         {directory && (
-          <ul className="svc-picks">
+          <ul className="ln-group svc-picks">
             <li>
-              <label className="svc-pick svc-pick-on svc-pick-locked" title="Every agent always has the directory">
+              <label className="grow pick pick-locked" title="Every agent always has the directory">
+                <ServiceTile name={dirEntry?.name ?? "Service Directory"} color={dirEntry?.color ?? "#5B7CFA"} size="xs" />
+                <span className="grow-main">
+                  <span className="grow-title">{dirEntry?.name ?? "Service Directory"}</span>
+                </span>
+                <span className="grow-meta">Always included</span>
                 <input type="checkbox" checked disabled readOnly />
-                <ServiceTile name={dirEntry?.name ?? "Service Directory"} color={dirEntry?.color ?? "#5B7CFA"} size="sm" />
-                <span className="svc-pick-text">
-                  <strong>{dirEntry?.name ?? "Service Directory"}</strong>
-                  <small>Always included</small>
-                </span>
-                <span className="svc-pick-tick" aria-hidden>
-                  <Check width={16} height={16} />
-                </span>
               </label>
             </li>
             {pickable.map((s) => {
               const on = selected.includes(s.id);
               return (
                 <li key={s.id}>
-                  <label className={`svc-pick${on ? " svc-pick-on" : ""}`} title={s.summary}>
+                  <label className={`grow pick${on ? " pick-on" : ""}`} title={s.summary}>
+                    <ServiceTile name={s.name} color={s.color} size="xs" shopify={isShopifyGrant(s)} />
+                    <span className="grow-main">
+                      <span className="grow-title">{s.name}</span>
+                    </span>
+                    <span className="grow-meta">{isShopifyGrant(s) ? capLabel(s.maxPrice) : s.pricing}</span>
                     <input type="checkbox" checked={on} onChange={() => toggleService(s.id)} />
-                    <ServiceTile name={s.name} color={s.color} size="sm" shopify={isShopifyGrant(s)} />
-                    <span className="svc-pick-text">
-                      <strong>{s.name}</strong>
-                      <small>{s.pricing}</small>
-                    </span>
-                    <span className="svc-pick-tick" aria-hidden>
-                      <Check width={16} height={16} />
-                    </span>
                   </label>
                 </li>
               );

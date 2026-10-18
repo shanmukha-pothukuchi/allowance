@@ -14,17 +14,22 @@ export { AGENT_NAME_RE, MAX_TOPUP };
 // ---------------------------------------------------------------------------- routes
 
 /** The sheets the chat can embed (§14.3, §16.5 bank); their ids ride on the postMessage contract. */
-export type SheetId = "new-agent" | "add-money" | "bank";
-export type EmbedSheetRoute = { sheet: "new-agent" } | { sheet: "add-money"; agent?: string } | { sheet: "bank" };
-/** Plus "Add a Shopify store" (§15.5) and an agent's detail (§16.5), which live on the dashboard only. */
-export type SheetRoute = EmbedSheetRoute | { sheet: "add-shopify" } | { sheet: "agent"; agent: string };
+export type SheetId = "new-agent" | "add-money" | "bank" | "add-service";
+export type EmbedSheetRoute = { sheet: "new-agent" } | { sheet: "add-money"; agent?: string } | { sheet: "bank" } | { sheet: "add-service"; agent?: string };
+/** Plus an agent's detail (§16.5), which lives on the dashboard only. */
+export type SheetRoute = EmbedSheetRoute | { sheet: "agent"; agent: string };
 
-/** `?sheet=new-agent` / `add-money&agent=<name>` / `add-shopify` / `bank` / `agent&agent=<name>` → the sheet to show, else null. */
+/**
+ * `?sheet=new-agent` / `add-money&agent=<name>` / `add-service` / `bank` / `agent&agent=<name>` → the
+ * sheet to show, else null. The old `add-shopify` link opens "Add service" (stores are services, §18).
+ */
 export function sheetFromSearch(search: string): SheetRoute | null {
   const p = new URLSearchParams(search);
   const sheet = p.get("sheet");
-  if (sheet === "new-agent" || sheet === "add-shopify" || sheet === "bank") return { sheet };
   const agent = p.get("agent")?.trim();
+  // `&agent=` preselects that agent in the Connect step (the chat opens it for one agent).
+  if (sheet === "add-shopify" || sheet === "add-service") return agent ? { sheet: "add-service", agent } : { sheet: "add-service" };
+  if (sheet === "new-agent" || sheet === "bank") return { sheet };
   if (sheet === "add-money") return agent ? { sheet, agent } : { sheet };
   if (sheet === "agent" && agent) return { sheet, agent };
   return null;
@@ -35,11 +40,11 @@ export function embedRequested(search: string): boolean {
   return e === "1" || e === "true";
 }
 
-/** `?sheet=…&embed=1` → the sheet to render alone for the chat, else null (add-shopify and agent are dashboard-only). */
+/** `?sheet=…&embed=1` → the sheet to render alone for the chat, else null (an agent's detail is dashboard-only). */
 export function embedSheet(search: string): EmbedSheetRoute | null {
   if (!embedRequested(search)) return null;
   const r = sheetFromSearch(search);
-  return r && r.sheet !== "add-shopify" && r.sheet !== "agent" ? r : null;
+  return r && r.sheet !== "agent" ? r : null;
 }
 
 /** The query string with the sheet params set (or removed), keeping everything else (mock, theme). */
@@ -49,7 +54,7 @@ export function withSheet(search: string, route: SheetRoute | null): string {
   p.delete("agent");
   if (route) {
     p.set("sheet", route.sheet);
-    if ((route.sheet === "add-money" || route.sheet === "agent") && route.agent) p.set("agent", route.agent);
+    if ((route.sheet === "add-money" || route.sheet === "agent" || route.sheet === "add-service") && route.agent) p.set("agent", route.agent);
   }
   const s = p.toString();
   return s ? `?${s}` : "";
@@ -326,13 +331,20 @@ export interface SheetCloseMessage {
   type: "allowance:sheet-close";
   sheet: SheetId;
 }
-export type SheetMessage = SheetSizeMessage | AgentCreatedMessage | MoneyAddedMessage | SheetCloseMessage;
+/** "Add service" finished in the chat (§18): what was connected, by name. Then `sheet-close`. */
+export interface ServiceAddedMessage {
+  type: "allowance:service-added";
+  serviceId: string;
+  name: string;
+}
+export type SheetMessage = SheetSizeMessage | AgentCreatedMessage | MoneyAddedMessage | SheetCloseMessage | ServiceAddedMessage;
 
 // Builders take only the fields the contract names, so a token can never ride along.
 export const sheetSizeMessage = (sheet: SheetId, height: number): SheetSizeMessage => ({ type: "allowance:sheet-size", sheet, height: Math.ceil(height) });
 export const agentCreatedMessage = (name: string): AgentCreatedMessage => ({ type: "allowance:agent-created", name });
 export const moneyAddedMessage = (name: string, amount: string): MoneyAddedMessage => ({ type: "allowance:money-added", name, amount });
 export const sheetCloseMessage = (sheet: SheetId): SheetCloseMessage => ({ type: "allowance:sheet-close", sheet });
+export const serviceAddedMessage = (serviceId: string, name: string): ServiceAddedMessage => ({ type: "allowance:service-added", serviceId, name });
 
 /** Post one sheet message to the parent window, at its real origin if allowed, else the chat's. */
 export function postSheetMessage(msg: SheetMessage, chatUrl: string) {

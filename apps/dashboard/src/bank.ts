@@ -83,6 +83,29 @@ export function bankMarker(r: Pick<Receipt, "status" | "bank"> | undefined | nul
   return null;
 }
 
+/**
+ * What the bank has to do with a receipt, in words (§16.3). The agent pays (and earns) in USDC;
+ * the Capital One entry is a copy posted to its allowance account's statement. Top-ups are the
+ * one flow where the bank is the source: dollars leave checking, then the wallet credits the same
+ * amount in test USDC. `line` is the visible text in detail views, `title` the tooltip everywhere.
+ */
+export function bankNote(r: Pick<Receipt, "kind" | "agentName" | "bank">, checkingLast4?: string): { line: string; title: string } | null {
+  const b = r.bank;
+  if (!b) return null;
+  if (r.kind === "topup") {
+    const from = `From ${PROVIDER} Checking${masked(checkingLast4) ? ` ${masked(checkingLast4)}` : ""}`;
+    const state = b.status === "queued" ? " · moving…" : b.status === "failed" ? " · not on statement" : "";
+    return { line: `${from}${state}`, title: `${from}: the dollars leave checking and the wallet credits the same amount in test USDC (Nessie sandbox)` };
+  }
+  const how = r.kind === "earn" ? "Earned in USDC" : "Paid in USDC";
+  const acct = masked(b.account);
+  const stmt = `${PROVIDER} statement${acct ? ` ${acct}` : ""}`;
+  const whose = `${r.agentName}'s ${stmt}`;
+  if (b.status === "posted") return { line: `${how} · on ${stmt}`, title: `${how} · also on ${whose} (Nessie sandbox)` };
+  if (b.status === "queued") return { line: `${how} · posting to ${stmt}`, title: `${how} · a copy is posting to ${whose} (Nessie sandbox)` };
+  return { line: `${how} · not on ${stmt}`, title: `${how} · the copy didn't reach ${whose}${b.error ? `: ${b.error}` : ""}` };
+}
+
 /** Feed rows that carry a marker: one per payment (the settled row, not its "is paying" or approval rows). */
 const MARKED_EVENTS = new Set(["payment.settled", "earning.received", "topup", "transfer.sent", "payment.blocked", "approval.denied"]);
 export function feedMarker(e: Pick<WalletEvent, "type" | "receipt">, linked: boolean): BankMarker | null {

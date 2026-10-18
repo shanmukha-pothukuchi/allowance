@@ -166,3 +166,40 @@ export function withProposals(entries: CatalogEntry[], approvals: Approval[], ag
   }
   return [...entries, ...extra.values()];
 }
+
+// ---------------------------------------------------------------------------- Add service (§18)
+
+/**
+ * The one input of "Add service" takes a search or a link. It is a link when it has no spaces and
+ * looks like an address: a scheme, `localhost`, or a dotted host ("allbirds.com", "x.myshopify.com/products/a").
+ */
+export function looksLikeLink(raw: string): boolean {
+  const s = raw.trim();
+  if (!s || /\s/.test(s)) return false;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return true;
+  return /^(localhost|[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}|\d{1,3}(\.\d{1,3}){3})(:\d+)?([/?#].*)?$/i.test(s);
+}
+
+/** The wallet's §18 answers for a link, in owner words. Its own message wins when it has one. */
+export function serviceLinkError(err: { status?: number; code?: string; message?: string } | undefined): string {
+  const code = err?.code;
+  const message = (err?.message ?? "").trim();
+  if (code === "unrecognized_service_url") {
+    return message && message !== code ? message : "That link isn't something Allowance can pay: it's not in the directory, not a Shopify store, and it doesn't ask for payment over x402.";
+  }
+  if (code === "invalid_store_url" || (!code && err?.status === 400)) return message && message !== code ? message : "That doesn't look like a link.";
+  if (code === "store_unsupported") return message || "Agents can't shop at this store.";
+  if (code === "directory_unavailable") return message && message !== code ? message : "The service directory isn't answering. Try again in a moment.";
+  if (err?.status === 502 || err?.status === 503 || err?.status === 504) return "The wallet couldn't reach that link. Try again in a moment.";
+  return message || "Something went wrong. Try again.";
+}
+
+/** An x402 API's cap: at least what it asks for (the challenge amount), at most $1,000. */
+export function checkApiCap(raw: string, asks: string | undefined): { ok: true; amount: string } | { ok: false; message: string } {
+  const s = raw.trim().replace(/^\$/, "");
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return { ok: false, message: "A dollar amount, like 0.10." };
+  const cents = toCents(s);
+  if (cents < toCents(asks)) return { ok: false, message: `At least ${money(asks)}, what it asks for.` };
+  if (cents > 100_000) return { ok: false, message: "At most $1,000.00." };
+  return { ok: true, amount: (cents / 100).toFixed(2) };
+}
