@@ -10,8 +10,8 @@ import { buildCatalog, searchCatalog, withoutDocs } from "./catalog.js";
 import { DirectoryExtras } from "./extra.js";
 import { asShopifyStore, parseShopifyCap, shopifyManifest, shopifyServiceId, storefrontHost, SHOPIFY_DEFAULT_MAX_PRICE } from "./shopify.js";
 
-/** merchantUrl/directoryUrl/quantcommBridgeUrl build the catalog. dataDir persists added stores (memory only without it). */
-export type DirectoryConfig = Pick<AppConfig, "merchantUrl" | "directoryUrl"> & Partial<Pick<AppConfig, "dataDir" | "shopifyBridgeUrl" | "quantcommBridgeUrl" | "ownerApiKey">>;
+/** merchantUrl/directoryUrl/quantcommBridgeUrl/brokerageUrl build the catalog. dataDir persists added stores (memory only without it). */
+export type DirectoryConfig = Pick<AppConfig, "merchantUrl" | "directoryUrl"> & Partial<Pick<AppConfig, "dataDir" | "shopifyBridgeUrl" | "quantcommBridgeUrl" | "brokerageUrl" | "ownerApiKey">>;
 
 export interface DirectoryDeps {
   /** fetch used to call the Shopify bridge (tests). */
@@ -39,7 +39,7 @@ class HttpError extends Error {
 }
 
 export function createDirectoryApp(config: DirectoryConfig, deps: DirectoryDeps = {}): DirectoryApp {
-  const catalog = buildCatalog({ merchantUrl: config.merchantUrl, directoryUrl: config.directoryUrl, quantcommBridgeUrl: config.quantcommBridgeUrl });
+  const catalog = buildCatalog({ merchantUrl: config.merchantUrl, directoryUrl: config.directoryUrl, quantcommBridgeUrl: config.quantcommBridgeUrl, brokerageUrl: config.brokerageUrl });
   const builtIn = new Set(catalog.map((s) => s.id));
   const bridgeUrl = (config.shopifyBridgeUrl || DEFAULT_BRIDGE_URL).replace(/\/+$/, "");
   const doFetch = deps.fetch ?? fetch;
@@ -213,7 +213,7 @@ function safeColor(c: string): string {
   return /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(c) ? c : "#8A8F98";
 }
 
-const CATEGORY_LABEL: Record<string, string> = { data: "Data", shopping: "Shopping", work: "Work", tools: "Tools" };
+const CATEGORY_LABEL: Record<string, string> = { data: "Data", shopping: "Shopping", work: "Work", tools: "Tools", finance: "Finance" };
 
 /**
  * The row's one-line summary. The price sits on the right of the row, so a price the summary
