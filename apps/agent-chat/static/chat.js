@@ -2395,14 +2395,15 @@
   function portfolioCard(p, key) {
     var pos = p.positions.slice().sort(function (a, b) { return (dollarsOf(b.value) || 0) - (dollarsOf(a.value) || 0); });
     var row = function (x) {
-      return cdLine("<b>" + esc(x.ticker) + "</b> " + '<span class="muted">' + esc(sharesText(x.shares)) + " sh · " + esc(x.price) + "</span>", esc(x.value) + " " + pnlHtml(x.pnl, x.pct));
+      return cdLine("<b>" + esc(x.ticker) + "</b> " + '<span class="muted">' + esc(sharesText(x.shares)) + ' sh<span class="wide"> · ' + esc(x.price) + "</span></span>", esc(x.value) + " " + pnlHtml(x.pnl, x.pct));
     };
     var realized = p.realized && Math.round((dollarsOf(p.realized) || 0) * 100) !== 0;
     var meta = [p.pnl ? pnlHtml(p.pnl, p.pct) + " unrealized" : "", realized ? pnlHtml(p.realized) + " realized" : ""].filter(Boolean).join(" · ");
     var more =
       (pos.length > 3 ? '<div class="pf-more">' + pos.slice(3).map(row).join("") + "</div>" : "") +
       (pos.length ? '<p class="cd-note">' + icon("info") + "<span>" + esc(pos.map(function (x) { return x.ticker + " cost " + x.cost; }).join(" · ")) + (p.invested ? esc(" · " + p.invested + " invested") : "") + "</span></p>" : "") +
-      '<p class="cd-note">' + icon("info") + "<span>" + esc(p.note) + " · cash is the wallet balance</span></p>";
+      // The foot already says "Paper trading": Details says the rest of the honest line once.
+      '<p class="cd-note">' + icon("info") + "<span>" + esc(cap(p.note.replace(/^Paper trading · /, ""))) + " · cash is the wallet balance</span></p>";
     return cardHtml({
       cls: "pf",
       tile: '<span class="cd-mark tk">' + icon("chart") + "</span>",
@@ -2412,7 +2413,7 @@
       more: more,
       key: key,
       open: !!ui.openMore[key],
-      foot: '<span title="' + esc(p.note) + '">Paper trading' + (p.day ? " · replay date " + esc(p.day) : "") + "</span>",
+      foot: '<span title="' + esc(p.note) + '">Paper trading' + (p.day ? ' · <span class="wide">replay date </span>' + esc(p.day) : "") + "</span>",
     });
   }
   /** "Watching COF ≥ $210 · fires once", "Reminder at 2:35 PM · fires once", "Every hour": from the call, as set. */

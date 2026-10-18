@@ -477,6 +477,8 @@ button.chip-s:hover { color: var(--text); }
 .card.pf .cd-lt .muted { margin-left: 4px; }
 .pf-more { padding-top: 8px; display: flex; flex-direction: column; gap: 2px; }
 .cd-more > .cd-note:first-child { margin-top: 8px; }
+/* narrow cards keep the figures and drop the words around them, instead of ellipsizing (rule 9) */
+@media (max-width: 480px) { .card.pf .wide { display: none; } }
 .shop-prod .cd-t { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
 .tile {
