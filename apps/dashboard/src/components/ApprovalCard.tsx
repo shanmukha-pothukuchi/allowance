@@ -4,9 +4,10 @@
  */
 import { approvalOutcomeLabel, counterpartyName, isCustomGrant, isServiceApproval, money, relativeTime, shortHex, shortOrigin } from "../format";
 import { priceCapLabel } from "../services";
+import { capLabel, shopifyRefOf, storefrontHost } from "../shopify";
 import type { Approval } from "../types";
 import { AgentAvatar, ServiceTile } from "./Avatar";
-import { Check, Cross, Warn } from "./Icons";
+import { Check, Cross, Info, ShoppingBag, Warn } from "./Icons";
 
 interface Props {
   approval: Approval;
@@ -22,8 +23,18 @@ interface Props {
 export function ApprovalCard({ approval: a, now, busy = false, showDetails = false, variant = "panel", onApprove, onDeny }: Props) {
   const service = isServiceApproval(a) ? a.service : undefined;
   const custom = isCustomGrant(service);
+  const shop = shopifyRefOf(service);
+  // An agent asked for a store that is not in the directory yet (§15.3): approving adds it.
+  const proposedStore = !!shop && service?.source === "agent";
   const pending = a.status === "pending";
-  const cls = ["approval-card", `approval-${variant}`, service ? "approval-service" : "approval-payment", custom ? "approval-custom" : "", pending ? "" : `approval-done approval-${a.status}`]
+  const cls = [
+    "approval-card",
+    `approval-${variant}`,
+    service ? "approval-service" : "approval-payment",
+    custom ? "approval-custom" : "",
+    shop ? "approval-shopify" : "",
+    pending ? "" : `approval-done approval-${a.status}`,
+  ]
     .filter(Boolean)
     .join(" ");
 
@@ -32,14 +43,48 @@ export function ApprovalCard({ approval: a, now, busy = false, showDetails = fal
       <header className="approval-head">
         <AgentAvatar name={a.agentName} size={variant === "embed" ? "sm" : "md"} />
         <p className="approval-who">
-          <strong>{a.agentName}</strong> {service ? "wants to connect" : "wants to pay"}
+          <strong>{a.agentName}</strong> {proposedStore ? "wants to add a Shopify store" : service ? "wants to connect" : "wants to pay"}
         </p>
         <time className="approval-time" dateTime={a.createdAt}>
           {relativeTime(a.createdAt, now)}
         </time>
       </header>
 
-      {service ? (
+      {service && shop ? (
+        <>
+          <div className="approval-service-row">
+            <ServiceTile name={service.name} shopify size={variant === "embed" ? "md" : "lg"} />
+            <div className="approval-service-name">
+              <span className="svc-name">{service.name}</span>
+              <span className="svc-provider shop-domain">
+                <ShoppingBag width={13} height={13} /> Shopify store · {storefrontHost(shop)}
+              </span>
+            </div>
+          </div>
+          {service.permissions.length > 0 && (
+            <ul className="perm-list" aria-label="What it can do">
+              {service.permissions.map((p) => (
+                <li key={p}>{p}</li>
+              ))}
+            </ul>
+          )}
+          <p className="price-cap">
+            <span className="stat-label">Per-order cap</span> {capLabel(service.maxPrice ?? a.amount)}
+          </p>
+          {proposedStore && pending && (
+            <p className="shop-note" role="note">
+              <Info width={16} height={16} /> <span>Not in your services yet. Approving adds it and connects it to {a.agentName}.</span>
+            </p>
+          )}
+          {a.reason && (
+            <figure className="agent-quote">
+              <figcaption>{a.agentName}'s reason, in its own words</figcaption>
+              <blockquote>{a.reason}</blockquote>
+            </figure>
+          )}
+          {showDetails && <code className="hash">{service.baseUrl}</code>}
+        </>
+      ) : service ? (
         <>
           <div className="approval-service-row">
             <ServiceTile name={service.name} color={service.color} size={variant === "embed" ? "md" : "lg"} />

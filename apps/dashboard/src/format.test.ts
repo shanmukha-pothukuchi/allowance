@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addDollars, approvalOutcomeLabel, describeEvent, fromCents, isServiceApproval, isSoftBlock, money, pctOf, relativeTime, serviceOfEvent, shortHex, signedMoney, toCents } from "./format";
+import { addDollars, approvalOutcomeLabel, describeEvent, fromCents, isCustomGrant, isServiceApproval, isShopifyGrant, isSoftBlock, money, pctOf, relativeTime, serviceOfEvent, shortHex, signedMoney, toCents } from "./format";
 import type { Receipt } from "./types";
 
 describe("money", () => {
@@ -120,6 +120,23 @@ describe("services: sentences and labels", () => {
     expect(describeEvent({ type: "service.connected", message: "", agentName: "shopper", data: { service: grant, connectedBy: "approval" } })).toBe("Acme Pizza connected to shopper.");
     expect(describeEvent({ type: "service.disconnected", message: "", agentName: "shopper", data: { serviceId: "acme-pizza", serviceName: "Acme Pizza" } })).toBe("Acme Pizza disconnected from shopper.");
   });
+  it("words Shopify store requests (§15.3): a proposed store is added, a listed one is connected", () => {
+    const shopify = { handle: "juniper-goods", domain: "juniper-goods.myshopify.com", storefrontUrl: "https://www.junipergoods.com", cardCheckout: false };
+    const store = { ...grant, id: "shopify-juniper-goods", name: "Juniper Goods", provider: "Shopify store", pricing: "Store prices · paid with your Allowance card · up to $20.00 per order", maxPrice: "20.00", source: "agent" as const, shopify };
+    // named by the storefront shoppers know, never the myshopify domain when there is one
+    expect(describeEvent({ type: "service.requested", message: "", agentName: "shopper", approval: { ...approval, service: store } })).toBe("shopper wants to add the Shopify store Juniper Goods (junipergoods.com).");
+    expect(describeEvent({ type: "service.requested", message: "", agentName: "shopper", approval: { ...approval, service: { ...store, shopify: { ...shopify, storefrontUrl: "" } } } })).toBe(
+      "shopper wants to add the Shopify store Juniper Goods (juniper-goods.myshopify.com).",
+    );
+    expect(describeEvent({ type: "service.requested", message: "", agentName: "shopper", approval: { ...approval, service: { ...store, source: "directory" } } })).toBe("shopper wants to connect Juniper Goods (up to $20.00 per order).");
+    expect(describeEvent({ type: "service.requested", message: "", agentName: "shopper", approval: { ...approval, service: { ...store, source: "directory", maxPrice: "0.00" } } })).toBe("shopper wants to connect Juniper Goods (junipergoods.com).");
+    // a store the agent asked for is not an agent-written custom service: no warning
+    expect(isCustomGrant(store)).toBe(false);
+    expect(isCustomGrant({ ...grant, source: "agent" })).toBe(true);
+    expect(isShopifyGrant({ id: "shopify-x" })).toBe(true);
+    expect(isShopifyGrant(grant)).toBe(false);
+  });
+
   it("never words a service decision as a payment", () => {
     expect(describeEvent({ type: "approval.approved", message: "", agentName: "shopper", approval: { ...approval, status: "approved" } })).toBe("Approved connecting Acme Pizza to shopper.");
     expect(describeEvent({ type: "approval.denied", message: "", agentName: "shopper", approval: { ...approval, status: "denied" } })).toBe("Denied connecting Acme Pizza to shopper.");

@@ -90,10 +90,42 @@ export interface ServiceLike {
   icon?: string;
   summary?: string;
   pricing?: string;
+  /** Shopify stores only (ARCHITECTURE §15). */
+  shopify?: ShopRef;
 }
 
-/** "- 🌤️ Acme Weather (acme-weather): Current weather for any city · $0.05 per call" */
+/** The parts of a Shopify store ref the texts use. */
+export interface ShopRef {
+  domain: string;
+  storefrontUrl?: string;
+  cardCheckout?: boolean;
+}
+
+/** "- 🌤️ Acme Weather (acme-weather): Current weather for any city · $0.05 per call" (+ " · Shopify store allbirds.com") */
 export function serviceLine(s: ServiceLike): string {
   const summary = (s.summary ?? "").replace(/\s+/g, " ").trim();
-  return `- ${s.icon ? `${s.icon} ` : ""}${s.name} (${s.id})${summary ? `: ${summary}` : ""}${s.pricing ? ` · ${s.pricing}` : ""}`;
+  return `- ${s.icon ? `${s.icon} ` : ""}${s.name} (${s.id})${summary ? `: ${summary}` : ""}${s.pricing ? ` · ${s.pricing}` : ""}${s.shopify ? ` · ${shopifyTag(s.shopify)}` : ""}`;
+}
+
+/** The storefront domain people know: "https://www.allbirds.com" → "allbirds.com" (else the myshopify address). */
+export function storefrontHost(shop: ShopRef): string {
+  try {
+    if (shop.storefrontUrl) return new URL(shop.storefrontUrl).host.replace(/^www\./, "");
+  } catch {
+    /* fall through */
+  }
+  return shop.domain;
+}
+
+/** "Shopify store allbirds.com" */
+export function shopifyTag(shop: ShopRef): string {
+  return `Shopify store ${storefrontHost(shop)}`;
+}
+
+/** How paying works at a store, for the agent, in two short sentences. */
+export function shopifyPayLine(maxPrice?: string): string {
+  return (
+    `You pay orders in USDC from your wallet${maxPrice ? ` (up to ${usd(maxPrice)} per order)` : ""}, and Allowance pays the store with a single-use Allowance card. ` +
+    "Placing the order is simulated for now: tell the user so and share the confirmation's Allowance reference."
+  );
 }

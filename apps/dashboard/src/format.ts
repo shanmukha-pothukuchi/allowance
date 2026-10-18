@@ -103,8 +103,35 @@ export function isServiceApproval(a: Pick<Approval, "kind" | "service"> | undefi
   return !!a && (a.kind === "service" || (!a.kind && !!a.service));
 }
 
-export function isCustomGrant(s: Pick<ServiceGrant, "source"> | undefined): boolean {
-  return s?.source === "agent";
+/**
+ * A Shopify store (§15): it carries `shopify`, or its id is `shopify-<handle>`. Lives here (not in
+ * shopify.ts) so the feed sentences below can use it without an import cycle.
+ */
+export function isShopifyGrant(s: { id?: string; shopify?: unknown } | undefined | null): boolean {
+  return !!s && (!!s.shopify || (typeof s.id === "string" && s.id.startsWith("shopify-")));
+}
+
+/**
+ * A store's address as its shoppers know it (§15): the storefront's host (`allbirds.com`), else its
+ * myshopify domain. Never a store admin.
+ */
+function storeAddress(s: { id?: string; shopify?: unknown } | undefined): string {
+  const shop = (s?.shopify ?? {}) as { domain?: string; storefrontUrl?: string };
+  try {
+    const host = shop.storefrontUrl ? new URL(shop.storefrontUrl).hostname.replace(/^www\./, "") : "";
+    if (host && !/(^|\.)shopify\.com$/i.test(host)) return host;
+  } catch {
+    /* not a URL: fall back to the domain */
+  }
+  return shop.domain || (s?.id?.startsWith("shopify-") ? `${s.id.slice(8)}.myshopify.com` : "");
+}
+
+/**
+ * An agent-proposed service the agent described itself (§13.2). A Shopify store an agent asked
+ * for is not one: the wallet built its manifest from the store (§15.3), so it gets no warning.
+ */
+export function isCustomGrant(s: (Pick<ServiceGrant, "source"> & { id?: string; shopify?: unknown }) | undefined): boolean {
+  return s?.source === "agent" && !isShopifyGrant(s);
 }
 
 /** The service an event is about, from whatever the event carries (approval.service, data.service, data.serviceId). */
@@ -156,6 +183,11 @@ export function describeEvent(e: Pick<WalletEvent, "type" | "message" | "agentNa
   const serviceKind = isServiceApproval(e.approval);
   switch (e.type) {
     case "service.requested":
+      if (isShopifyGrant(svc)) {
+        const where = storeAddress(svc);
+        if (svc?.source === "agent") return `${agent} wants to add the Shopify store ${svcName}${where ? ` (${where})` : ""}.`;
+        return `${agent} wants to connect ${svcName} (${toCents(svc?.maxPrice) > 0 ? `up to ${money(svc?.maxPrice)} per order` : where || "Shopify store"}).`;
+      }
       return isCustomGrant(svc)
         ? `${agent} wants to connect ${svcName}, a service it proposed${capPhrase(svc?.maxPrice)}.`
         : `${agent} wants to connect ${svcName}${capPhrase(svc?.maxPrice)}.`;

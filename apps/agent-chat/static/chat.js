@@ -147,6 +147,8 @@
   function inlineMd(h) {
     h = h.replace(/`([^`\n]+)`/g, "<code>$1</code>");
     h = h.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+    // *italic*, only as a whole word: "2 * 3" and "a*b" stay as typed.
+    h = h.replace(/(^|[\s(])\*([^*\s](?:[^*\n]*[^*\s])?)\*(?=[\s).,;:!?]|$)/g, "$1<em>$2</em>");
     h = h.replace(/(^|[\s(])(https?:\/\/[^\s<)]*[^\s<).,;:!?])/g, function (all, pre, url) {
       // The text is already escaped: end the link at an escaped quote or angle bracket.
       var cut = url.search(/&(?:quot|#39|lt|gt);/);
@@ -157,20 +159,48 @@
     });
     return h;
   }
+  // A pipe table: header row, then a separator row like |---|:---:|.
+  var TABLE_ROW = /^\s*\|.*\|\s*$/;
+  var TABLE_SEP = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+  function tableCells(l) {
+    return l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(function (c) { return inlineMd(c.trim()); });
+  }
+  function mdTable(rows) {
+    var head = tableCells(rows[0]);
+    var body = rows.slice(2).map(function (r) {
+      var cells = tableCells(r);
+      while (cells.length < head.length) cells.push("");
+      return "<tr>" + cells.slice(0, head.length).map(function (c) { return "<td>" + c + "</td>"; }).join("") + "</tr>";
+    });
+    return '<div class="md-table"><table><thead><tr>' + head.map(function (c) { return "<th>" + c + "</th>"; }).join("") +
+      "</tr></thead><tbody>" + body.join("") + "</tbody></table></div>";
+  }
   function md(s) {
-    // Blank lines split paragraphs; single newlines stay line breaks inside one.
-    return esc(str(s).replace(/\r/g, "").trim())
-      .split(/\n\s*\n/)
-      .map(function (para) {
-        return "<p>" + para.split("\n").map(function (l) {
-          var b = l.match(/^\s*[-*•]\s+(.*)$/);
-          if (b) return "•&nbsp;" + inlineMd(b[1]);
-          var hd = l.match(/^\s*#{1,6}\s+(.*)$/);
-          if (hd) return "<strong>" + inlineMd(hd[1]) + "</strong>";
-          return inlineMd(l);
-        }).join("<br>") + "</p>";
-      })
-      .join("");
+    // Blank lines split paragraphs; a markdown table is a block of its own.
+    var lines = esc(str(s).replace(/\r/g, "").trim()).split("\n");
+    var html = "";
+    var para = [];
+    var flush = function () {
+      if (para.length) html += "<p>" + para.join("<br>") + "</p>";
+      para = [];
+    };
+    for (var i = 0; i < lines.length; i++) {
+      var l = lines[i];
+      if (TABLE_ROW.test(l) && i + 1 < lines.length && TABLE_SEP.test(lines[i + 1]) && lines[i + 1].indexOf("|") >= 0) {
+        var j = i + 2;
+        while (j < lines.length && TABLE_ROW.test(lines[j])) j++;
+        flush();
+        html += mdTable(lines.slice(i, j));
+        i = j - 1;
+        continue;
+      }
+      if (!l.trim()) { flush(); continue; }
+      var b = l.match(/^\s*[-*•]\s+(.*)$/);
+      var hd = l.match(/^\s*#{1,6}\s+(.*)$/);
+      para.push(b ? "•&nbsp;" + inlineMd(b[1]) : hd ? "<strong>" + inlineMd(hd[1]) + "</strong>" : inlineMd(l));
+    }
+    flush();
+    return html;
   }
 
   // ================================================================ icons (inline SVG)
@@ -226,6 +256,8 @@
     chart: '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="m19 9-5 5-4-4-3 3"/>',
     bag: '<path d="M16 10a4 4 0 0 1-8 0"/><path d="M3.103 6.034h17.794"/><path d="M3.4 5.467a2 2 0 0 0-.4 1.2V20a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6.667a2 2 0 0 0-.4-1.2l-2-2.667A2 2 0 0 0 17 2H7a2 2 0 0 0-1.6.8z"/>',
     coins: '<path d="M13.744 17.736a6 6 0 1 1-7.48-7.48"/><path d="M15 6h1v4"/><path d="m6.134 14.768.866-.5 2 3.464"/><circle cx="16" cy="8" r="6"/>',
+    wave: '<path d="M2 12q2.5 2 5 0t5 0 5 0 5 0"/><path d="M2 19q2.5 2 5 0t5 0 5 0 5 0"/><path d="M2 5q2.5 2 5 0t5 0 5 0 5 0"/>',
+    bank: '<path d="M10 18v-7"/><path d="M11.119 2.205a2 2 0 0 1 1.762 0l7.84 3.846A.5.5 0 0 1 20.5 7h-17a.5.5 0 0 1-.22-.949z"/><path d="M14 18v-7"/><path d="M18 18v-7"/><path d="M3 22h18"/><path d="M6 18v-7"/>',
   };
   function icon(name, extra) {
     return '<svg class="i' + (extra ? " " + extra : "") + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (P[name] || P.wrench) + "</svg>";
@@ -248,6 +280,8 @@
     search: "",
     openAct: {},
     openStep: {},
+    openSim: {}, // order confirmation key -> its "Simulated order" explanation is open
+    openQc: {}, // Quantcomm analyst view key -> its reasoning and evidence are open
     holdScroll: false,
     forceBottom: false,
     stick: true, // thread pinned to the bottom (tracked from the user's own scrolling)
@@ -411,6 +445,8 @@
     "acme-stocks": { name: "Acme Stocks", icon: "📈", color: "#2F9E5B", provider: "Acme APIs", path: "/api/stock", pricing: "$0.15 per call", permissions: ["Pay up to $0.15 per call to Acme Stocks", "Look up quotes for symbols you ask about"] },
     "acme-pizza": { name: "Acme Pizza", icon: "🍕", color: "#E5523A", provider: "Acme APIs", path: "/pizza", pricing: "$18.50 per order", permissions: ["Pay up to $18.50 per order to Acme Pizza", "Place orders on your behalf"] },
     "acme-bounties": { name: "Acme Bounties", icon: "💼", color: "#9B5BFA", provider: "Acme APIs", path: "/agent-work", pricing: "Free (you earn $0.50–$0.75 per task)", permissions: ["Claim and submit Acme bounties", "Receive bounty payouts into your wallet"] },
+    // §17.2: Quantcomm's research, sold per request through its bridge (under /quantcomm on any host).
+    quantcomm: { name: "Quantcomm Flood Research", icon: "🌊", color: "#1D4ED8", provider: "Quantcomm", path: "/quantcomm", pricing: "$0.05 per flood check · $0.10 per analyst view", permissions: ["Pay up to $0.10 per request", "Read Quantcomm's flood and bank research"] },
   };
   var DEFAULT_SERVICES = { researcher: ["acme-weather", "acme-news", "acme-stocks"], shopper: [], "claude-desktop": ["acme-bounties", "acme-weather"] };
 
@@ -435,6 +471,7 @@
     var ids = {};
     Object.keys(CATALOG).forEach(function (k) { ids[k] = 1; });
     Object.keys(learned).forEach(function (k) { ids[k] = 1; });
+    Object.keys(shops).forEach(function (h) { ids["shopify-" + h] = 1; });
     state.order.forEach(function (n) { (agentSvcList(state.agents[n]) || []).forEach(function (s) { if (s && typeof s.id === "string") ids[s.id] = 1; }); });
     return Object.keys(ids);
   }
@@ -445,23 +482,33 @@
     var l = learned[id] || {};
     var w = svcFromAgents(id) || {};
     var perms = Array.isArray(w.permissions) && w.permissions.length ? w.permissions.map(str) : l.permissions && l.permissions.length ? l.permissions : base.permissions || [];
+    var shop = shopRef(id, w, l);
+    var sk = shop ? shops[shop.handle] || {} : {};
+    var pricing = str(w.pricing) || l.pricing || base.pricing || "";
+    var maxPrice = str(w.maxPrice) || str(l.maxPrice).replace(/^\$/, "").replace(/,/g, "") || sk.maxPrice || capFromPricing(pricing);
+    var name = str(w.name) || l.name || base.name || sk.name || str(hint) || (shop ? prettyId(shop.handle) : prettyId(id)) || "a service";
     return {
       id: id,
-      name: str(w.name) || l.name || base.name || str(hint) || prettyId(id) || "a service",
+      name: name,
       icon: glyph(w.icon || l.icon || base.icon, "🧩"),
-      color: safeColor(w.color, base.color || AV_FALLBACK[hash31(id) % AV_FALLBACK.length]),
-      provider: str(w.provider) || l.provider || base.provider || "",
-      permissions: perms.slice(0, 6),
-      pricing: str(w.pricing) || l.pricing || base.pricing || "",
+      color: shop ? SHOP_GREEN : safeColor(w.color, base.color || AV_FALLBACK[hash31(id) % AV_FALLBACK.length]),
+      provider: str(w.provider) || l.provider || base.provider || (shop ? "Shopify store" : ""),
+      permissions: perms.length || !shop ? perms.slice(0, 6) : shopPerms(name, maxPrice),
+      pricing: pricing,
+      maxPrice: maxPrice,
       baseUrl: str(w.baseUrl) || l.baseUrl || "",
       path: base.path || "",
+      glyph: shop ? "bag" : "",
+      shopify: shop,
     };
   }
-  var SVC_ICON = { directory: "search", "acme-weather": "cloud", "acme-news": "news", "acme-stocks": "chart", "acme-pizza": "bag", "acme-bounties": "briefcase" };
+  var SVC_ICON = { directory: "search", "acme-weather": "cloud", "acme-news": "news", "acme-stocks": "chart", "acme-pizza": "bag", "acme-bounties": "briefcase", quantcomm: "wave" };
   function tileHtml(info, cls) {
     var ic = info && (info.glyph || SVC_ICON[str(info.id)]);
     var face = ic ? icon(ic) : esc((str(info && info.name).replace(/^Acme\s+/, "")[0] || "?").toUpperCase());
-    return '<span class="tile' + (cls ? " " + cls : "") + '" style="--c:' + safeColor(info && info.color, "#6B7280") + '">' + face + "</span>";
+    // Shopify stores: a white bag on solid Shopify green, like the dashboard.
+    var shop = info && info.shopify ? " shop" : "";
+    return '<span class="tile' + shop + (cls ? " " + cls : "") + '" style="--c:' + safeColor(info && info.color, "#6B7280") + '">' + face + "</span>";
   }
   function under(url, base) {
     var b = str(base).replace(/\/+$/, "");
@@ -470,6 +517,9 @@
   function serviceForUrl(url) {
     url = str(url).trim();
     if (!url) return null;
+    // The Shopify bridge serves every store under /shops/<handle> (§15.1).
+    var sb = bridgeOf(url);
+    if (sb) return svcInfo("shopify-" + sb.handle);
     var full = /^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : "http://" + url;
     var path = "";
     try { path = new URL(full).pathname; } catch (e) { /* ignore */ }
@@ -530,9 +580,22 @@
       var rest = m[3];
       var connected = /\[connected\]\s*$/.test(rest) ? true : /\[not connected\]\s*$/.test(rest) ? false : null;
       rest = rest.replace(/\s*·\s*\[(?:not )?connected\]\s*$/, "").replace(/^:\s*/, "");
+      // Shopify stores end with " · Shopify store <domain>…" (apps/mcp format.ts shopifyTag).
+      var shopify = null;
+      var tag = rest.match(/\s*·\s*Shopify store\b(.*)$/i);
+      if (tag) {
+        rest = rest.slice(0, tag.index);
+        shopify = shopTag(m[2], tag[1]);
+      }
       var parts = rest.split(" · ");
       var pricing = parts.length > 1 ? parts.pop().trim() : "";
-      out.push({ id: m[2], name: hn.name.slice(0, 80), icon: hn.icon, summary: parts.join(" · ").trim().slice(0, 240), pricing: pricing.slice(0, 80), connected: connected });
+      // Shopify pricing has its own " · " (§15.2): "Store prices · paid with your Allowance card · up to $100.00 per order".
+      if (handleOfId(m[2]) && parts.length) {
+        var sp = rest.match(/^(.*?)(?: · |^)((?:Store prices|Varies by item|Browse only|Up to \$)[\s\S]*)$/i);
+        parts = sp ? [sp[1]] : [rest.split(" · ")[0]];
+        pricing = sp ? sp[2].trim() : rest.split(" · ").slice(1).join(" · ").trim();
+      }
+      out.push({ id: m[2], name: hn.name.slice(0, 80), icon: hn.icon, summary: parts.join(" · ").trim().slice(0, 240), pricing: pricing.slice(0, 80), connected: connected, shopify: shopify });
     });
     return out;
   }
@@ -551,6 +614,8 @@
       if (pm) { s.pricing = pm[1].slice(0, 80); s.maxPrice = pm[2]; }
       var bm = l.match(/^Base URL: (\S+)/);
       if (bm) s.baseUrl = bm[1];
+      var sh = l.match(/^Shopify store\b(.*)$/i);
+      if (sh) s.shopify = shopTag(s.id, sh[1]);
       var sm = l.match(/^Summary: (.+)/);
       if (sm) s.summary = sm[1].slice(0, 240);
       if (/^Permissions:\s*$/.test(l)) { inPerms = true; continue; }
@@ -563,12 +628,43 @@
     s.permissions = s.permissions.slice(0, 6);
     return s;
   }
+  /** Shopify facts in a service listing or doc: name, domains, cap. */
+  function learnShopService(s, text) {
+    var h = s && handleOfId(s.id);
+    if (!h) return;
+    var head = str(text).split(/\nDocs\b/)[0];
+    var dom = (head.match(/\b([a-z0-9][a-z0-9-]{0,62}\.myshopify\.com)\b/i) || [])[1];
+    var tagged = s.shopify || {};
+    learnShop(h, { name: s.name, domain: tagged.domain || dom, site: tagged.site, maxPrice: capFromPricing(s.pricing) || s.maxPrice });
+  }
   function learnFromEntry(e) {
     if (!e || e.kind !== "tool" || e.result == null) return;
     var r = str(e.result);
-    if (e.name === "list_services" || e.name === "search_services") parseServiceLines(r).forEach(mergeLearned);
-    else if (e.name === "get_service") mergeLearned(parseServiceDoc(r));
-    else if (e.name === "find_work") {
+    var c = shopCall(e);
+    if (c) {
+      // products: { store: { name, storefrontUrl, currency } }; carts and orders: { store } too (§15.1).
+      var o = c.d.order && typeof c.d.order === "object" ? c.d.order : c.d;
+      var st = o.store && typeof o.store === "object" ? o.store : { name: typeof o.store === "string" ? o.store : "" };
+      learnShop(c.b.handle, { name: st.name, currency: st.currency || c.d.currency, site: st.storefrontUrl });
+    }
+    if (e.name === "list_services" || e.name === "search_services") {
+      parseServiceLines(r).forEach(function (s) {
+        mergeLearned(s);
+        learnShopService(s, "");
+      });
+    } else if (e.name === "get_service") {
+      var doc = parseServiceDoc(r);
+      mergeLearned(doc);
+      learnShopService(doc, r);
+    } else if (e.name === "request_service" || e.name === "check_approval") {
+      var said = storeInText(r);
+      var rq = e.name === "request_service" ? storeRequest(e) : null;
+      var sh = (said && said.handle) || (rq && rq.handle) || (r.match(/service_id: "shopify-([a-z0-9][a-z0-9-]{0,62})"/) || [])[1];
+      if (sh && said) learnShop(sh, said);
+      var capm = r.match(/up to \$([\d,]+(?:\.\d+)?) per order/i);
+      if (sh && capm) learnShop(sh, { maxPrice: capm[1] });
+      if (rq && rq.handle) learnShop(rq.handle, { name: rq.named, domain: rq.link.handle === rq.handle ? rq.link.host : "", site: rq.link.handle ? "" : rq.link.host ? "https://" + rq.link.host : "" });
+    } else if (e.name === "find_work") {
       r.split("\n").forEach(function (l) {
         var m = l.match(/^\s*•\s+(\S+) — "(.{1,160}?)" — pays/);
         if (m) bountyTitles[m[1]] = m[2];
@@ -594,6 +690,984 @@
   }
   function agentHasService(a, id) {
     return !!id && agentServices(a).some(function (s) { return s.id === id; });
+  }
+
+  // ================================================================ Shopify stores (ARCHITECTURE §15)
+  // Any public Shopify store, from the shopper's side. A store is a service whose base URL is the
+  // bridge's /shops/<handle>. Agents shop with fetch_url, so the page sees the bridge's JSON (§15.1)
+  // only as tool text: "HTTP <status> <url>", a blank line, the pretty-printed body, then (when it
+  // paid) a receipt line. It is parsed here and escaped at render time like every other tool string.
+  // The only requests this adds are product images, from URLs the bridge returned, sent without a
+  // referrer. Links go to the store's public storefront only, never to a store admin.
+  var SHOP_GREEN = "#95BF47";
+  var HANDLE_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+  var DOMAIN_RE = /^[a-z0-9][a-z0-9.-]{1,252}$/;
+  /** handle -> { name, currency, domain (x.myshopify.com), site (storefront origin), maxPrice }, learned from tool results. Raw: callers esc(). */
+  var shops = {};
+  function capFromPricing(p) {
+    var m = str(p).match(/up to \$([\d,]+(?:\.\d+)?) per order/i);
+    return m ? m[1].replace(/,/g, "") : "";
+  }
+  function handleOfId(id) {
+    var m = str(id).match(/^shopify-([a-z0-9][a-z0-9-]{0,62})$/);
+    return m ? m[1] : "";
+  }
+  function myshopify(host) {
+    var m = str(host).toLowerCase().match(/^([a-z0-9][a-z0-9-]{0,62})\.myshopify\.com$/);
+    return m ? m[1] : "";
+  }
+  /** Shopify itself (admin.shopify.com, shopify.com), never a store: nothing links there. */
+  function isShopifyItself(host) {
+    return /(^|\.)shopify\.com$/i.test(str(host));
+  }
+  /** "https://www.allbirds.com/products/x" → "allbirds.com": the name a shopper knows the store by. */
+  function siteHost(u) {
+    var h = str(u).trim() ? hostOnly(u).toLowerCase().replace(/:\d+$/, "").replace(/\.$/, "").replace(/^www\./, "") : "";
+    return DOMAIN_RE.test(h) && /\.[a-z]{2,}$/.test(h) ? h : "";
+  }
+  /** A storefront URL from the wallet or the bridge, as its origin ("https://www.allbirds.com"), or "". */
+  function siteUrl(u) {
+    var s = safeUrl(str(u).trim());
+    if (!s) return "";
+    try {
+      var x = new URL(s);
+      return isShopifyItself(x.hostname) ? "" : x.origin;
+    } catch (e) {
+      return "";
+    }
+  }
+  /** A store link as an agent passes it ("allbirds.com", "https://www.allbirds.com/products/…", "x.myshopify.com") → { host, handle }. */
+  function storeLink(u) {
+    var host = siteHost(u);
+    if (isShopifyItself(host)) host = "";
+    return { host: host, handle: myshopify(host) };
+  }
+  /** Domains named in MCP text: x.myshopify.com is the store's own domain, anything else its storefront. */
+  function domainsIn(s) {
+    var out = { domain: "", handle: "", site: "" };
+    (str(s).toLowerCase().match(/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/g) || []).forEach(function (d) {
+      if (!/\.[a-z]{2,}$/.test(d) || isShopifyItself(d)) return;
+      var h = myshopify(d);
+      if (h) {
+        if (!out.handle) { out.handle = h; out.domain = d; }
+      } else if (!out.site) out.site = "https://" + d;
+    });
+    return out;
+  }
+  /** The " · Shopify store …" tag of a service line, or get_service's "Shopify store …" line (apps/mcp format.ts) → { handle, domain, site }. */
+  function shopTag(id, tag) {
+    var d = domainsIn(tag);
+    return { handle: handleOfId(id) || d.handle, domain: d.domain, site: d.site };
+  }
+  /** "the Shopify store Allbirds (allbirds.com)" in MCP text (§15.4) → { name, handle, domain, site }. */
+  function storeInText(r) {
+    r = str(r);
+    var m = r.match(/the Shopify store (.{1,80}?) \(([^()\n]{3,200})\)/i) || r.match(/^(.{1,80}?) \(Shopify store ([^()\n]{3,200})\) is already connected/i);
+    if (!m) return null;
+    var d = domainsIn(m[2]);
+    if (!d.domain && !d.site) return null;
+    return { name: m[1].trim(), handle: d.handle, domain: d.domain, site: d.site };
+  }
+  function learnShop(handle, o) {
+    if (!HANDLE_RE.test(str(handle)) || !o || typeof o !== "object") return;
+    var cur = shops[handle] || (shops[handle] = {});
+    var name = str(o.name).trim().slice(0, 80);
+    if (name) cur.name = name;
+    var ccy = str(o.currency).trim();
+    if (/^[A-Z]{3}$/.test(ccy)) cur.currency = ccy;
+    var dom = str(o.domain).trim().toLowerCase();
+    if (DOMAIN_RE.test(dom) && !isShopifyItself(dom)) cur.domain = dom;
+    var site = siteUrl(o.site);
+    if (site) cur.site = site;
+    var capv = str(o.maxPrice).replace(/^\$/, "").replace(/,/g, "");
+    if (num(capv) != null) cur.maxPrice = capv;
+  }
+  /**
+   * { handle, domain, site, host } when this service is a Shopify store (wallet data, learned, or its
+   * id), else null. `site` is the storefront to link to, `host` its domain as the shopper knows it.
+   */
+  function shopRef(id, w, l) {
+    var ref = (w && w.shopify) || (l && l.shopify);
+    ref = ref && typeof ref === "object" ? ref : null;
+    var h = ref && HANDLE_RE.test(str(ref.handle)) ? str(ref.handle) : handleOfId(id);
+    if (!h) return null;
+    var k = shops[h] || {};
+    var dom = ref ? str(ref.domain).toLowerCase() : "";
+    var domain = (DOMAIN_RE.test(dom) && !isShopifyItself(dom) ? dom : "") || k.domain || h + ".myshopify.com";
+    var site = siteUrl(ref && (ref.storefrontUrl || ref.site)) || k.site || siteUrl("https://" + domain);
+    return { handle: h, domain: domain, site: site, host: siteHost(site) || domain };
+  }
+  function shopName(handle, st) {
+    var n = st && typeof st === "object" ? str(st.name) : str(st);
+    return n.trim().slice(0, 80) || svcInfo("shopify-" + handle).name;
+  }
+
+  var BRIDGE_PATHS = [
+    [/^\/shops\/([a-z0-9][a-z0-9-]{0,62})\/products\/?$/, "products"],
+    [/^\/shops\/([a-z0-9][a-z0-9-]{0,62})\/products\/([^/]+)\/?$/, "product"],
+    [/^\/shops\/([a-z0-9][a-z0-9-]{0,62})\/carts\/?$/, "carts"],
+    [/^\/shops\/([a-z0-9][a-z0-9-]{0,62})\/carts\/([^/]+)\/checkout\/?$/, "checkout"],
+    [/^\/shops\/([a-z0-9][a-z0-9-]{0,62})\/?$/, "store"],
+  ];
+  /** A Shopify bridge URL (§15.1) → { handle, op, item, q }, else null. */
+  function bridgeOf(u) {
+    var full = str(u).trim();
+    if (!full) return null;
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(full)) full = "http://" + full;
+    var x;
+    try { x = new URL(full); } catch (e) { return null; }
+    for (var i = 0; i < BRIDGE_PATHS.length; i++) {
+      var m = x.pathname.match(BRIDGE_PATHS[i][0]);
+      if (!m) continue;
+      var item = m[2] || "";
+      try { item = decodeURIComponent(item); } catch (e) { /* keep it raw */ }
+      return { handle: m[1], op: BRIDGE_PATHS[i][1], item: item.slice(0, 120), q: str(x.searchParams.get("q")).trim().slice(0, 60) };
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------- the response body
+  /** End (exclusive) of the JSON object/array that starts at t[i], string-aware; -1 if it is cut off. */
+  function jsonEnd(t, i) {
+    var depth = 0;
+    var inStr = false;
+    var bs = false;
+    for (var k = i; k < t.length; k++) {
+      var c = t.charCodeAt(k);
+      if (inStr) {
+        if (bs) bs = false;
+        else if (c === 92) bs = true;
+        else if (c === 34) inStr = false;
+        continue;
+      }
+      if (c === 34) inStr = true;
+      else if (c === 123 || c === 91) depth++;
+      else if ((c === 125 || c === 93) && --depth === 0) return k + 1;
+    }
+    return -1;
+  }
+  function tryJson(s) {
+    try { return JSON.parse(s); } catch (e) { return undefined; }
+  }
+  /** fetch_url cuts bodies at 20,000 characters: keep the store and every product that arrived whole. */
+  function salvageProducts(t) {
+    var out = { truncated: true, products: [] };
+    var sm = t.match(/"store":\s*\{/);
+    if (sm) {
+      var si = sm.index + sm[0].length - 1;
+      var se = jsonEnd(t, si);
+      if (se > 0) out.store = tryJson(t.slice(si, se));
+    }
+    var pm = t.match(/"products":\s*\[/);
+    if (!pm) return out;
+    var k = pm.index + pm[0].length;
+    for (var guard = 0; guard < 100; guard++) {
+      while (k < t.length && /[\s,]/.test(t.charAt(k))) k++;
+      if (t.charAt(k) !== "{") break;
+      var end = jsonEnd(t, k);
+      if (end < 0) break;
+      var p = tryJson(t.slice(k, end));
+      if (p) out.products.push(p);
+      k = end;
+    }
+    return out;
+  }
+  var httpMemo = new Map();
+  /** "HTTP 200 <url>\n\n<json>…" (fetch_url, and check_approval resuming one) → { status, url, data, tail }, else null. */
+  function parseHttp(r) {
+    r = str(r);
+    if (r.slice(0, 5) !== "HTTP ") return null;
+    if (httpMemo.has(r)) return httpMemo.get(r);
+    var out = null;
+    // The URL is printed as the agent wrote it, so it may hold spaces ("?q=wool runners").
+    var m = r.match(/^HTTP (\d{3}) ([^\n]+?)\n\n/);
+    if (m) {
+      var body = r.slice(m[0].length);
+      var i = body.search(/\S/);
+      var data = null;
+      var tail = "";
+      if (i >= 0 && body.charAt(i) === "{") {
+        var end = jsonEnd(body, i);
+        if (end > 0) {
+          data = tryJson(body.slice(i, end));
+          tail = body.slice(end);
+        } else data = salvageProducts(body);
+      }
+      out = { status: Number(m[1]), url: m[2], data: data && typeof data === "object" && !Array.isArray(data) ? data : null, tail: tail };
+    }
+    if (httpMemo.size > 300) httpMemo.clear();
+    httpMemo.set(r, out);
+    return out;
+  }
+  /** A bridge response in this tool entry: { h (parseHttp), b (bridgeOf), d (body or {}) }, else null. */
+  function shopCall(e) {
+    if (!e || e.result == null || (e.name !== "fetch_url" && e.name !== "check_approval")) return null;
+    var h = parseHttp(e.result);
+    if (!h) return null;
+    var b = bridgeOf(h.url);
+    return b ? { h: h, b: b, d: h.data || {} } : null;
+  }
+
+  // ---------------------------------------------------------------- normalized shapes
+  function imgUrlOf(v) {
+    return typeof v === "string" ? v : v && typeof v === "object" ? str(v.url || v.src) : "";
+  }
+  /** A storefront page (a product, the store) to link to: http(s), and never Shopify itself (no admin links). */
+  function pageUrl(u) {
+    var s = safeUrl(str(u).trim());
+    if (!s) return "";
+    try { return isShopifyItself(new URL(s).hostname) ? "" : s; } catch (e) { return ""; }
+  }
+  function cleanProduct(p) {
+    if (!p || typeof p !== "object") return null;
+    var title = str(p.title).trim().slice(0, 140);
+    if (!title) return null;
+    var vars = (Array.isArray(p.variants) ? p.variants : []).filter(function (v) { return v && typeof v === "object"; }).slice(0, 50).map(function (v) {
+      var t = str(v.title).trim().slice(0, 60);
+      return { title: t === "Default Title" ? "" : t, price: num(v.price), available: v.available !== false };
+    });
+    var prices = vars.map(function (v) { return v.price; }).filter(function (x) { return x != null; });
+    var min = num(p.priceMin);
+    var max = num(p.priceMax);
+    if (min == null && prices.length) min = Math.min.apply(null, prices);
+    if (max == null && prices.length) max = Math.max.apply(null, prices);
+    return {
+      title: title,
+      handle: str(p.handle),
+      description: str(p.description).replace(/\s+/g, " ").trim().slice(0, 300),
+      image: imgUrlOf(p.image),
+      url: pageUrl(p.url),
+      min: min,
+      max: max,
+      available: p.available !== false && (!vars.length || vars.some(function (v) { return v.available; })),
+      variants: vars,
+    };
+  }
+  /** A cart line (§15.1) or an order item (same fields, tolerant of a few spellings). */
+  function cleanLine(x) {
+    if (!x || typeof x !== "object") return null;
+    var title = str(x.title || x.name || x.productTitle).trim().slice(0, 140);
+    if (!title) return null;
+    var vt = str(x.variantTitle || x.variant).trim().slice(0, 60);
+    var q = Math.max(1, Math.min(999, Math.round(num(x.quantity) || 1)));
+    var unit = num(x.unitPrice != null ? x.unitPrice : x.price);
+    var total = num(x.lineTotal != null ? x.lineTotal : x.total);
+    if (total == null && unit != null) total = unit * q;
+    return { title: title, variant: vt === "Default Title" ? "" : vt, qty: q, total: total, image: imgUrlOf(x.image) || str(x.imageUrl), url: pageUrl(x.url), variantId: str(x.variantId) };
+  }
+  function linesOf(arr) {
+    return (Array.isArray(arr) ? arr : []).map(cleanLine).filter(Boolean);
+  }
+  function priceLabel(min, max) {
+    if (min == null && max == null) return "";
+    if (min == null || max == null || Math.abs(max - min) < 0.005) return money(min != null ? min : max);
+    return money(min) + " – " + money(max);
+  }
+  /** Shopify's CDN resizes on request: ask for about the size we draw. Other hosts are left alone. */
+  function shopImg(u, w) {
+    u = safeUrl(str(u));
+    if (!u) return "";
+    try {
+      var x = new URL(u);
+      if (/(^|\.)cdn\.shopify\.com$/i.test(x.hostname) || /^\/cdn\/shop\//.test(x.pathname)) {
+        x.searchParams.set("width", String(w));
+        return x.href;
+      }
+    } catch (e) { /* use as is */ }
+    return u;
+  }
+  /**
+   * A fixed-size image box. While the image loads it shows a quiet bag icon; with no image (some
+   * stores have none) or a failed one (see the error listener) it is a soft Shopify-green tile with
+   * the product's initial.
+   */
+  function imgBox(u, w, cls, label) {
+    var src = shopImg(u, w);
+    var ch = (Array.from(str(label).replace(/^[^\p{L}\p{N}]+/u, ""))[0] || "").toUpperCase();
+    return (
+      '<span class="pimg' + (cls ? " " + cls : "") + (src ? "" : " noimg") + (ch ? " has-ch" : "") + '">' + icon("bag") +
+      (ch ? '<span class="pi-ch" aria-hidden="true">' + esc(ch) + "</span>" : "") +
+      (src ? '<img src="' + esc(src) + '" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">' : "") + "</span>"
+    );
+  }
+  document.addEventListener("error", function (ev) {
+    var t = ev.target;
+    if (t && t.tagName === "IMG" && t.parentNode && t.parentNode.classList && t.parentNode.classList.contains("pimg")) t.parentNode.classList.add("broken");
+  }, true);
+  /** §15.2 permissions, for a store the wallet hasn't described yet. */
+  function shopPerms(store, capv) {
+    return [
+      "Browse " + store + "'s catalog",
+      num(capv) ? "Pay up to " + money(capv) + " per order with a single-use Allowance card" : "Pay for orders with a single-use Allowance card, within its limits",
+      "Place orders on your behalf",
+    ];
+  }
+  /** The cart this checkout paid for, from earlier in the log (its lines carry images and links). */
+  function cartFromLog(a, handle, cartId) {
+    var log = (a && a.log) || [];
+    for (var i = log.length - 1; i >= 0; i--) {
+      var c = shopCall(log[i]);
+      if (c && c.b.handle === handle && c.b.op === "carts" && str(c.d.cartId) === cartId) return c.d;
+    }
+    return null;
+  }
+
+  /** "$42.00" while a Shopify checkout waits for approval: the total of the cart it pays for. */
+  function checkoutTotal(a, url) {
+    var b = bridgeOf(url);
+    var cart = b && b.op === "checkout" ? cartFromLog(a, b.handle, b.item) : null;
+    return cart && num(cart.total) != null ? money(cart.total) : "";
+  }
+
+  // ---------------------------------------------------------------- the order confirmation (§15.1 checkout)
+  /** The confirmation in a checkout answer: the 200 body, or what a 409 cart_already_paid returns with. */
+  function confirmationOf(d) {
+    if (!d || typeof d !== "object") return {};
+    if (d.order && typeof d.order === "object") return d.order;
+    if (d.confirmation && typeof d.confirmation === "object") return d.confirmation;
+    return d;
+  }
+  /** "ALW-7K2P-9QXD": Allowance's reference for the order (not a Shopify order number). */
+  function orderRef(o) {
+    var r = str(o && o.reference).trim();
+    return /^[A-Za-z0-9][A-Za-z0-9-]{3,39}$/.test(r) ? r : "";
+  }
+  function isPlaced(o) {
+    return str(o.status) === "placed" || !!orderRef(o);
+  }
+  /** "Allowance Card ••1234" */
+  function cardLabel(o) {
+    var c = o && o.card && typeof o.card === "object" ? o.card : {};
+    var brand = str(c.brand).replace(/\s+/g, " ").trim().slice(0, 40) || "Allowance Card";
+    var last4 = str(c.last4).replace(/\D/g, "").slice(-4);
+    return brand + (last4.length === 4 ? " ••" + last4 : "");
+  }
+  var SIM_WHY = "Your agent's USDC payment is real. The single-use Allowance Card that would pay the store through Shopify's agent checkout isn't issued in this demo, so the store didn't receive an order.";
+
+  // ---------------------------------------------------------------- cards
+  function linesHtml(lines, max) {
+    var shown = lines.slice(0, max || 6);
+    return (
+      '<ul class="lines">' +
+      shown.map(function (l) {
+        var img = imgBox(l.image, 120, "sm", l.title);
+        var name = '<span class="l-name">' + esc(l.title) + "</span>";
+        return (
+          "<li>" + (l.url ? '<a class="l-img" href="' + esc(l.url) + '" target="_blank" rel="noopener noreferrer" tabindex="-1" aria-hidden="true">' + img + "</a>" : img) +
+          '<span class="l-t">' + (l.url ? '<a class="l-link" href="' + esc(l.url) + '" target="_blank" rel="noopener noreferrer">' + name + "</a>" : name) +
+          '<span class="l-sub">' + esc((l.variant ? l.variant + " · " : "") + "Qty " + l.qty) + "</span></span>" +
+          '<span class="l-amt">' + esc(l.total != null ? money(l.total) : "") + "</span></li>"
+        );
+      }).join("") +
+      (lines.length > shown.length ? '<li class="l-more">+' + esc(plural(lines.length - shown.length, "more item", "more items")) + "</li>" : "") +
+      "</ul>"
+    );
+  }
+  function totalsHtml(rows, cls) {
+    return '<dl class="totals' + (cls ? " " + cls : "") + '">' + rows.filter(function (r) { return r[1]; }).map(function (r) { return '<div class="' + (r[2] || "") + '"><dt>' + esc(r[0]) + "</dt><dd>" + (r[3] ? r[1] : esc(r[1])) + "</dd></div>"; }).join("") + "</dl>";
+  }
+  /** "weareallbirds.myshopify.com" that wraps only before "myshopify.com", never at its hyphens. */
+  function domainHtml(d) {
+    var parts = str(d).split(".");
+    if (parts.length < 3) return '<span class="nw">' + esc(d) + "</span>";
+    return '<span class="nw">' + esc(parts.slice(0, -2).join(".") + ".") + '</span><wbr><span class="nw">' + esc(parts.slice(-2).join(".")) + "</span>";
+  }
+  /** The store's storefront domain ("allbirds.com"), linking to its storefront. */
+  function siteHtml(ref) {
+    if (!ref) return "";
+    var href = pageUrl(ref.site);
+    var label = domainHtml(ref.host || ref.domain);
+    return href ? '<a class="site" href="' + esc(href) + '" target="_blank" rel="noopener noreferrer">' + label + "</a>" : label;
+  }
+  function shopHead(info, title, sub, right, tileCls) {
+    return '<div class="c-row">' + tileHtml(info, tileCls || "t48") + '<div class="c-who"><div class="c-title">' + esc(title) + '</div><div class="c-k">' + sub + "</div></div>" + (right || "") + "</div>";
+  }
+  function productTile(p) {
+    var opts = p.variants.length > 1 ? plural(p.variants.length, "option", "options") : "";
+    var inner =
+      imgBox(p.image, 360, "", p.title) + (p.available ? "" : '<span class="p-flag">Sold out</span>') +
+      '<span class="p-title">' + esc(p.title) + "</span>" +
+      '<span class="p-price">' + esc(priceLabel(p.min, p.max)) + "</span>" +
+      '<span class="p-opt">' + esc(opts) + "</span>";
+    return p.url
+      ? '<a class="prod" href="' + esc(p.url) + '" target="_blank" rel="noopener noreferrer" title="' + esc(p.title) + '">' + inner + "</a>"
+      : '<div class="prod" title="' + esc(p.title) + '">' + inner + "</div>";
+  }
+  function productsCard(c) {
+    var info = svcInfo("shopify-" + c.b.handle);
+    var list = (Array.isArray(c.d.products) ? c.d.products : []).map(cleanProduct).filter(Boolean);
+    var store = shopName(c.b.handle, c.d.store);
+    var q = c.b.q;
+    if (!list.length) {
+      return '<div class="chip-card">' + icon("bag") + "<span>" + esc(q ? "Nothing matches “" + q + "” at " + store : "No products at " + store) + "</span></div>";
+    }
+    var n = list.length + (c.d.truncated ? "+" : "");
+    var sub = q ? n + (list.length === 1 && !c.d.truncated ? " result" : " results") + " for “" + q + "”" : n + (list.length === 1 && !c.d.truncated ? " product" : " products");
+    var shown = list.slice(0, 6);
+    return (
+      '<div class="card wide shop-prods"><div class="sp-head">' + tileHtml(info, "t32") +
+      '<div class="c-who"><div class="c-name">' + esc(store) + '</div><div class="c-k">' + esc(sub) + (info.shopify ? " · " + siteHtml(info.shopify) : "") + "</div></div></div>" +
+      '<div class="prods">' + shown.map(productTile).join("") +
+      (list.length > shown.length ? '<div class="prod more"><span class="pimg">+' + (list.length - shown.length) + '</span><span class="p-title">more at ' + esc(store) + "</span></div>" : "") +
+      "</div></div>"
+    );
+  }
+  function productCard(c) {
+    var p = cleanProduct(c.d.product);
+    if (!p) return "";
+    var store = shopName(c.b.handle, c.d.store);
+    var named = p.variants.filter(function (v) { return v.title; });
+    var mixed = named.some(function (v) { return v.price != null && p.min != null && Math.abs(v.price - p.min) > 0.005; });
+    var chips = named.slice(0, 10).map(function (v) {
+      return '<span class="vchip' + (v.available ? "" : " out") + '" title="' + esc(v.available ? v.title : v.title + " · sold out") + '">' + esc(v.title + (mixed && v.price != null ? " · " + money(v.price) : "")) + "</span>";
+    }).join("");
+    var where = siteHost(p.url) || (svcInfo("shopify-" + c.b.handle).shopify || {}).host || store;
+    var img = imgBox(p.image, 240, "lg", p.title);
+    return (
+      '<div class="card shop-prod"><div class="card-pad"><div class="pd">' + (p.url ? '<a class="pd-img" href="' + esc(p.url) + '" target="_blank" rel="noopener noreferrer" tabindex="-1" aria-hidden="true">' + img + "</a>" : img) +
+      '<div class="pd-txt"><div class="c-k">' + esc(store) + '</div><div class="c-name">' + esc(p.title) + "</div>" +
+      '<div class="pd-price">' + esc(priceLabel(p.min, p.max)) + (p.available ? "" : ' <span class="pd-out">Sold out</span>') + "</div>" +
+      (p.description ? '<div class="pd-desc">' + esc(p.description) + "</div>" : "") + "</div></div>" +
+      (chips ? '<div class="vchips">' + chips + (named.length > 10 ? '<span class="vchip more">+' + (named.length - 10) + "</span>" : "") + "</div>" : "") + "</div>" +
+      (p.url ? '<div class="c-foot"><a class="plain" href="' + esc(p.url) + '" target="_blank" rel="noopener noreferrer">View on ' + esc(where) + icon("external") + "</a><span>" + esc(p.variants.length > 1 ? plural(p.variants.length, "option", "options") : "") + "</span></div>" : "") +
+      "</div>"
+    );
+  }
+  function cartCard(c, e) {
+    var info = svcInfo("shopify-" + c.b.handle);
+    var store = shopName(c.b.handle, c.d.store);
+    var lines = linesOf(c.d.lines);
+    var items = lines.reduce(function (s, l) { return s + l.qty; }, 0);
+    var sub = num(c.d.subtotal);
+    var tot = num(c.d.total);
+    var ship = num(c.d.shipping);
+    var tax = num(c.d.tax != null ? c.d.tax : c.d.totalTax);
+    // Shopify's own totals. Subtotal only when it says something the lines and total don't.
+    var totals = totalsHtml([
+      ["Subtotal", sub != null && (lines.length > 1 || (tot != null && Math.abs(sub - tot) > 0.005)) ? money(sub) : ""],
+      ["Shipping", ship != null && ship > 0 ? money(ship) : ""],
+      ["Taxes", tax != null && tax > 0 ? money(tax) : ""],
+      ["Total", tot != null ? money(tot) : "", "tot"],
+    ]);
+    var notes = (Array.isArray(c.d.notes) ? c.d.notes : []).map(function (n) { return str(n).replace(/\s+/g, " ").trim().slice(0, 160); }).filter(Boolean).slice(0, 2);
+    if (!notes.length) notes = ["Shipping and taxes are added at checkout"];
+    var exp = ts(c.d.expiresAt);
+    return (
+      '<div class="card cart"><div class="card-pad">' + shopHead(info, "Cart", esc(store + " · " + plural(items, "item", "items")), "", "t32") +
+      linesHtml(lines) + totals +
+      notes.map(function (n) { return '<p class="cart-note">' + icon("info") + "<span>" + esc(n) + "</span></p>"; }).join("") + "</div>" +
+      '<div class="c-foot"><span>' + esc(exp ? "Held until " + clock(exp) : "Held for 30 minutes") + "</span><span>" + esc(e.name === "check_approval" ? "" : "Pays in USDC") + "</span></div></div>"
+    );
+  }
+  /**
+   * The order confirmation (§15.5): store and storefront, items linking to their product pages, the
+   * total, the single-use card that paid, Allowance's reference, and a "Simulated order" badge whose
+   * explanation opens in place. The USDC payment (footer tx) is real; the card step is not.
+   */
+  function shopOrderCard(a, e, c, rc) {
+    var d = confirmationOf(c.d);
+    var info = svcInfo("shopify-" + c.b.handle);
+    var st = d.store && typeof d.store === "object" ? d.store : null;
+    var ref = info.shopify;
+    var site = siteUrl(st && st.storefrontUrl);
+    if (site && ref) ref = { handle: ref.handle, domain: ref.domain, site: site, host: siteHost(site) || ref.host };
+    var store = shopName(c.b.handle, d.store);
+    var lines = linesOf(d.items);
+    var cart = cartFromLog(a, c.b.handle, c.b.item);
+    var cartLines = cart ? linesOf(cart.lines) : [];
+    if (!lines.length) lines = cartLines;
+    else if (cartLines.length) {
+      // Order items may come without images, links or prices: borrow them from the cart they were bought from.
+      lines.forEach(function (l, i) {
+        var m = cartLines.filter(function (x) { return (l.variantId && x.variantId === l.variantId) || x.title === l.title; })[0] || cartLines[i];
+        if (!m) return;
+        if (!l.image) l.image = m.image;
+        if (!l.url) l.url = m.url;
+        if (l.total == null) l.total = m.total;
+        if (!l.variant) l.variant = m.variant;
+      });
+    }
+    var total = num(d.total) != null ? money(d.total) : rc && rc.amount ? rc.amount : "";
+    var reference = orderRef(d);
+    var simulated = d.simulated !== false;
+    var key = a.name + ":" + e.id;
+    var open = !!ui.openSim[key];
+    var why = str(d.explanation).replace(/\s+/g, " ").trim().slice(0, 400) || SIM_WHY;
+    // The USDC settlement: the receipt line fetch_url added, else the confirmation's own (once settled).
+    var txv = rc && rc.tx ? rc.tx : /^0x[0-9a-fA-F]{8,}$/.test(str(d.txHash)) ? shortAddr(str(d.txHash)) : "";
+    var txu = rc && rc.tx ? rc.url : safeUrl(str(d.explorerUrl));
+    var tx = txv ? (txu ? '<a href="' + esc(txu) + '" target="_blank" rel="noopener noreferrer">USDC tx ' + esc(txv) + icon("external") + "</a>" : '<span class="mono">USDC tx ' + esc(txv) + "</span>") : "<span>Paid in USDC</span>";
+    var at = ts(d.paidAt) || ts(e.at) + (e.ms || 0);
+    var badge = simulated
+      ? '<button type="button" class="pill sim-pill" data-action="sim" data-key="' + esc(key) + '" aria-expanded="' + open + '" title="' + esc(why) + '">' + icon("info") + "Simulated order</button>"
+      : '<span class="pill ok">' + icon("check") + "Paid</span>";
+    return (
+      '<div class="card shop-order' + (simulated ? " simulated" : "") + '"><div class="card-pad">' +
+      shopHead(info, "Order placed", esc(store) + (ref ? " · " + siteHtml(ref) : ""), badge) +
+      (simulated && open ? '<p class="sim-why">' + esc(why) + "</p>" : "") +
+      (lines.length ? linesHtml(lines) : "") +
+      totalsHtml([["Total", total, "tot"]]) +
+      totalsHtml([["Paid with", icon("card") + "<span>" + esc(cardLabel(d)) + "</span>", "", true], ["Reference", reference ? '<span class="mono">' + esc(reference) + "</span>" : "", "", true]], "paid") +
+      '</div><div class="c-foot">' + tx + "<span>" + esc(at ? clock(at) : "") + "</span></div></div>"
+    );
+  }
+  /** Cards for one bridge response, or null when this entry isn't one (blocked payments etc. stay generic). */
+  function shopCards(a, e, key) {
+    var c = shopCall(e);
+    if (!c) return null;
+    var ok = c.h.status >= 200 && c.h.status < 300;
+    var out = [];
+    var html = "";
+    if (c.b.op === "products" && ok) html = productsCard(c);
+    else if (c.b.op === "product" && ok) html = productCard(c);
+    else if (c.b.op === "carts" && ok && c.d.cartId) html = cartCard(c, e);
+    else if (c.b.op === "checkout") {
+      var o = confirmationOf(c.d);
+      if (ok && isPlaced(o)) html = shopOrderCard(a, e, c, parseReceipt(c.h.tail));
+      else if (str(c.d.error) === "cart_already_paid") {
+        html = '<div class="chip-card ok">' + icon("check") + "<span>" + esc("Already paid" + (orderRef(o) ? " · order " + orderRef(o) : "")) + "</span></div>";
+      }
+    }
+    if (html) out.push({ key: key("shop"), html: html });
+    return out;
+  }
+
+  // ================================================================ Quantcomm research (ARCHITECTURE §17)
+  // Quantcomm sells flood research per request through its bridge ({QUANTCOMM_BRIDGE_URL}/quantcomm).
+  // Agents buy it with fetch_url, so, as with Shopify, the page sees the bridge's compact JSON (§17.1)
+  // only as tool text, parsed here and escaped at render time. The research is Quantcomm's and is
+  // labelled as Quantcomm's: never advice from Allowance. Its SYNTHETIC and sandbox labels stay visible.
+  var QC_ID = "quantcomm";
+  var QC_DISCLAIMER = "Quantcomm's AI analyst view, for research. Not financial advice.";
+  var QC_PATHS = [
+    [/^\/quantcomm\/alerts\/?$/, "alerts"],
+    [/^\/quantcomm\/companies\/([A-Za-z][A-Za-z0-9.-]{0,9})\/flood\/?$/, "flood"],
+    [/^\/quantcomm\/companies\/([A-Za-z][A-Za-z0-9.-]{0,9})\/view\/?$/, "view"],
+    [/^\/quantcomm\/?$/, "universe"],
+  ];
+  /** A Quantcomm bridge URL (§17.1) → { op, ticker }, else null. Any host: the path says what it is. */
+  function qcOf(u) {
+    var full = str(u).trim();
+    if (!full) return null;
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(full)) full = "http://" + full;
+    var x;
+    try { x = new URL(full); } catch (e) { return null; }
+    for (var i = 0; i < QC_PATHS.length; i++) {
+      var m = x.pathname.match(QC_PATHS[i][0]);
+      if (m) return { op: QC_PATHS[i][1], ticker: str(m[1]).toUpperCase() };
+    }
+    return null;
+  }
+  /** A bridge answer in this tool entry: { h (parseHttp), q (qcOf), d (body or {}) }, else null. */
+  function qcCall(e) {
+    if (!e || e.result == null || (e.name !== "fetch_url" && e.name !== "check_approval")) return null;
+    var h = parseHttp(e.result);
+    if (!h) return null;
+    var q = qcOf(h.url);
+    return q ? { h: h, q: q, d: h.data || {} } : null;
+  }
+  function qcObj(v) {
+    return v && typeof v === "object" && !Array.isArray(v) ? v : null;
+  }
+  function qcArr(v, max) {
+    return (Array.isArray(v) ? v : []).slice(0, max || 20);
+  }
+  /** "OLD TOWN ALEXANDRIA" → "Old Town Alexandria"; mixed case is left alone. */
+  function qcTitle(s) {
+    s = str(s).replace(/\s+/g, " ").trim().slice(0, 80);
+    return s && s === s.toUpperCase() && /[A-Z]{3}/.test(s) ? s.toLowerCase().replace(/(^|[\s/(-])([a-z])/g, function (all, p, c) { return p + c.toUpperCase(); }) : s;
+  }
+  /** FDIC's legal names, as people say them: "Bank of America, National Association" → "Bank of America". */
+  function qcBank(s) {
+    return str(s).replace(/,?\s+(National Association|N\.\s?A\.?)$/i, "").replace(/\s+/g, " ").trim().slice(0, 60);
+  }
+  /** A percent as Quantcomm sends it: "59.9%" stays; -0.2728 → "−0.27%". */
+  function qcPct(v, signed) {
+    if (typeof v === "string" && /%$/.test(v.trim())) return v.trim().replace(/^-/, "−");
+    var n = num(v);
+    if (n == null) return "";
+    return (n < 0 ? "−" : signed && n > 0 ? "+" : "") + Math.abs(n).toFixed(2).replace(/\.?0+$/, "") + "%";
+  }
+  /** Dollars: "$11.27B" as the bridge rounds them, or a number made compact the same way. */
+  function qcUsd(v) {
+    if (typeof v === "string" && /^\$/.test(v.trim())) return v.trim().slice(0, 16);
+    var n = num(v);
+    if (n == null) return "";
+    var a = Math.abs(n);
+    var s = a >= 1e9 ? (a / 1e9).toFixed(2) + "B" : a >= 1e6 ? (a / 1e6).toFixed(1) + "M" : a >= 1e4 ? Math.round(a / 1e3) + "K" : a.toFixed(0);
+    return (n < 0 ? "−$" : "$") + s;
+  }
+  /** "2026-10-16" → "Oct 16"; an instant → "Oct 17, 4:35 PM" (your time). */
+  function qcWhen(v) {
+    var s = str(v).trim();
+    var d = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    try {
+      if (d) return new Date(Number(d[1]), Number(d[2]) - 1, Number(d[3])).toLocaleDateString([], { month: "short", day: "numeric" });
+      var t = Date.parse(s);
+      return isFinite(t) ? new Date(t).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+    } catch (e) {
+      return "";
+    }
+  }
+  var QC_STORM = { HU: "Hurricane", MH: "Major hurricane", TS: "Tropical storm", TD: "Tropical depression", STS: "Subtropical storm", STD: "Subtropical depression", PTC: "Potential tropical cyclone", PC: "Post-tropical cyclone" };
+  function qcStorms(list) {
+    return qcArr(list, 4).map(function (s) {
+      s = qcObj(s) || {};
+      var kind = QC_STORM[str(s.classification).toUpperCase()] || "";
+      var basin = str(s.basin).replace(/_/g, " ").replace(/\b[a-z]/g, function (c) { return c.toUpperCase(); });
+      var wind = num(s.windKt);
+      return [((kind ? kind + " " : "") + str(s.name).slice(0, 30)).trim(), basin, wind != null ? Math.round(wind) + " kt" : ""].filter(Boolean).join(" · ");
+    }).filter(Boolean);
+  }
+  function qcSec(title, aside, body, cls) {
+    return '<div class="qc-sec' + (cls ? " " + cls : "") + '"><div class="qc-h"><span>' + esc(title) + "</span>" + (aside || "") + "</div>" + body + "</div>";
+  }
+  function qcTag(text, cls) {
+    return '<span class="qc-tag' + (cls ? " " + cls : "") + '">' + esc(text) + "</span>";
+  }
+  /** Alert counts by type, and the storms in play. */
+  function qcAlertsHtml(b) {
+    var al = qcObj(b.alerts) || {};
+    var by = qcObj(al.byType) || {};
+    var types = Object.keys(by).map(function (k) { return [str(k).slice(0, 60), num(by[k])]; }).filter(function (x) { return x[0] && x[1] != null; }).sort(function (x, y) { return y[1] - x[1]; }).slice(0, 10);
+    var total = num(al.total);
+    if (total == null && types.length) total = types.reduce(function (t, x) { return t + x[1]; }, 0);
+    if (total == null) return "";
+    var storms = qcStorms(b.activeStorms);
+    return qcSec(
+      "Live flood alerts",
+      "<b>" + esc(String(total)) + "</b>",
+      (types.length ? '<div class="qc-types">' + types.map(function (x) { return '<span class="qc-type"><b>' + esc(String(x[1])) + "</b>" + esc(x[0]) + "</span>"; }).join("") + "</div>" : total === 0 ? '<p class="qc-line"><span>No flood alerts right now.</span></p>' : "") +
+        (storms.length ? '<p class="qc-line qc-storm">' + icon("cloud") + "<span>" + esc(storms.join("; ")) + "</span></p>" : ""),
+    );
+  }
+  function qcBankRow(r, mine) {
+    r = qcObj(r);
+    if (!r || !str(r.bank).trim()) return "";
+    var share = r.shareOfDeposits == null ? null : num(r.shareOfDeposits);
+    var w = share == null ? 0 : Math.max(0, Math.min(100, share));
+    var branches = num(r.branches);
+    var sub = [branches != null ? plural(Math.round(branches), "branch", "branches") : "", qcUsd(r.depositsUnderAlert) ? qcUsd(r.depositsUnderAlert) + " in deposits" : ""].filter(Boolean).join(" · ");
+    var tk = str(r.ticker).replace(/[^A-Za-z0-9.-]/g, "").slice(0, 8);
+    return (
+      '<li class="qc-bankrow' + (mine ? " mine" : "") + '"><div class="qc-bank-top"><span class="qc-bank">' + esc(qcBank(r.bank)) + "</span>" + (tk ? '<span class="qc-tk">' + esc(tk) + "</span>" : "") +
+      '<span class="qc-share">' + esc(qcPct(r.shareOfDeposits)) + "</span></div>" +
+      (share != null ? '<span class="qc-bar" role="img" aria-label="' + esc(qcPct(r.shareOfDeposits) + " of its deposits under alerts") + '"><i style="width:max(3px,' + w.toFixed(1) + '%)"></i></span>' : "") +
+      (sub ? '<span class="qc-bank-sub">' + esc(sub) + "</span>" : "") + "</li>"
+    );
+  }
+  /** The banks under alerts with share-of-deposits bars (top 5, the rest counted). `mine`: this company's rows. */
+  function qcBanksHtml(block, mine, title) {
+    block = qcObj(block) || {};
+    var top = qcArr(block.top, 10).filter(qcObj);
+    var own = qcArr(mine, 3).filter(qcObj);
+    var count = num(block.count);
+    if (!top.length && !own.length) return count === 0 ? qcSec(title || "Banks under alerts", "<b>0</b>", '<p class="qc-line"><span>No bank branches sit under these alerts.</span></p>') : "";
+    var isMine = function (r) { return own.some(function (o) { return str(o.bank) === str(r.bank); }); };
+    var shown = top.slice(0, 5);
+    var extra = own.filter(function (o) { return !shown.some(function (r) { return str(r.bank) === str(o.bank); }); });
+    var more = (count != null ? count : top.length) - shown.length - extra.length;
+    return qcSec(
+      title || "Banks under alerts",
+      (count != null ? "<b>" + esc(String(count)) + "</b>" : "") + '<small class="qc-aside">share of deposits</small>',
+      '<ol class="qc-banks">' + shown.map(function (r) { return qcBankRow(r, isMine(r)); }).join("") + extra.map(function (r) { return qcBankRow(r, true); }).join("") + "</ol>" +
+        (more > 0 ? '<p class="qc-more-n">+' + esc(plural(more, "more bank", "more banks")) + " under alerts</p>" : ""),
+    );
+  }
+  /** Capital One's sandbox branches and ATMs under alerts, or "0 of 220". */
+  function qcCapOneHtml(c1) {
+    c1 = qcObj(c1);
+    if (!c1) return "";
+    var checked = num(c1.locationsChecked);
+    var hit = num(c1.underAlert);
+    if (hit == null) hit = qcArr(c1.locations).length;
+    var locs = qcArr(c1.locations, 10).filter(qcObj);
+    var line = (checked != null ? "<b>" + esc(hit + " of " + checked) + "</b> Capital One locations under alerts" : "<b>" + esc(String(hit)) + "</b> Capital One locations under alerts");
+    return qcSec(
+      "Capital One",
+      qcTag("Sandbox", "sbx"),
+      '<p class="qc-line qc-c1' + (hit ? " hit" : "") + '">' + icon(hit ? "warn" : "check") + "<span>" + line + "</span></p>" +
+        (locs.length
+          ? '<ul class="qc-locs">' + locs.map(function (l) {
+            var kind = /atm/i.test(str(l.kind)) ? "ATM" : "Branch";
+            var where = [qcTitle(l.city), str(l.state).toUpperCase().slice(0, 2)].filter(Boolean).join(", ");
+            var types = qcArr(l.alertTypes, 3).map(str).filter(Boolean).join(", ");
+            return "<li><b>" + esc(kind + " · " + qcTitle(l.name)) + "</b><span>" + esc([where, types].filter(Boolean).join(" · ")) + "</span></li>";
+          }).join("") + "</ul>"
+          : "") +
+        '<p class="qc-note">' + esc(str(c1.note).trim().slice(0, 160) || "Capital One's Nessie sandbox branches and ATMs") + "</p>",
+      "qc-capone",
+    );
+  }
+  function qcKv(rows) {
+    rows = rows.filter(function (r) { return r[1]; });
+    return rows.length ? '<dl class="qc-kv">' + rows.map(function (r) { return "<div><dt>" + esc(r[0]) + "</dt><dd>" + esc(r[1]) + "</dd></div>"; }).join("") + "</dl>" : "";
+  }
+  function qcStressHtml(p) {
+    p = qcObj(p);
+    if (!p) return "";
+    var n = num(p.customers);
+    var liveN = num(p.liveCustomersUnderAlert);
+    var live = [liveN != null ? plural(Math.round(liveN), "customer", "customers") : "", qcUsd(p.liveLoansUnderAlert) ? qcUsd(p.liveLoansUnderAlert) + " in loans" : ""].filter(Boolean).join(", ");
+    return qcSec(
+      "Customer stress test" + (str(p.storm) ? " · " + qcTitle(p.storm) : ""),
+      p.synthetic === false ? "" : qcTag("SYNTHETIC", "syn"),
+      qcKv([
+        ["Customers", n != null ? String(Math.round(n)) : ""],
+        ["Exposure", qcUsd(p.exposureAtDefault)],
+        ["Expected loss", qcUsd(p.baselineExpectedLoss)],
+        ["Added by the storm", qcUsd(p.incrementalExpectedLoss)],
+        ["Under live alerts", live],
+      ]) + (str(p.note).trim() ? '<p class="qc-note">' + esc(str(p.note).trim().slice(0, 200)) + "</p>" : ""),
+    );
+  }
+  function qcFloodMapHtml(p) {
+    p = qcObj(p);
+    if (!p) return "";
+    var km = num(p.floodedKm2);
+    var cov = num(p.coveragePct);
+    var hrs = num(p.hoursAfterLandfall);
+    var c1 = typeof p.capitalOneLocationsExposed === "string" ? p.capitalOneLocationsExposed.trim().slice(0, 20) : num(p.capitalOneLocationsExposed);
+    return qcSec(
+      "Satellite flood map" + (str(p.storm) ? " · " + qcTitle(p.storm) : ""),
+      "",
+      qcKv([
+        ["Flooded", km != null ? km + " km²" : ""],
+        ["Radar coverage", cov != null ? Math.round(cov) + "%" : ""],
+        ["First image", hrs != null ? Math.round(hrs) + " h after landfall" : qcWhen(p.firstImagePublished)],
+        ["Capital One (sandbox)", c1 != null && c1 !== "" ? String(c1) + " nearby" : ""],
+      ]),
+    );
+  }
+  /** How the stock moved after past hurricanes: one diverging bar per storm. */
+  function qcHistoryHtml(p) {
+    p = qcObj(p);
+    if (!p) return "";
+    var storms = qcArr(p.storms, 24).filter(qcObj).map(function (s) { return { name: str(s.storm).slice(0, 24), year: num(s.year), x: num(s.excessPct) }; }).filter(function (s) { return s.x != null; });
+    var mean = num(p.meanExcessPct);
+    var bench = str(p.bench).slice(0, 10) || "its benchmark";
+    var max = storms.reduce(function (m, s) { return Math.max(m, Math.abs(s.x)); }, 0) || 1;
+    var bars = storms.length
+      ? '<div class="qc-hist" role="img" aria-label="' + esc(storms.map(function (s) { return s.name + " " + qcPct(s.x, true); }).join(", ")) + '">' +
+        storms.map(function (s) {
+          var h = Math.max(3, Math.round((Math.abs(s.x) / max) * 100));
+          return '<span class="qc-hb ' + (s.x < 0 ? "neg" : "pos") + '" title="' + esc(s.name + (s.year ? " " + s.year : "") + ": " + qcPct(s.x, true) + " vs " + bench) + '"><i style="height:' + h + '%"></i></span>';
+        }).join("") + "</div>" +
+        (storms[0].year && storms[storms.length - 1].year ? '<div class="qc-years"><span>' + esc(storms[0].name + " " + storms[0].year) + "</span><span>" + esc(storms[storms.length - 1].name + " " + storms[storms.length - 1].year) + "</span></div>" : "")
+      : "";
+    var n = storms.length;
+    var said = [mean != null ? "Averaged <b>" + esc(qcPct(mean, true)) + "</b> vs " + esc(bench) + (n ? " over " + esc(plural(n, "storm", "storms")) : "") : "", str(p.underperformed) ? "underperformed in " + esc(str(p.underperformed).slice(0, 20)) : ""].filter(Boolean).join(" · ");
+    return qcSec("After past hurricanes", str(p.window) ? '<small class="qc-aside">' + esc(str(p.window).slice(0, 40)) + "</small>" : "", (said ? '<p class="qc-line"><span>' + said + "</span></p>" : "") + bars);
+  }
+  function qcParkingHtml(p) {
+    p = qcObj(p);
+    if (!p) return "";
+    var verdict = str(p.verdict).trim().slice(0, 200);
+    var caveats = qcArr(p.caveats, 3).map(str).filter(Boolean);
+    if (!verdict && !caveats.length) return "";
+    return qcSec("Parking lots from above", "", (verdict ? '<p class="qc-line"><span>' + esc(verdict) + "</span></p>" : "") + (caveats.length ? '<ul class="qc-caveats">' + caveats.map(function (c) { return "<li>" + esc(c.slice(0, 200)) + "</li>"; }).join("") + "</ul>" : ""));
+  }
+  function qcFoot(rc, e) {
+    if (!rc) return '<div class="c-foot"><span>Quantcomm</span><span>' + esc(clock(ts(e.at) + (e.ms || 0))) + "</span></div>";
+    var tx = rc.tx ? (rc.url ? '<a href="' + esc(rc.url) + '" target="_blank" rel="noopener noreferrer">tx ' + esc(rc.tx) + icon("external") + "</a>" : '<span class="mono">tx ' + esc(rc.tx) + "</span>") : "";
+    return '<div class="c-foot"><span class="qc-paid">' + esc("Paid " + (rc.amount || "")) + (tx ? " · " + tx : "") + "</span><span>" + esc(clock(ts(e.at) + (e.ms || 0))) + "</span></div>";
+  }
+  function qcAsOf(d) {
+    var when = qcWhen(d.asOf);
+    var age = num(d.ageHours);
+    return when ? "as of " + when : age != null ? Math.round(age) + " h old" : "";
+  }
+  /** The flood research card (§17.4) for /quantcomm/alerts and /companies/:ticker/flood. */
+  function qcFloodCard(c, e) {
+    var d = c.d;
+    var info = svcInfo(QC_ID);
+    var rc = parseReceipt(c.h.tail);
+    var body = "";
+    var title;
+    var sub;
+    var note = str(d.note).replace(/\s+/g, " ").trim().slice(0, 320);
+    if (c.q.op === "alerts") {
+      title = "Flood alerts and banks";
+      sub = ["Quantcomm", qcAsOf(d)];
+      body = qcAlertsHtml(d) + qcBanksHtml(d.banksUnderAlerts) + qcCapOneHtml(d.capitalOne);
+    } else {
+      var p = qcObj(d.panels) || {};
+      var tk = str(d.ticker).toUpperCase().slice(0, 10) || c.q.ticker;
+      title = "Flood research · " + tk;
+      sub = [str(d.name).slice(0, 60), "Quantcomm", qcAsOf(d)];
+      var am = qcObj(p.alerts_map);
+      var ae = qcObj(p.alert_exposure);
+      if (!note && am) note = str(am.note).trim().slice(0, 320);
+      body =
+        qcCapOneHtml(p.branch_map) +
+        (ae ? qcBanksHtml({ top: ae.top, count: ae.banksUnderAlerts }, ae.company, "Banks under alerts") : "") +
+        (am ? qcAlertsHtml(am) + (am.banksUnderAlerts ? qcBanksHtml(am.banksUnderAlerts) : "") : "") +
+        qcStressHtml(p.customer_stress) + qcFloodMapHtml(p.flood_map) + qcHistoryHtml(p.storm_history) + qcParkingHtml(p.parking_lot);
+    }
+    if (!body) return "";
+    var src = str(d.source).trim().slice(0, 140);
+    return (
+      '<div class="card qc qc-flood"><div class="card-pad">' +
+      '<div class="c-row">' + tileHtml(info, "t32") + '<div class="c-who"><div class="c-title">' + esc(title) + '</div><div class="c-k">' + esc(sub.filter(Boolean).join(" · ")) + "</div></div></div>" +
+      (note ? '<p class="qc-stale">' + icon("clock") + "<span>" + esc(note) + "</span></p>" : "") +
+      body + (src ? '<p class="qc-src">' + esc(src) + "</p>" : "") +
+      "</div>" + qcFoot(rc, e) + "</div>"
+    );
+  }
+  /**
+   * The forecast range: the bridge's { horizonDays, fromDate, fromPrice, returnPct, lowPct, highPct }
+   * (percent), tolerant of { low, high } / { min, max } / { range: [a, b] } too.
+   */
+  function qcForecast(f) {
+    if (typeof f === "string") return { range: f.slice(0, 60), horizon: "" };
+    f = qcObj(f);
+    if (!f) return null;
+    var lo = f.lowPct != null ? f.lowPct : f.low != null ? f.low : f.min != null ? f.min : f.p10 != null ? f.p10 : f.lower != null ? f.lower : Array.isArray(f.range) ? f.range[0] : null;
+    var hi = f.highPct != null ? f.highPct : f.high != null ? f.high : f.max != null ? f.max : f.p90 != null ? f.p90 : f.upper != null ? f.upper : Array.isArray(f.range) ? f.range[1] : null;
+    var unit = str(f.unit).trim();
+    var fmt = function (v) {
+      if (typeof v === "string" && /[%$]/.test(v)) return v.trim().replace(/^-/, "−");
+      var n = num(v);
+      return n == null ? "" : unit === "$" ? (n < 0 ? "−$" : "$") + Math.abs(n).toFixed(2) : qcPct(n, true);
+    };
+    var a = fmt(lo);
+    var b = fmt(hi);
+    if (!a || !b) return null;
+    var days = num(f.horizonDays != null ? f.horizonDays : f.days);
+    var hz = str(f.horizon || f.window || (days != null ? plural(Math.round(days), "day", "days") : "")).trim().slice(0, 30);
+    var mid = f.returnPct != null ? fmt(f.returnPct) : "";
+    return { range: (mid ? mid + " (" + a + " to " + b + ")" : a + " to " + b), horizon: hz };
+  }
+  var QC_VIEW = { positive: "Positive", neutral: "Neutral", negative: "Negative" };
+  /** Quantcomm's AI analyst view (§17.4): Quantcomm's words and Quantcomm's call, calmly, with its disclaimer. */
+  function qcViewCard(a, c, e) {
+    var d = c.d;
+    var v = str(d.view).toLowerCase();
+    if (!QC_VIEW[v] && !str(d.headline)) return "";
+    var tk = str(d.ticker).toUpperCase().slice(0, 10) || c.q.ticker;
+    var rc = parseReceipt(c.h.tail);
+    var key = a.name + ":" + e.id;
+    var open = !!ui.openQc[key];
+    var conf = num(d.confidence);
+    conf = conf == null ? null : Math.max(0, Math.min(100, Math.round(conf)));
+    var fc = qcForecast(d.forecast);
+    var pick = qcObj(d.pick);
+    var pAct = pick ? str(pick.action).toLowerCase().replace(/[^a-z ]/g, "").slice(0, 16) : "";
+    var pConf = pick ? num(pick.confidence) : null;
+    var note = str(d.note).trim().slice(0, 160) || (d.stale === true ? "Quantcomm's data changed since this view was generated." : "");
+    var when = qcWhen(String(d.generatedAt || "").slice(0, 10));
+    var model = str(d.model).replace(/[^\w .:/-]/g, "").slice(0, 24);
+    var rows = [
+      ["Expected move", cap(str(d.expectedMove).slice(0, 24))],
+      ["Confidence", conf != null ? String(conf) : "", conf != null ? '<span class="qc-conf" aria-hidden="true"><i style="width:' + conf + '%"></i></span>' : ""],
+      [fc ? "Forecast" + (fc.horizon ? " · " + fc.horizon : "") : "", fc ? fc.range : ""],
+    ].filter(function (r) { return r[0] && r[1]; });
+    var evidence = qcArr(d.evidence, 8).map(str).filter(Boolean);
+    var gaps = qcArr(d.dataGaps, 6).map(str).filter(Boolean);
+    var reasoning = str(d.reasoning).trim().slice(0, 1200);
+    var more = reasoning || evidence.length || gaps.length;
+    return (
+      '<div class="card qc qc-view"><div class="card-pad">' +
+      '<div class="c-row">' + tileHtml(svcInfo(QC_ID), "t32") + '<div class="c-who"><div class="c-title">' + esc("Quantcomm's view on " + tk) + '</div><div class="c-k"' + (model ? ' title="' + esc("Generated by Quantcomm's AI analyst (" + model + ")" + (qcWhen(d.generatedAt) ? ", " + qcWhen(d.generatedAt) : "")) + '"' : "") + ">" + esc([str(d.name).slice(0, 60), "AI analyst", when].filter(Boolean).join(" · ")) + "</div></div>" +
+      (QC_VIEW[v] ? '<span class="pill qc-vchip ' + v + '">' + QC_VIEW[v] + "</span>" : "") + "</div>" +
+      (note ? '<p class="qc-stale">' + icon("clock") + "<span>" + esc(note) + "</span></p>" : "") +
+      (str(d.headline).trim() ? '<p class="qc-headline">' + esc(str(d.headline).trim().slice(0, 200)) + "</p>" : "") +
+      (rows.length ? '<dl class="qc-kv qc-vkv">' + rows.map(function (r) { return "<div><dt>" + esc(r[0]) + "</dt><dd>" + esc(r[1]) + (r[2] || "") + "</dd></div>"; }).join("") + "</dl>" : "") +
+      (pAct
+        ? '<div class="qc-pick"><div class="qc-pick-top"><span class="qc-pick-k">Quantcomm\'s call</span><span class="qc-call">' + esc(cap(pAct)) + "</span>" + (pConf != null ? '<span class="qc-pick-c">confidence ' + esc(String(Math.round(pConf))) + "</span>" : "") + "</div>" +
+          (str(pick.reason).trim() ? '<p class="qc-pick-r">' + esc(str(pick.reason).trim().slice(0, 300)) + "</p>" : "") + "</div>"
+        : "") +
+      (more ? '<button type="button" class="qc-more" data-action="qc-more" data-key="' + esc(key) + '" aria-expanded="' + open + '">' + icon("chev") + "Reasoning and evidence</button>" : "") +
+      (more && open
+        ? '<div class="qc-why">' + (reasoning ? "<p>" + esc(reasoning) + "</p>" : "") +
+          (evidence.length ? "<small>Evidence</small><ul>" + evidence.map(function (x) { return "<li>" + esc(x.slice(0, 200)) + "</li>"; }).join("") + "</ul>" : "") +
+          (gaps.length ? "<small>What it couldn't see</small><ul>" + gaps.map(function (x) { return "<li>" + esc(x.slice(0, 200)) + "</li>"; }).join("") + "</ul>" : "") + "</div>"
+        : "") +
+      '<p class="qc-disc">' + icon("info") + "<span>" + esc(QC_DISCLAIMER) + "</span></p>" +
+      "</div>" + qcFoot(rc, e) + "</div>"
+    );
+  }
+  /** Cards for one Quantcomm answer, or null when this entry isn't one. Failures are steps only. */
+  function qcCards(a, e, key) {
+    var c = qcCall(e);
+    if (!c) return null;
+    if (c.h.status < 200 || c.h.status >= 300) return [];
+    var html = c.q.op === "view" ? qcViewCard(a, c, e) : c.q.op === "alerts" || c.q.op === "flood" ? qcFloodCard(c, e) : "";
+    // An answer we can't draw still gets its receipt card (below), like any other paid call.
+    return html ? [{ key: key("qc"), html: html }] : null;
+  }
+  /**
+   * Steps on the Quantcomm bridge: "Checked live flood alerts · Quantcomm · $0.05", "Read Quantcomm's
+   * view on COF · $0.10". Its refusals come before the paywall, so they read as calm one-liners that
+   * say nothing was charged. Returns false for results that aren't HTTP answers (a block, an approval,
+   * "not connected"), so the generic wording takes over.
+   */
+  function qcStep(s, q, r, e) {
+    var t = q.ticker || "that company";
+    s.icon = "wave";
+    if (q.op === "alerts") {
+      s.label = "Checked live flood alerts · Quantcomm";
+      s.live = "Checking live flood alerts on Quantcomm";
+    } else if (q.op === "flood") {
+      s.label = "Checked " + t + "'s flood exposure · Quantcomm";
+      s.live = "Checking " + t + "'s flood exposure on Quantcomm";
+    } else if (q.op === "view") {
+      s.label = "Read Quantcomm's view on " + t;
+      s.live = "Reading Quantcomm's view on " + t;
+    } else {
+      s.label = "Looked up what Quantcomm covers";
+      s.live = "Looking up what Quantcomm covers";
+    }
+    if (r == null) return true;
+    var c = qcCall(e);
+    if (!c) return false;
+    var d = c.d;
+    if (c.h.status < 200 || c.h.status >= 300) {
+      var code = str(d.error);
+      s.st = "soft";
+      var said = firstLine(str(d.message)).replace(/\s*\([^)]*\)/g, "").replace(/\.$/, "").trim();
+      if (code === "quantcomm_unavailable" || (!code && c.h.status === 503)) s.label = !said || /isn't running/.test(said) || said.length > 110 ? "Quantcomm isn't running; nothing was charged" : said;
+      else if (code === "ticker_not_covered") {
+        s.label = "Quantcomm doesn't cover " + t + "; nothing was charged";
+        var cov = qcArr(d.covered || d.tickers, 40).map(function (x) { return str(qcObj(x) ? x.ticker : x).toUpperCase().replace(/[^A-Z0-9.-]/g, "").slice(0, 8); }).filter(Boolean);
+        s.detail = cov.length ? "It covers " + cov.slice(0, 8).join(", ") + (cov.length > 8 ? " and " + (cov.length - 8) + " more" : "") : "";
+      } else if (code === "no_analyst_view") s.label = "Quantcomm has no analyst view of " + t + "; nothing was charged";
+      else if (code === "quantcomm_changed") s.label = "Quantcomm's data changed; nothing was charged";
+      else {
+        s.label = "Quantcomm returned " + c.h.status;
+        s.detail = firstLine(str(d.message)) || code;
+        s.st = "err";
+      }
+      return true;
+    }
+    var rc = parseReceipt(c.h.tail);
+    if (rc && rc.amount) s.label += " · " + rc.amount;
+    var parts = [];
+    if (q.op === "alerts") {
+      var tot = num((qcObj(d.alerts) || {}).total);
+      var nb = num((qcObj(d.banksUnderAlerts) || {}).count);
+      var c1 = qcObj(d.capitalOne);
+      parts = [tot != null ? plural(tot, "alert", "alerts") : "", nb != null ? plural(nb, "bank", "banks") + " under alerts" : "", c1 && num(c1.locationsChecked) != null ? "Capital One " + (num(c1.underAlert) || 0) + " of " + num(c1.locationsChecked) : ""];
+    } else if (q.op === "flood") {
+      var p = qcObj(d.panels) || {};
+      var bm = qcObj(p.branch_map);
+      var sh = qcObj(p.storm_history);
+      var own = qcArr((qcObj(p.alert_exposure) || {}).company, 1).filter(qcObj)[0];
+      parts = [
+        bm && num(bm.locationsChecked) != null ? "Capital One " + (num(bm.underAlert) || 0) + " of " + num(bm.locationsChecked) + " under alerts" : "",
+        own && own.shareOfDeposits != null ? qcBank(own.bank) + " " + qcPct(own.shareOfDeposits) + " of deposits under alerts" : "",
+        sh && str(sh.underperformed) ? "underperformed after " + str(sh.underperformed).slice(0, 12) + " storms" : "",
+      ];
+    } else if (q.op === "view") {
+      var vv = QC_VIEW[str(d.view).toLowerCase()];
+      var pk = qcObj(d.pick);
+      parts = [vv || "", num(d.confidence) != null ? "confidence " + Math.round(num(d.confidence)) : "", pk && str(pk.action) ? "Quantcomm's call: " + str(pk.action).toLowerCase().slice(0, 16) : ""];
+    } else {
+      var cos = qcArr(d.companies, 500);
+      parts = [cos.length ? plural(cos.length, "company", "companies") : ""];
+    }
+    s.detail = parts.filter(Boolean).join(" · ");
+    return true;
   }
 
   // ================================================================ tool result parsing (apps/mcp/src/server.ts, format.ts)
@@ -656,8 +1730,8 @@
   function connStatusFromText(r) {
     r = str(r);
     if (/^(Connected|Owner connected) /.test(r) || /is already connected/.test(r) || /always available; it does not need connecting/.test(r)) return "connected";
-    if (/^Waiting for the owner to approve connecting/.test(r)) return "pending";
-    if (/denied connecting|^The owner denied/.test(r)) return "declined";
+    if (/^Waiting for the owner to approve (?:connecting|adding)/.test(r) || /^Asked your owner to add/.test(r)) return "pending";
+    if (/denied (?:connecting|adding)|^The owner denied/.test(r)) return "declined";
     if (/expired without a decision/.test(r)) return "expired";
     return "";
   }
@@ -671,22 +1745,47 @@
     for (var i = entries.length - 1; i >= 0; i--) if (entries[i].kind === "tool" && entries[i].result == null) return entries[i];
     return null;
   }
+  /** request_service with a store link instead of a directory id (§15.4): what we know of the store. */
+  function storeRequest(e) {
+    var args = objArgs(e);
+    var link = storeLink(args.shopify_store_url);
+    var r = e && e.result != null ? str(e.result) : "";
+    var idm = r.match(/service_id: "shopify-([a-z0-9][a-z0-9-]{0,62})"/);
+    var said = storeInText(r);
+    var nm = said ? null : r.match(/approve (?:connecting|adding) (.{1,80}?)\. Approval id/) || r.match(/^(?:Owner connected|Connected) (.{1,80}?)\.(?:\s|$)/) || r.match(/denied (?:connecting|adding) (.{1,80}?)\./) || r.match(/request to (?:connect|add) (.{1,80}?) expired/);
+    return {
+      is: !!str(args.shopify_store_url).trim() && !str(args.service_id).trim(),
+      link: link,
+      handle: idm ? idm[1] : said && said.handle ? said.handle : link.handle,
+      named: said ? said.name : nm ? nm[1].trim() : "",
+    };
+  }
+  /** The service a request_service call is about: its directory id, or the Shopify store it adds. */
+  function requestedId(e) {
+    var id = str(objArgs(e).service_id).trim();
+    if (id) return id;
+    var rq = storeRequest(e);
+    return rq.is && rq.handle ? "shopify-" + rq.handle : "";
+  }
   function serviceNameOfRequest(e) {
     var a = objArgs(e);
     if (a.custom && typeof a.custom === "object") return str(a.custom.name).slice(0, 60) || "a new service";
+    var rq = storeRequest(e);
+    if (rq.is) return rq.named || (rq.handle && (shops[rq.handle] || {}).name) || rq.link.host || "a Shopify store";
     return svcInfo(str(a.service_id)).name;
   }
   function waitingText(a, e) {
     var args = objArgs(e);
     if (!e) return "Waiting for your approval";
-    if (e.name === "request_service") return "Waiting for you to connect " + serviceNameOfRequest(e);
+    if (e.name === "request_service") return "Waiting for you to " + (storeRequest(e).is ? "add " : "connect ") + serviceNameOfRequest(e);
     if (e.name === "fetch_url") {
       var svc = serviceForUrl(str(args.url));
-      return "Waiting for your OK to pay " + (svc ? svc.name : hostOnly(args.url));
+      var due = checkoutTotal(a, str(args.url));
+      return "Waiting for your OK to pay " + (due ? due + " to " : "") + (svc ? svc.name : hostOnly(args.url));
     }
     if (e.name === "transfer_usdc") return "Waiting for your OK to send " + money(args.amount);
     var ap = approvals[str(args.approval_id).trim()] || approvals[str(((a && a.status) || {}).approvalId)];
-    if (ap && ap.subject) return ap.kind === "service" ? "Waiting for you to " + ap.subject.replace(/^Connect/, "connect") : "Waiting for your OK: " + ap.subject;
+    if (ap && ap.subject) return ap.kind === "service" ? "Waiting for you to " + ap.subject.replace(/^Connect/, "connect").replace(/^Add/, "add") : "Waiting for your OK: " + ap.subject;
     return "Waiting for your approval";
   }
   function stepOf(a, e) {
@@ -723,12 +1822,15 @@
       }
       case "request_service": {
         var nm = serviceNameOfRequest(e);
-        s.icon = "plug";
-        s.label = "Asked you to connect " + nm;
-        s.live = "Asking you to connect " + nm;
+        var adding = storeRequest(e).is;
+        s.icon = adding || handleOfId(args.service_id) ? "bag" : "plug";
+        s.label = (adding ? "Asked you to add " : "Asked you to connect ") + nm;
+        s.live = (adding ? "Asking you to add " : "Asking you to connect ") + nm;
         if (r) {
           var cs = connStatusFromText(r);
-          s.detail = { connected: "Connected", pending: "Waiting for you", declined: "You declined", expired: "Request expired" }[cs] || (e.isError ? first : "");
+          // Resolved later (check_approval, or the owner decided while it was between waits)?
+          if (cs === "pending" && a) cs = connStatus(a, e);
+          s.detail = { connected: adding ? "Added" : "Connected", pending: "Waiting for you", declined: "You declined", expired: "Request expired" }[cs] || (e.isError ? first : "");
           if (cs === "pending") s.st = "wait";
           if (cs === "declined" || cs === "expired") s.st = "err";
         }
@@ -794,7 +1896,20 @@
         s.live = "Checking on your approval";
         if (r) {
           var rc2 = parseReceipt(r);
-          s.detail = rc2 ? rc2.verb + " " + rc2.amount + " " + rc2.prep + " " + rc2.party : /^Owner connected (.+?)\./.test(r) ? "You connected " + r.match(/^Owner connected (.+?)\./)[1] : /denied/.test(r) ? "You declined" : /expired/.test(r) ? "Expired" : /^Waiting/.test(r) ? "Still waiting for you" : first;
+          var so = shopCall(e);
+          if (so && so.b.op === "checkout" && so.h.status < 300 && isPlaced(confirmationOf(so.d))) {
+            s.label = paidLabel(confirmationOf(so.d), rc2);
+            s.icon = "card";
+            s.detail = "You approved · " + shopName(so.b.handle, confirmationOf(so.d).store) + " · simulated order";
+            break;
+          }
+          var qa = qcCall(e);
+          if (qa && qcStep(s, qa.q, r, e)) {
+            if (s.st === "ok") s.detail = "You approved" + (s.detail ? " · " + s.detail : "");
+            break;
+          }
+          var said = /^Owner connected/.test(r) ? storeInText(r) : null;
+          s.detail = said ? "You connected " + said.name : rc2 ? rc2.verb + " " + rc2.amount + " " + rc2.prep + " " + rc2.party : /^Owner connected (.+?)\./.test(r) ? "You connected " + r.match(/^Owner connected (.+?)\./)[1] : /denied/.test(r) ? "You declined" : /expired/.test(r) ? "Expired" : /^Waiting/.test(r) ? "Still waiting for you" : first;
           if (/^Waiting/.test(r)) s.st = "wait";
           if (/denied|expired/.test(r) && !rc2) s.st = "err";
         }
@@ -819,6 +1934,10 @@
     s.icon = "globe";
     s.label = (method === "POST" ? "Sent a request to " : "Opened ") + where;
     s.live = svc ? "Using " + svc.name : (method === "POST" ? "Sending a request to " : "Opening ") + where;
+    var sb = bridgeOf(url);
+    if (sb && shopStep(s, sb, r, e)) return;
+    var qq = qcOf(url);
+    if (qq && qcStep(s, qq, r, e)) return;
     if (r == null) return;
     var rc = parseReceipt(r);
     if (rc && rc.prep === "to") {
@@ -862,6 +1981,85 @@
     }
     if (/Could not reach/.test(r)) { s.label = "Couldn't reach " + hostOnly(url); s.st = "err"; return; }
     if (e.isError) { s.label = "Couldn't open " + where; s.detail = firstLine(r); }
+  }
+  /** "Paid $110.00 · Allowance Card ••1234 · order ALW-7K2P-9QXD" for a placed order (and its receipt line, if any). */
+  function paidLabel(o, rc) {
+    var amt = rc && rc.amount ? rc.amount : num(o.total) != null ? money(o.total) : "";
+    var ref = orderRef(o);
+    return "Paid " + (amt ? amt + " · " : "") + cardLabel(o) + (ref ? " · order " + ref : "");
+  }
+  /**
+   * Steps on the Shopify bridge (§15.1): "Searched Allbirds for “wool runners”", "Started a cart ·
+   * $110.00", "Paid $110.00 · Allowance Card ••1234 · order ALW-…". Returns false when the result is
+   * not an HTTP response (a block, a pending approval, a refusal), so the generic wording takes over.
+   */
+  function shopStep(s, b, r, e) {
+    var store = svcInfo("shopify-" + b.handle).name;
+    var q = b.q;
+    s.icon = "bag";
+    if (b.op === "products") {
+      s.label = q ? "Searched " + store + " for “" + q + "”" : "Browsed " + store;
+      s.live = q ? "Searching " + store + " for “" + q + "”" : "Browsing " + store;
+    } else if (b.op === "product") {
+      var pn = prettyId(b.item) || "a product";
+      s.label = "Looked at " + pn;
+      s.live = "Looking at " + pn;
+    } else if (b.op === "carts") {
+      s.label = "Started a cart at " + store;
+      s.live = "Starting a cart at " + store;
+    } else if (b.op === "checkout") {
+      s.label = "Checked out at " + store;
+      s.live = "Checking out at " + store;
+    } else {
+      s.label = "Looked up " + store;
+      s.live = "Looking up " + store;
+    }
+    if (r == null) return true;
+    var c = shopCall(e);
+    if (!c) return false;
+    var d = c.d;
+    store = shopName(b.handle, confirmationOf(d).store || d.store);
+    if (c.h.status < 200 || c.h.status >= 300) {
+      var code = str(d.error);
+      if (b.op === "checkout" && code === "cart_already_paid") {
+        var ref = orderRef(confirmationOf(d));
+        s.label = "This cart was already paid";
+        s.detail = ref ? "Order " + ref : "";
+        s.st = "soft";
+      } else if (b.op === "checkout" && (code === "cart_not_found" || c.h.status === 404)) {
+        s.label = "That cart at " + store + " expired";
+        s.detail = "Nothing was paid";
+        s.st = "err";
+      } else {
+        s.label = store + " returned " + c.h.status;
+        s.detail = firstLine(str(d.message)) || code;
+        s.st = "err";
+      }
+      return true;
+    }
+    if (b.op === "products") {
+      var list = (Array.isArray(d.products) ? d.products : []).map(cleanProduct).filter(Boolean);
+      var mins = list.map(function (p) { return p.min; }).filter(function (x) { return x != null; });
+      var count = d.truncated ? list.length + "+ products" : plural(list.length, "product", "products");
+      s.detail = list.length ? count + (mins.length ? " · from " + money(Math.min.apply(null, mins)) : "") : "No matches";
+    } else if (b.op === "product") {
+      var p = cleanProduct(d.product);
+      if (p) {
+        s.label = "Looked at " + p.title;
+        s.detail = [priceLabel(p.min, p.max), p.variants.length > 1 ? plural(p.variants.length, "option", "options") : "", p.available ? "" : "sold out"].filter(Boolean).join(" · ");
+      }
+    } else if (b.op === "carts") {
+      var n = linesOf(d.lines).reduce(function (t, l) { return t + l.qty; }, 0);
+      s.label = "Started a cart" + (num(d.total) != null ? " · " + money(d.total) : "");
+      s.detail = plural(n, "item", "items") + " · " + store;
+    } else if (b.op === "checkout") {
+      var o = confirmationOf(d);
+      var rc = parseReceipt(c.h.tail);
+      s.icon = "card";
+      s.label = isPlaced(o) ? paidLabel(o, rc) : "Paid " + (rc && rc.amount ? rc.amount + " " : "") + "at " + store;
+      s.detail = store + (o.simulated !== false && isPlaced(o) ? " · simulated order" : "") + (rc && rc.tx ? " · tx " + rc.tx : "");
+    }
+    return true;
   }
 
   // ================================================================ cards (rich attachments derived from tool results)
@@ -933,8 +2131,7 @@
     );
   }
   function connStatus(a, e) {
-    var args = objArgs(e);
-    var id = str(args.service_id);
+    var id = requestedId(e);
     if (e.result == null) {
       var ap = approvalForAnchor(a, e.id);
       if (ap && ap.phase === "decided") return ap.status === "approved" ? "connected" : ap.status === "expired" ? "expired" : "declined";
@@ -959,19 +2156,55 @@
     if (!st) st = e.isError ? "failed" : agentHasService(a, id) ? "connected" : "pending";
     return st;
   }
+  /** What a store-link request (§15.4) is about, before and after the wallet discovered the store. */
+  function storeRequestInfo(a, e) {
+    var rq = storeRequest(e);
+    var capArg = num(objArgs(e).max_price);
+    var host = rq.link.host;
+    var info = rq.handle
+      ? svcInfo("shopify-" + rq.handle)
+      : { id: "", name: host || "A Shopify store", provider: "Shopify store", glyph: "bag", color: SHOP_GREEN, shopify: { handle: "", domain: host, site: host ? siteUrl("https://" + host) : "", host: host }, permissions: [], maxPrice: "" };
+    var described = !!info.id && !!((svcFromAgents(info.id) || {}).permissions || (learned[info.id] || {}).permissions);
+    if (rq.named) info.name = rq.named;
+    // Until the wallet has discovered it, the store's link is the only honest name we have.
+    else if (host && !(shops[rq.handle] || {}).name && !learned[info.id] && !svcFromAgents(info.id)) info.name = host;
+    // The storefront the agent linked to, until the wallet or the bridge names it.
+    if (host && !myshopify(host) && info.shopify && myshopify(info.shopify.host)) {
+      info.shopify = { handle: info.shopify.handle, domain: info.shopify.domain, site: siteUrl("https://" + host), host: host };
+    }
+    if (capArg != null && !num(info.maxPrice)) info.maxPrice = String(capArg);
+    // The wallet caps a store an agent asks for at the agent's max per payment (§15.3).
+    var lim = (a && a.wallet && a.wallet.limits) || {};
+    if (!num(info.maxPrice) && num(lim.maxPerTx)) info.maxPrice = String(num(lim.maxPerTx));
+    if (!described) info.permissions = shopPerms(info.name, info.maxPrice);
+    return info;
+  }
   function connCard(a, e) {
     var args = objArgs(e);
     var custom = args.custom && typeof args.custom === "object" ? args.custom : null;
+    var adding = !custom && storeRequest(e).is;
     var info = custom
       ? { name: str(custom.name).slice(0, 60) || "New service", provider: "Proposed by " + a.name + " · " + hostOnly(custom.base_url), glyph: "globe", color: "#7C8799", permissions: ["Pay up to " + money(custom.max_price) + " per request under " + hostPath(custom.base_url)] }
-      : svcInfo(str(args.service_id));
+      : adding
+        ? storeRequestInfo(a, e)
+        : svcInfo(str(args.service_id));
+    var shop = !custom && info.shopify;
     var st = connStatus(a, e);
-    var badge = { connected: ["ok", "check", "Connected"], pending: ["wait", "clock", "Pending"], declined: ["err", "x", "Declined"], expired: ["err", "clock", "Expired"], failed: ["err", "x", "Not sent"] }[st];
+    var badge = { connected: ["ok", "check", adding ? "Added" : "Connected"], pending: ["wait", "clock", "Pending"], declined: ["err", "x", "Declined"], expired: ["err", "clock", "Expired"], failed: ["err", "x", "Not sent"] }[st];
+    var fail = st === "failed" && e.result != null ? firstLine(e.result).replace(/^ERROR:\s*/, "") : "";
+    // Shopify: the tile already says Shopify, so the subtitle is the storefront's domain and its cap.
+    var sub = shop
+      ? shop.host && shop.host !== info.name.toLowerCase() ? siteHtml(shop) : ""
+      : esc(custom ? info.provider : (info.provider ? "by " + info.provider : "") + (info.pricing ? " · " + info.pricing : ""));
+    if (shop && !fail && num(info.maxPrice)) sub += (sub ? " · " : "") + "up to " + esc(money(info.maxPrice)) + " an order";
+    var name = shop && info.name === shop.host ? domainHtml(info.name) : esc(info.name);
     return (
-      '<div class="card conn ' + st + '"><div class="rrow">' + tileHtml(info, "t28") +
-      '<span class="rr-what"><span class="rr-name">Asked to connect ' + esc(info.name) + '</span><span class="rr-sub">' + esc(custom ? info.provider : (info.provider ? "by " + info.provider : "") + (info.pricing ? " · " + info.pricing : "")) + "</span></span>" +
+      '<div class="card conn ' + st + (shop ? " shopc" : "") + '"><div class="rrow">' + tileHtml(info, "t28") +
+      '<span class="rr-what"><span class="rr-name">' + (adding ? "Asked to add " : "Asked to connect ") + name + "</span>" + (sub ? '<span class="rr-sub">' + sub + "</span>" : "") + "</span>" +
       '<span class="pill ' + badge[0] + '">' + icon(badge[1]) + badge[2] + "</span></div>" +
       (custom ? '<div class="c-flag">' + icon("warn") + "Not in the directory · proposed by the agent</div>" : "") +
+      (adding && st === "pending" ? '<div class="c-note">Not in your services yet. Approving adds it and connects it to ' + esc(a.name) + ".</div>" : "") +
+      (fail ? '<div class="c-fail">' + esc(fail.slice(0, 200)) + "</div>" : "") +
       "</div>"
     );
   }
@@ -986,6 +2219,12 @@
     }
     if (r == null) return out;
     var rc, b;
+    // Shopify bridge responses get their own cards; a paid checkout's order card carries the receipt.
+    var sc = shopCards(a, e, key);
+    if (sc) return sc;
+    // Quantcomm research cards carry their own receipt line (§17.4).
+    var qcs = qcCards(a, e, key);
+    if (qcs) return qcs;
     if (e.name === "fetch_url" || e.name === "check_approval") {
       rc = parseReceipt(r);
       if (rc && rc.verb === "Sent") out.push({ key: key("rcpt"), html: receiptCard(rc, e) });
@@ -1027,7 +2266,7 @@
       var e = log[i];
       if (e.kind === "user") break;
       if (e.kind !== "tool" || e.result == null) continue;
-      var id = /^Waiting for the owner/.test(str(e.result)) ? approvalIdIn(e.result) : "";
+      var id = /^Waiting for the owner|^Asked your owner to add/.test(str(e.result)) ? approvalIdIn(e.result) : "";
       return validApprovalId(id) ? id : null;
     }
     return null;
@@ -1038,12 +2277,13 @@
       (a.log || []).forEach(function (e) { if (e.kind === "tool" && e !== anchor && e.result != null && str(e.result).indexOf(id) >= 0 && e.name !== "check_approval") src = e; });
     }
     var args = objArgs(src);
-    if (kind === "service") return "Connect " + (src && src.name === "request_service" ? serviceNameOfRequest(src) : "a service");
+    if (kind === "service") return src && src.name === "request_service" ? (storeRequest(src).is ? "Add " : "Connect ") + serviceNameOfRequest(src) : "Connect a service";
     if (src && src.name === "transfer_usdc") return "Send " + money(args.amount) + " to " + shortAddr(args.to);
     if (src && src.name === "fetch_url") {
       var w = str(src.result).match(/approve (\$[\d,.]+) to (.{1,60}?)\. Approval id/);
       var svc = serviceForUrl(str(args.url));
-      return "Pay " + (w ? w[1] + " to " : "") + (svc ? svc.name : w ? w[2] : hostOnly(args.url));
+      var due = w ? w[1] : checkoutTotal(a, str(args.url));
+      return "Pay " + (due ? due + " to " : "") + (svc ? svc.name : w ? w[2] : hostOnly(args.url));
     }
     return "Payment";
   }
@@ -1063,7 +2303,7 @@
       else if (anchor && anchor.name === "transfer_usdc") kind = "transfer";
       else {
         kind = "payment";
-        log.forEach(function (x) { if (x.kind === "tool" && x.result != null && str(x.result).indexOf(id) >= 0 && /connecting|connect/.test(str(x.result))) kind = "service"; });
+        log.forEach(function (x) { if (x.kind === "tool" && x.result != null && str(x.result).indexOf(id) >= 0 && /connecting|connect|adding|add the Shopify store/.test(str(x.result))) kind = "service"; });
       }
     }
     approvals[id] = { id: id, agent: a.name, anchor: anchor ? anchor.id : null, kind: kind, subject: approvalSubject(a, anchor, kind, id), phase: DASH ? "loading" : "failed", height: 0, status: "", gotSize: false };
@@ -1207,7 +2447,7 @@
     var open = !!ui.openStep[e.id];
     var info = stepOf(a, e);
     var st = info.st;
-    var stIcon = st === "run" ? '<span class="spin"></span>' : st === "ok" ? icon("check") : st === "err" ? icon("x") : icon("clock");
+    var stIcon = st === "run" ? '<span class="spin"></span>' : st === "ok" ? icon("check") : st === "err" ? icon("x") : st === "soft" ? icon("info") : icon("clock");
     var label = st === "run" || (st === "wait" && e.result == null) ? info.live : info.label;
     var ms = e.ms != null ? (e.ms / 1000).toFixed(1) + "s" : e.result == null && live ? '<span data-since="' + ts(e.at) + '"></span>' : "";
     var args = e.args;
@@ -1638,11 +2878,29 @@
   }
 
   // ================================================================ header, banners, empty states
+  /**
+   * The agent's Capital One allowance account (§16.5), from `wallet.bank` (the chat server copies
+   * /v1/me's `bank`): { provider, account, last4 }, last4 alphanumeric, up to 8. Null without one.
+   */
+  function bankOf(a) {
+    var b = a && a.wallet && a.wallet.bank;
+    if (!b || typeof b !== "object") return null;
+    var last4 = str(b.last4).replace(/[^0-9A-Za-z]/g, "").slice(-8);
+    if (!last4) return null;
+    return { provider: str(b.provider).replace(/\s+/g, " ").trim().slice(0, 30) || "Capital One", account: str(b.account).replace(/\s+/g, " ").trim().slice(0, 60), last4: last4 };
+  }
+  function bankTagHtml(a) {
+    var b = bankOf(a);
+    if (!b) return "";
+    var tip = b.provider + " allowance account" + (b.account ? " “" + b.account + "”" : "") + " ••" + b.last4 + " (Nessie sandbox). Every payment shows on its statement.";
+    return '<span class="hbank" title="' + esc(tip) + '">' + icon("bank") + '<span class="hbank-name">' + esc(b.provider) + " </span>••" + esc(b.last4) + "</span>";
+  }
   function subtitleHtml(a) {
     var w = a.wallet || {};
     var s = a.status || {};
     var up = ui.balUp[a.name] && ui.balUp[a.name] > Date.now();
-    var bal = w.balance != null ? '<span class="hb' + (up ? " up" : "") + '">' + esc(money(w.balance)) + "</span> · " : "";
+    var bank = bankTagHtml(a);
+    var bal = w.balance != null ? '<span class="hb' + (up ? " up" : "") + '">' + esc(money(w.balance)) + "</span> · " + (bank ? bank + " · " : "") : bank ? bank + " · " : "";
     if (w.frozen) return bal + '<span class="frz">frozen by wallet policy</span>';
     if (s.state === "waiting_approval" || activeApprovalId(a)) return bal + '<span class="wait">waiting for you</span>';
     if (s.state === "retrying") return bal + '<span class="wait">model busy, retrying…</span>';
@@ -1770,7 +3028,8 @@
     return (
       close +
       '<div class="info-hero">' + avatarHtml(a.name, 72) + "<h2>" + esc(a.name) + '</h2><div class="role">' + esc(kindLabel(a.name)) + "</div>" + pill + "</div>" +
-      '<div class="info-sec"><div class="stats"><div class="stat big"><div class="k">Balance</div><div class="bal-row"><div class="v">' + esc(money(w.balance)) + "</div>" + addMoneyBtn(a.name, "pill-btn") + '</div></div><div class="stat"><div class="k">Spent today</div><div class="v">' + esc(money(w.spentToday)) + '</div></div><div class="stat"><div class="k">Earned today</div><div class="v in">' + esc(money(w.earnedToday)) + "</div></div></div></div>" +
+      '<div class="info-sec"><div class="stats"><div class="stat big"><div class="k">Balance</div><div class="bal-row"><div class="v">' + esc(money(w.balance)) + "</div>" + addMoneyBtn(a.name, "pill-btn") + "</div>" +
+      (bankOf(a) ? '<div class="bank-line">' + icon("bank") + "<span>Funded from " + esc(bankOf(a).provider) + " ••" + esc(bankOf(a).last4) + " · Nessie sandbox</span>" + (DASH ? '<button class="bank-view" data-action="bank">View</button>' : "") + "</div>" : "") + '</div><div class="stat"><div class="k">Spent today</div><div class="v">' + esc(money(w.spentToday)) + '</div></div><div class="stat"><div class="k">Earned today</div><div class="v in">' + esc(money(w.earnedToday)) + "</div></div></div></div>" +
       '<div class="info-sec"><h3>Connected services</h3>' + tiles + "</div>" +
       '<div class="info-sec"><h3>Limits</h3>' +
       kv("Max per payment", esc(money(lim.maxPerTx))) +
@@ -1801,6 +3060,7 @@
     } else if (group) {
       c.push({ label: "Introduce yourselves", text: "Introduce yourselves in one line each: what you do, and how much money is in your wallet." });
     } else if (names[0] === "researcher") {
+      c.push({ label: "Banks under flood alerts", text: "Are any banks exposed to the coastal flooding right now? What about Capital One?" });
       c.push({ label: "Weather, headlines & ACME stock", text: "What's the weather in Paris today, the top 3 headlines, and the ACME stock price?" });
     } else if (names[0] === "shopper") {
       c.push({ label: "Order a pizza", text: "Order me a large mushroom pizza, delivered to Hackathon Hall table 7." });
@@ -2096,11 +3356,12 @@
 
   // ---------------------------------------------------------------- owner sheets (dashboard embed)
   function ownerTitle(s) {
-    return s.which === "add-money" ? "Add money to " + s.agent : "New agent";
+    return s.which === "add-money" ? "Add money to " + s.agent : s.which === "bank" ? "Capital One" : "New agent";
   }
   function openOwnerSheet(which, agent) {
     if (which === "add-money" && !(typeof agent === "string" && AGENT_NAME_RE.test(agent))) return;
-    var q = which === "add-money" ? "?sheet=add-money&agent=" + encodeURIComponent(agent) : "?sheet=new-agent";
+    // §16.5: the bank sheet (checking and every allowance account) embeds like the other owner sheets.
+    var q = which === "add-money" ? "?sheet=add-money&agent=" + encodeURIComponent(agent) : which === "bank" ? "?sheet=bank" : "?sheet=new-agent";
     var s = {
       kind: "owner",
       which: which,
@@ -2125,7 +3386,9 @@
     var title = ownerTitle(s);
     var why = s.which === "add-money"
       ? "Money comes from your wallet, so you add it on the dashboard. It didn't answer here."
-      : "New agents get their key in your wallet, so you create them on the dashboard. It didn't answer here.";
+      : s.which === "bank"
+        ? "Your Capital One accounts are yours only, so they open on the dashboard. It didn't answer here."
+        : "New agents get their key in your wallet, so you create them on the dashboard. It didn't answer here.";
     return (
       '<div class="os-head"><span class="os-logo">' + icon("shieldCheck") + "</span>" +
       '<span class="os-t"><b>' + esc(title) + "</b><span>Allowance wallet · only you can do this</span></span>" +
@@ -2169,7 +3432,9 @@
       var who = str(d.name);
       var amt = num(d.amount);
       closeSheet();
-      toast(amt != null && amt > 0 && AGENT_NAME_RE.test(who) ? "Added " + money(amt) + " to " + who + "." : "Money added.");
+      // With a bank behind the wallet (§16.5) the dollars moved from checking to the agent's account.
+      var banked = AGENT_NAME_RE.test(who) && bankOf(state.agents[who]);
+      toast(amt != null && amt > 0 && AGENT_NAME_RE.test(who) ? (banked ? "Moved " + money(amt) + " from Checking to " + who + "'s allowance account." : "Added " + money(amt) + " to " + who + ".") : "Money added.");
     }
   }
   /** The owner just created an agent: select it as soon as the chat server hosts it. */
@@ -2457,6 +3722,8 @@
       openGroupSheet("");
     } else if (act === "add-money") {
       openOwnerSheet("add-money", t.getAttribute("data-agent"));
+    } else if (act === "bank") {
+      openOwnerSheet("bank");
     } else if (act === "group-edit") {
       openGroupSheet(t.getAttribute("data-group"));
     } else if (act === "group-delete") {
@@ -2507,6 +3774,18 @@
     } else if (act === "act") {
       var k = t.getAttribute("data-key");
       ui.openAct[k] = !ui.openAct[k];
+      ui.holdScroll = true;
+      ui.stickPausedUntil = Date.now() + 400;
+      render();
+    } else if (act === "sim") {
+      var sk = t.getAttribute("data-key");
+      ui.openSim[sk] = !ui.openSim[sk];
+      ui.holdScroll = true;
+      ui.stickPausedUntil = Date.now() + 400;
+      render();
+    } else if (act === "qc-more") {
+      var qk = t.getAttribute("data-key");
+      ui.openQc[qk] = !ui.openQc[qk];
       ui.holdScroll = true;
       ui.stickPausedUntil = Date.now() + 400;
       render();

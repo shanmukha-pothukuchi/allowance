@@ -5,6 +5,10 @@
  */
 export type {
   AgentPublic,
+  BankAccountView,
+  BankStatementEntry,
+  BankStatementResponse,
+  BankSummary,
   CreateAgentRequest,
   CreateAgentResponse,
   Approval,
@@ -13,12 +17,15 @@ export type {
   EventType,
   Policy,
   Receipt,
+  ReceiptBank,
   ReceiptKind,
   ReceiptStatus,
   ServiceCategory,
   ServiceGrant,
   ServiceKind,
   ServiceManifest,
+  ShopifyStore,
+  ShopifyStoreRef,
   SummaryResponse,
   WalletEvent,
   Address,
@@ -31,6 +38,13 @@ export type ConnectionStatus = "connecting" | "live" | "reconnecting" | "offline
 
 /** Owner view of a directory entry (§13.2): list entries omit `docs`; `connectedAgents` are agent ids. */
 export type DirectoryService = Omit<ServiceManifest, "docs"> & { docs?: string; connectedAgents?: string[] };
+
+/** `POST /v1/directory/shopify` (§15.3). `maxPrice` is the per-order cap; `connectTo` are agent ids. */
+export interface AddShopifyStoreRequest {
+  url: string;
+  maxPrice?: string;
+  connectTo?: string[];
+}
 
 /** All event types, in one place, so the SSE client can subscribe to each named event. */
 export const EVENT_TYPES = [
@@ -51,4 +65,7 @@ export const EVENT_TYPES = [
   "service.requested",
   "service.connected",
   "service.disconnected",
+  // Capital One (Nessie sandbox) mirror of a receipt (§16.3): they update a receipt's marker in place.
+  "bank.posted",
+  "bank.failed",
 ] as const;

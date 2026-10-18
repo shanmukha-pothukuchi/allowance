@@ -81,6 +81,28 @@ New broadcast**, "Trip team" with researcher and travel-planner, and send one me
 
 *"Anyone can hire an agent in a minute. The money rules come with it."*
 
+## Optional — Shop any Shopify store (40 s)
+
+Chat page, **shopper**: *"Find me a pair of wool runners on allbirds.com, size 10, under $120."* It
+sees the store isn't connected and asks you to add it (approve; the card shows allbirds.com and the
+cap). It searches the real catalog (real product photos), builds a real Shopify cart, and pays in
+USDC. Over its $10 threshold, so a second approval appears. Approve. The confirmation card shows the
+store, the item, "Paid with Allowance Card ••1234" and a **Simulated order** badge. Say it: *"The
+catalog, the cart and the payment from the agent's wallet are real. The card that pays the store is
+the part we'd plug into a card issuer and Shopify's agent checkout."*
+
+## Optional — Capital One and live flood data (45 s)
+
+Needs `NESSIE_API_KEY` in `.env` and Quantcomm running (re-run its `scripts/run_live.py` first so the
+alerts are fresh). Chat page, **researcher**, chip *"Banks under flood alerts"*: *"Are any banks
+exposed to the coastal flooding right now? What about Capital One?"* It finds Quantcomm in the
+directory and asks to connect it (approve). It pays $0.05 and the flood card shows the alerts, the
+banks with the most deposits under them (TowneBank about 60%), and Capital One's sandbox branches
+(0 of 220 under alerts in our run). Then open the dashboard's **Bank** sheet: the $0.05 is on the
+researcher's Capital One allowance account as a purchase at "Quantcomm Flood Research", next to the
+top-up from checking that funded it. Say it: *"The agent pays in USDC; the dollars side is a real
+Capital One account through Nessie, so every agent purchase lands on a bank statement."*
+
 ## 2:35 — Close (25 s)
 
 Tap **Unfreeze** on the phone (or dashboard). *"Open protocol for getting paid. Policy outside the
@@ -109,3 +131,5 @@ Sepolia with real USDC."* Show the explorer tab briefly: the same tx hashes.
 - [ ] Dashboard shows "live" and 8 agents
 - [ ] Telegram `/start` answered; `TELEGRAM_BOT_TOKEN` in `.env`
 - [ ] Phone screen mirroring or camera ready
+- [ ] Optional bank act: `NESSIE_API_KEY` in `.env`; dashboard top bar shows "Capital One Checking"
+- [ ] Optional flood act: Quantcomm running on :8000 with fresh alerts; `curl localhost:4080/health` says `"upstream":"up"`

@@ -33,7 +33,7 @@ async function get(path: string) {
 describe("buildCatalog", () => {
   const catalog = buildCatalog({ merchantUrl: MERCHANT, directoryUrl: DIRECTORY });
 
-  it("has exactly the six §13.1 entries", () => {
+  it("has exactly the six §13.1 entries and Quantcomm (§17.2)", () => {
     expect(catalog.map((s) => [s.id, s.name, s.kind, s.baseUrl, s.maxPrice])).toEqual([
       ["directory", "Service Directory", "directory", DIRECTORY, "0.00"],
       ["acme-weather", "Acme Weather", "x402", `${MERCHANT}/api/weather`, "0.05"],
@@ -41,7 +41,9 @@ describe("buildCatalog", () => {
       ["acme-stocks", "Acme Stocks", "x402", `${MERCHANT}/api/stock`, "0.15"],
       ["acme-pizza", "Acme Pizza", "x402", `${MERCHANT}/pizza`, "18.50"],
       ["acme-bounties", "Acme Bounties", "agent-work", MERCHANT, "0.00"],
+      ["quantcomm", "Quantcomm Flood Research", "x402", "http://localhost:4080/quantcomm", "0.10"],
     ]);
+    expect(buildCatalog({ merchantUrl: MERCHANT, directoryUrl: DIRECTORY, quantcommBridgeUrl: "http://127.0.0.1:4480/" }).at(-1)!.baseUrl).toBe("http://127.0.0.1:4480/quantcomm");
   });
 
   it("icons, colors and every field are filled in", () => {
@@ -52,6 +54,7 @@ describe("buildCatalog", () => {
       "acme-stocks": ["📈", "#2F9E5B"],
       "acme-pizza": ["🍕", "#E5523A"],
       "acme-bounties": ["💼", "#9B5BFA"],
+      quantcomm: ["🌊", "#1D4ED8"],
     });
     for (const s of catalog) {
       for (const k of ["name", "provider", "summary", "description", "pricing", "docs"] as const) expect(s[k].length, `${s.id}.${k}`).toBeGreaterThan(3);
@@ -65,7 +68,7 @@ describe("buildCatalog", () => {
 
   it("docs say how to call each service, with the real URL and price", () => {
     const byId = Object.fromEntries(catalog.map((s) => [s.id, s])) as Record<string, ServiceManifest>;
-    for (const id of ["acme-weather", "acme-news", "acme-stocks", "acme-pizza"]) {
+    for (const id of ["acme-weather", "acme-news", "acme-stocks", "acme-pizza", "quantcomm"]) {
       expect(byId[id].docs).toContain("fetch_url");
       expect(byId[id].docs).toContain(byId[id].baseUrl);
       expect(byId[id].docs).toContain(`$${byId[id].maxPrice}`);
@@ -80,33 +83,57 @@ describe("buildCatalog", () => {
     for (const tool of ["search_services", "get_service", "request_service"]) expect(byId.directory.docs).toContain(tool);
   });
 
+  it("Quantcomm: the §17.2 entry, docs with every endpoint and price, and Quantcomm's caveats", () => {
+    const q = catalog.find((s) => s.id === "quantcomm")!;
+    expect(q).toMatchObject({
+      name: "Quantcomm Flood Research",
+      provider: "Quantcomm",
+      icon: "🌊",
+      color: "#1D4ED8",
+      category: "data",
+      kind: "x402",
+      pricing: "$0.05 per flood check · $0.10 per analyst view",
+      maxPrice: "0.10",
+      summary: "Live flood alerts and which banks (Capital One included) sit under them, satellite flood maps, and AI analyst views on bank and insurer stocks.",
+      permissions: ["Pay up to $0.10 per request", "Read Quantcomm's flood and bank research"],
+      source: "directory",
+    });
+    for (const s of [`${q.baseUrl}/alerts`, `${q.baseUrl}/companies/COF/flood`, `${q.baseUrl}/companies/<TICKER>/view`, `fetch_url { "url": "${q.baseUrl}" }`, "$0.05", "$0.10"]) expect(q.docs).toContain(s);
+    expect(q.docs).toContain("pass through Quantcomm's caveats (sandbox branches, SYNTHETIC customers, stale data)");
+    expect(q.docs).toMatch(/research, not advice/);
+    for (const code of ["quantcomm_unavailable", "ticker_not_covered", "no_analyst_view", "quantcomm_changed"]) expect(q.docs).toContain(code);
+  });
+
   it("search matches name, summary, description, provider and category; all terms must match", () => {
     expect(searchCatalog(catalog, { q: "pizza" }).map((s) => s.id)).toEqual(["acme-pizza"]);
     expect(searchCatalog(catalog, { q: "FOOD" }).map((s) => s.id)).toEqual(["acme-pizza"]);
     expect(searchCatalog(catalog, { q: "acme apis" }).length).toBe(5);
     expect(searchCatalog(catalog, { q: "weather city" }).map((s) => s.id)).toEqual(["acme-weather"]);
     expect(searchCatalog(catalog, { q: "weather spaceship" })).toEqual([]);
-    expect(searchCatalog(catalog, { category: "data" }).map((s) => s.id)).toEqual(["acme-weather", "acme-news", "acme-stocks"]);
+    expect(searchCatalog(catalog, { category: "data" }).map((s) => s.id)).toEqual(["acme-weather", "acme-news", "acme-stocks", "quantcomm"]);
+    expect(searchCatalog(catalog, { q: "flood" }).map((s) => s.id)).toEqual(["quantcomm"]);
+    expect(searchCatalog(catalog, { q: "capital one" }).map((s) => s.id)).toEqual(["quantcomm"]);
     expect(searchCatalog(catalog, { q: "work" }).map((s) => s.id)).toContain("acme-bounties");
-    expect(searchCatalog(catalog, {}).length).toBe(6);
+    expect(searchCatalog(catalog, {}).length).toBe(7);
   });
 });
 
 describe("directory HTTP", () => {
   it("GET /health", async () => {
-    expect((await get("/health")).body).toEqual({ ok: true, services: 6 });
+    expect((await get("/health")).body).toEqual({ ok: true, services: 7 });
   });
 
-  it("GET /services lists all six without docs; trailing slashes in MERCHANT_URL are trimmed", async () => {
+  it("GET /services lists all seven without docs; trailing slashes in MERCHANT_URL are trimmed", async () => {
     const { status, body } = await get("/services");
     expect(status).toBe(200);
-    expect(body.services).toHaveLength(6);
+    expect(body.services).toHaveLength(7);
     for (const s of body.services) expect(s).not.toHaveProperty("docs");
     expect(body.services.find((s: ServiceManifest) => s.id === "acme-pizza").baseUrl).toBe(`${MERCHANT}/pizza`);
   });
 
   it("GET /services?q=&category= filters", async () => {
-    expect((await get("/services?q=stock")).body.services.map((s: ServiceManifest) => s.id)).toEqual(["acme-stocks"]);
+    expect((await get("/services?q=stock")).body.services.map((s: ServiceManifest) => s.id)).toEqual(["acme-stocks", "quantcomm"]);
+    expect((await get("/services?q=quantcomm")).body.services.map((s: ServiceManifest) => s.id)).toEqual(["quantcomm"]);
     expect((await get("/services?category=shopping")).body.services.map((s: ServiceManifest) => s.id)).toEqual(["acme-pizza"]);
     expect((await get("/services?q=nothing-like-this")).body.services).toEqual([]);
   });
@@ -127,7 +154,7 @@ describe("directory HTTP", () => {
     expect(page.status).toBe(200);
     expect(page.type).toContain("text/html");
     expect(page.text).toContain("<title>Service Directory</title>");
-    for (const s of ["🍕", "Acme Pizza", "$18.50 per order", "🌤️", "Acme Bounties", "#E5523A"]) expect(page.text).toContain(s);
+    for (const s of ["🍕", "Acme Pizza", "$18.50 per order", "🌤️", "Acme Bounties", "#E5523A", "🌊", "Quantcomm Flood Research", "#1D4ED8"]) expect(page.text).toContain(s);
   });
 
   it("the page escapes everything", () => {

@@ -18,6 +18,9 @@ if (!agentToken) {
 }
 
 const extraBlocked = (process.env.ALLOWANCE_BLOCKED_URLS ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+// The Shopify bridge's store registry is owner-only (§15.3); block it wherever the bridge runs.
+const bridgeUrl = process.env.SHOPIFY_BRIDGE_URL?.trim().replace(/\/+$/, "");
+if (bridgeUrl) extraBlocked.push(`${bridgeUrl}/stores`);
 const server = createServer({ walletServiceUrl, agentToken, blockedUrls: [...DEFAULT_BLOCKED_URLS, ...extraBlocked] });
 const transport = new StdioServerTransport();
 await server.connect(transport);

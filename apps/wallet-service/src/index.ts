@@ -3,6 +3,7 @@ import { createApp } from "./app.js";
 
 export { createApp } from "./app.js";
 export type { AppDeps, WalletApp } from "./app.js";
+export type { Bank, BankOptions } from "./bank.js";
 export { Store, createAgentOffline, openStore, issueToken } from "./store.js";
 
 const LOG = "[wallet-service]";
@@ -17,6 +18,9 @@ if (isMain) {
     console.log(
       `${LOG} listening on http://localhost:${config.walletServicePort} (chain=${config.chainMode}, facilitator=${config.facilitatorUrl}, agents=${wallet.store.state.agents.length})`,
     );
+    // Capital One (§16): links the owner's checking and starts the queue; never blocks startup.
+    if (wallet.bank.enabled) console.log(`${LOG} Capital One (Nessie sandbox) enabled`);
+    wallet.bank.start();
     void wallet.seedBalances().catch((err: Error) => console.warn(`${LOG} seeding failed: ${err.message}`));
   });
   const shutdown = () => {

@@ -9,6 +9,11 @@ import {
   ArrowUpRight,
   Check as LucideCheck,
   ChevronRight,
+  CreditCard as LucideCreditCard,
+  ExternalLink as LucideExternalLink,
+  Landmark,
+  RotateCw,
+  ShoppingBag as LucideShoppingBag,
   Clock as LucideClock,
   Info as LucideInfo,
   Lock as LucideLock,
@@ -53,3 +58,11 @@ export const Warn = icon(TriangleAlert);
 export const Close = icon(X);
 export const Chevron = icon(ChevronRight);
 export const Lock = icon(LucideLock);
+/** Shopify stores (§15): a shopping bag, drawn on Shopify green by `ServiceTile shopify`. */
+export const ShoppingBag = icon(LucideShoppingBag);
+export const ExternalLink = icon(LucideExternalLink);
+/** A payment card: the single-use Allowance Card that pays Shopify stores (§15). */
+export const CreditCard = icon(LucideCreditCard);
+/** A bank building (Capital One, §16). */
+export const Bank = icon(Landmark);
+export const Retry = icon(RotateCw);

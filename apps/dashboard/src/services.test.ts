@@ -142,6 +142,57 @@ describe("requests and proposals", () => {
   });
 });
 
+describe("Shopify stores (§15)", () => {
+  const juniper = {
+    id: "shopify-juniper-goods",
+    name: "Juniper Goods",
+    provider: "Shopify store",
+    icon: "🛍️",
+    color: "#95BF47",
+    kind: "x402" as const,
+    category: "shopping" as const,
+    summary: "Shop Juniper Goods",
+    baseUrl: "http://localhost:4070/shops/juniper-goods",
+    pricing: "Store prices · paid with your Allowance card · up to $20.00 per order",
+    maxPrice: "20.00",
+    permissions: ["Browse Juniper Goods's catalog"],
+    source: "agent" as const,
+    shopify: { handle: "juniper-goods", domain: "juniper-goods.myshopify.com", storefrontUrl: "https://junipergoods.com", cardCheckout: false },
+  };
+  const request: Approval = {
+    id: "apr_shop",
+    kind: "service",
+    agentId: "agt_s",
+    agentName: "shopper",
+    paymentId: "",
+    amount: "0.00",
+    description: "Add the Shopify store Juniper Goods",
+    counterparty: { address: "0x2222222222222222222222222222222222222222" },
+    service: juniper,
+    reason: "candles",
+    status: "pending",
+    createdAt: "2026-10-17T12:00:00Z",
+  };
+
+  it("shows a store an agent asked for as a pending Shopify card, not as a custom service", () => {
+    const cat = withProposals(buildCatalog(directory, agents), [request], agents);
+    const card = cat.find((e) => e.service.id === "shopify-juniper-goods")!;
+    expect(card).toMatchObject({ custom: false, proposal: true, connections: [] });
+    expect(card.proposedBy.map((a) => a.name)).toEqual(["shopper"]);
+    expect(card.service).toMatchObject({ category: "shopping", shopify: { domain: "juniper-goods.myshopify.com", storefrontUrl: "https://junipergoods.com" } });
+    expect(filterCatalog(cat, "", "shopping").map((e) => e.service.id)).toEqual(["acme-pizza", "shopify-juniper-goods"]);
+    expect(requestsFor([request], "shopify-juniper-goods")).toHaveLength(1);
+  });
+
+  it("keeps the store's shopify facts on a connection the directory does not list", () => {
+    const holder = agent("agt_s2", "gift-scout", [conn("shopify-juniper-goods", "approval", { ...juniper, source: "directory" })]);
+    const entry = buildCatalog(directory, [holder]).find((e) => e.service.id === "shopify-juniper-goods")!;
+    expect(entry.custom).toBe(false);
+    expect(entry.service.category).toBe("shopping");
+    expect(entry.service.shopify).toEqual(juniper.shopify);
+  });
+});
+
 describe("labels", () => {
   it("says how a service was connected", () => {
     expect(connectedByLabel("approval")).toBe("by approval");

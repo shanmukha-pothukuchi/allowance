@@ -12,7 +12,7 @@ import { groupMembers, roleFor, type AgentSpec } from "./roster.js";
 import { GroupStore, GroupError, defaultGroups } from "./groups.js";
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { AGENT_NAME_RE } from "@allowance/shared";
+import { AGENT_NAME_RE, type ShopifyStoreRef } from "@allowance/shared";
 import type { LlmConfig } from "./llm.js";
 import { fontsDir, renderChatPage, staticDir } from "./ui.js";
 
@@ -24,7 +24,26 @@ export interface WalletView {
   frozen?: boolean;
   frozenReason?: string;
   limits?: { maxPerTx: string; dailyCap: string; approvalThreshold: string; remainingToday: string };
+  /** The agent's Capital One allowance account (Nessie sandbox, §16) when the wallet reports one. No balance. */
+  bank?: BankRef;
   error?: string;
+}
+
+export interface BankRef {
+  provider: "Capital One";
+  /** "Allowance · researcher" */
+  account: string;
+  /** "5678" (the page shows "Capital One ••5678") */
+  last4: string;
+}
+
+/** `/v1/me`'s bank as plain strings the page can print: anything unexpected is dropped, not passed on. */
+export function bankRef(x: unknown): BankRef | undefined {
+  if (!x || typeof x !== "object") return undefined;
+  const b = x as Record<string, unknown>;
+  if (b.provider !== "Capital One" || typeof b.last4 !== "string" || !/^[0-9A-Za-z]{1,8}$/.test(b.last4)) return undefined;
+  const account = typeof b.account === "string" ? b.account.replace(/[\u0000-\u001f\u007f<>]/g, "").trim().slice(0, 80) : "";
+  return { provider: "Capital One", account, last4: b.last4 };
 }
 
 /** A connected service as shown on the agent's chips (from the /v1/me poll). */
@@ -33,6 +52,17 @@ export interface ServiceChip {
   name: string;
   icon: string;
   color: string;
+  pricing?: string;
+  maxPrice?: string;
+  /** Shopify stores (ShopifyStoreRef), so the page needn't infer them from tool text. */
+  shopify?: ShopifyStoreRef;
+}
+
+/** A store ref from the wallet poll, as plain strings (the page renders it; https storefront links only). */
+function shopifyRef(x: Partial<ShopifyStoreRef>): ShopifyStoreRef {
+  const domain = String(x.domain ?? "");
+  const storefront = typeof x.storefrontUrl === "string" && /^https:\/\/[^\s"'<>]+$/.test(x.storefrontUrl) ? x.storefrontUrl : `https://${domain}`;
+  return { handle: String(x.handle ?? ""), domain, storefrontUrl: storefront, cardCheckout: x.cardCheckout === true };
 }
 
 /** Preview for the conversation list: the last user / assistant / error entry. */
@@ -140,10 +170,18 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
       if (!res.ok) {
         view = { error: res.status === 401 ? "token rejected (run npm run setup)" : `wallet error ${res.status}` };
       } else {
-        const me = (await res.json()) as { agent: WalletView & { address: string; services?: Array<Partial<ServiceChip> & { kind?: string }> }; limits: WalletView["limits"] };
+        const me = (await res.json()) as { agent: WalletView & { address: string; services?: Array<Partial<ServiceChip> & { kind?: string }> }; limits: WalletView["limits"]; bank?: unknown };
         chips = (Array.isArray(me.agent.services) ? me.agent.services : [])
           .filter((x) => x && x.id && x.kind !== "directory")
-          .map((x) => ({ id: String(x.id), name: x.name ?? String(x.id), icon: x.icon ?? "", color: x.color ?? "" }));
+          .map((x) => ({
+            id: String(x.id),
+            name: x.name ?? String(x.id),
+            icon: x.icon ?? "",
+            color: x.color ?? "",
+            ...(x.pricing ? { pricing: String(x.pricing) } : {}),
+            ...(x.maxPrice ? { maxPrice: String(x.maxPrice) } : {}),
+            ...(x.shopify && typeof x.shopify === "object" ? { shopify: shopifyRef(x.shopify) } : {}),
+          }));
         view = {
           address: me.agent.address,
           balance: me.agent.balance,
@@ -153,6 +191,8 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
           frozenReason: me.agent.frozenReason,
           limits: me.limits,
         };
+        const bank = bankRef(me.bank);
+        if (bank) view.bank = bank;
       }
     } catch {
       view = { error: "wallet service offline" };

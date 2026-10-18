@@ -71,6 +71,17 @@ export interface AppConfig {
   /** Service directory (apps/directory): the catalog of services agents can connect. */
   directoryPort: number;
   directoryUrl: string;
+  /** Shopify bridge (apps/shopify-bridge): turns Shopify stores into x402 services. */
+  shopifyBridgePort: number;
+  shopifyBridgeUrl: string;
+  /** Shopify Storefront API version; optional public UCP agent profile for stores without a public storefront API. */
+  shopify: { apiVersion: string; ucpAgentProfileUrl?: string };
+  /** Capital One Nessie sandbox (§16). Enabled only when apiKey is set; only wallet-service reads it. */
+  nessie: { apiKey?: string; baseUrl: string; openingBalance: string };
+  /** Quantcomm bridge (apps/quantcomm-bridge, §17) and the Quantcomm app it reads from. */
+  quantcommBridgePort: number;
+  quantcommBridgeUrl: string;
+  quantcommUrl: string;
   /** Agent chat server (apps/agent-chat). Binds to localhost by default: whoever can reach it can instruct agents. */
   agentChatPort: number;
   agentChatHost: string;
@@ -129,6 +140,20 @@ export function loadConfig(): AppConfig {
       chainMode === "mock" ? facilitatorUrl : (env.X402_FACILITATOR_URL ?? "https://x402.org/facilitator"),
     merchantPrivateKey: (env.MERCHANT_PRIVATE_KEY as `0x${string}` | undefined) || undefined,
     ownerApiKey: env.OWNER_API_KEY || readOwnerKeyFile(resolve(repoRoot, env.DATA_DIR ?? ".data")),
+    shopifyBridgePort: Number(env.SHOPIFY_BRIDGE_PORT ?? 4070),
+    shopifyBridgeUrl: env.SHOPIFY_BRIDGE_URL ?? `http://localhost:${Number(env.SHOPIFY_BRIDGE_PORT ?? 4070)}`,
+    shopify: {
+      apiVersion: env.SHOPIFY_API_VERSION || "2026-10",
+      ucpAgentProfileUrl: env.UCP_AGENT_PROFILE_URL || undefined,
+    },
+    nessie: {
+      apiKey: env.NESSIE_API_KEY || undefined,
+      baseUrl: (env.NESSIE_BASE_URL || "https://api.nessieisreal.com").replace(/\/+$/, ""),
+      openingBalance: env.NESSIE_OPENING_BALANCE || "5000.00",
+    },
+    quantcommBridgePort: Number(env.QUANTCOMM_BRIDGE_PORT ?? 4080),
+    quantcommBridgeUrl: env.QUANTCOMM_BRIDGE_URL ?? `http://localhost:${Number(env.QUANTCOMM_BRIDGE_PORT ?? 4080)}`,
+    quantcommUrl: (env.QUANTCOMM_URL || "http://127.0.0.1:8000").replace(/\/+$/, ""),
     directoryPort: Number(env.DIRECTORY_PORT ?? 4060),
     directoryUrl: env.DIRECTORY_URL ?? `http://localhost:${Number(env.DIRECTORY_PORT ?? 4060)}`,
     agentChatPort: Number(env.AGENT_CHAT_PORT ?? 4050),
@@ -176,8 +201,20 @@ export function ensureOwnerKey(dataDir: string): string {
   if (existing) return existing;
   mkdirSync(dataDir, { recursive: true });
   const ownerApiKey = `ok_${randomBytes(24).toString("hex")}`;
-  writeFileSync(ownerKeyPath(dataDir), JSON.stringify({ ownerApiKey }, null, 2) + "\n", { mode: 0o600 });
-  return ownerApiKey;
+  try {
+    // "wx": fail if another service created it first (they all start at once), then use theirs.
+    writeFileSync(ownerKeyPath(dataDir), JSON.stringify({ ownerApiKey }, null, 2) + "\n", { mode: 0o600, flag: "wx" });
+    return ownerApiKey;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    for (let i = 0; i < 20; i++) {
+      const theirs = readOwnerKeyFile(dataDir);
+      if (theirs) return theirs;
+      // The other writer may still be mid-write; wait briefly (synchronously) and re-read.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+    throw new Error("owner-key.json exists but could not be read");
+  }
 }
 
 /** Headers for owner-side HTTP calls. */

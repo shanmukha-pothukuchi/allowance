@@ -84,3 +84,8 @@ html.embed .embed-note {
 html.embed .embed > .embed-foot {
   padding: 0 0 12px;
 }
+
+/* Shopify approval card (§15.5) in the chat's lighter type */
+html.embed .shop-note {
+  font-size: 0.86rem;
+}

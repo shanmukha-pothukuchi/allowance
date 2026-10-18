@@ -26,6 +26,7 @@ proxy unbuffered.
 | `http://localhost:4040/?mock=1` | Mock adapter, always, behind a "Demo data" banner. |
 | `VITE_MOCK=1 npm run dev --workspace apps/dashboard` | Same, via env. `?mock=0` overrides back to HTTP. |
 | `?mock=1&chain=base-sepolia` | The mock reports chain mode: top-ups answer 501, so you can see the "fund this address" screens. |
+| `?mock=1&bank=off\|low\|down\|unlinked` | Capital One (§16). The mock has a linked bank by default: checking ••1234 funded each agent's $20 allowance account, payments and earnings post a moment after they settle (statuses go pending → executed), the second settled payment fails ("Not on statement · Retry"). `off` is a wallet without a Nessie key (the dashboard looks as it did before §16), `low` leaves $12.40 in checking (a $20 top-up answers `409 bank_insufficient_funds`), `down` is Nessie not answering (`502 bank_unavailable`, stale balances, postings wait), `unlinked` has a key but no customer yet. |
 
 `VITE_AGENT_CHAT_URL` (default `http://localhost:4050`) is the chat server: new agents are
 registered there, embedded sheets post to its origin (and its `localhost`/`127.0.0.1` twin), and
@@ -120,7 +121,9 @@ from the OS). Add `&mock=1` to try it against the mock. The dev server sends
 | URL | What |
 |---|---|
 | `/?sheet=new-agent` | Name (live check against `AGENT_NAME_RE`, the rule in words, "is it taken"), purpose (≤ 600 chars, becomes the chat role), avatar preview, starting money ($5/$10/$20/$50/custom ≤ $1000, test money), limits presets with editable numbers (Careful $1/$5/ask >$1 · Everyday $5/$25/$5 · Shopper $20/$50/$10 · Custom), services to connect (directory always included). `POST /v1/agents { name, policy:{ maxPerTx, dailyCap, approvalThreshold, allowlist:{addresses:[],origins:[]} }, initialBalance?, services }`, then `POST {chat}/api/agents { name, token, role? }`. Success: "travel-planner is ready" + balance + Open chat (`{chat}/?agent=<name>`). If the chat server can't take it, the token is shown **once** with Copy (clipboard API; the chat's iframe has `allow="clipboard-write"`, with a select-and-copy fallback), and the sheet can only be left with "Done, I saved the token". The token lives only in component state: never logged, stored, put in a URL or posted. |
-| `/?sheet=add-money&agent=<name>` | Avatar + balance, chips + custom (≤ $1000), "Add $20 test money" → `POST /v1/agents/:id/topup`; shows the new balance and the receipt. No/unknown agent → pick one. Base Sepolia → "top-ups aren't available", the address to fund behind a details. |
+| `/?sheet=add-money&agent=<name>` | Avatar + balance, chips + custom (≤ $1000), "Add $20 test money" → `POST /v1/agents/:id/topup`; shows the new balance and the receipt. No/unknown agent → pick one. Base Sepolia → "top-ups aren't available", the address to fund behind a details. With Capital One linked (§16.5): "From Capital One Checking ••1234 · $X available", "Move $20 from Checking", the bank's 409/502 in its own words, and "Moved $20.00 from Checking to shopper's allowance account". |
+| `/?sheet=bank` | Capital One (§16.5): checking, every agent's allowance account with its balance, recent bank activity with each receipt's marker (failed first), the queue (`N posting · N not on statement`, Retry), the wallet's `error` when Nessie is unreachable, and Link when it has a key but no customer. Embeddable; embedded it follows `/v1/events`. |
+| `/?sheet=agent&agent=<name>` | Dashboard only, opened from an agent card's Bank row or the bank sheet: "Capital One allowance account ••5678 · $X", the latest entries from `GET /v1/bank/statement?agentId=` (merchant, amount, date, Nessie's status) with a Nessie sandbox note, and its recent receipts with their markers. |
 
 Add `&embed=1` for the chat: no app chrome, transparent page, a card that scrolls inside the iframe
 if it is given less height than it asked for, `&theme=light|dark`. Embedded, the sheet posts to
@@ -159,6 +162,7 @@ src/
   state.ts              reducer + applyEvent + collapseFeed (pure)
   services.ts           catalog merge, search, labels (pure)
   format.ts             money / relative time / friendly sentences (pure)
+  bank.ts               Capital One (§16): bank lines, receipt markers, bank events, statements (pure)
   embed.ts              approval embed postMessage contract (pure)
   sheets.ts             owner sheets: name/amount/limits checks, presets → policy, sheet URLs, chat
                         registration, sheet postMessage contract (pure)
@@ -167,12 +171,13 @@ src/
   Embed.tsx             the approval embed; EmbedSheet.tsx the embedded owner sheets
   components/           TopBar, AgentCard, ActivityFeed, ApprovalCard, ApprovalsPanel, ReceiptsList,
                         ServicesView, ServiceSheet, NewAgentSheet, AddMoneySheet, SheetParts,
-                        Switch, Avatar, Icons
+                        BankSheet, AgentSheet, BankParts, Switch, Avatar, Icons
   styles/base.css       tokens (dark + light), reset, buttons
   styles/app.css        layout + overview + motion
   styles/services.css   approval cards, gallery, sheet, embed
   styles/sheets.css     owner sheets (dashboard sheet + chat embed)
-  *.test.ts             vitest (node): format, state, services, embed, sheets, mockAdapter
+  styles/bank.css       Capital One: top bar checking, bank rows, markers, statements, bank sheet
+  *.test.ts             vitest (node): format, state, services, embed, sheets, bank, mockAdapter
 ```
 
 Agent avatars come from `@allowance/shared/avatars` (pure), so every UI shows the same face and

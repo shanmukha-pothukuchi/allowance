@@ -1,0 +1,2668 @@
+{
+ "_recorded": "Real Quantcomm GET responses, recorded 2026-10-18 from the running instance (quantcomm fa347bc). Trimmed: Nessie location lists to 3 branches and 1 ATM, bank rows to 6, storm events to 2, market tickers to the universe plus TOWN, advice context landfalls to 2. research.<T> is GET /api/research/<T> with every panel for COF, JPM, TFC, ALL and KRE, and GET /api/research/<T>?panels=storm_history for the others.",
+ "markets": {
+  "success": true,
+  "data": {
+   "as_of": "2026-10-16",
+   "focus": "COF",
+   "universe": [
+    "COF",
+    "JPM",
+    "BAC",
+    "WFC",
+    "C",
+    "USB",
+    "PNC",
+    "TFC",
+    "ALL",
+    "TRV",
+    "PGR",
+    "CB",
+    "KRE"
+   ],
+   "tickers": [
+    {
+     "ticker": "COF",
+     "name": "Capital One Financial Corp.",
+     "group": "Large banks",
+     "last": 201.74000549316406,
+     "chg_pct": 1.4482575047636725,
+     "r1y_pct": -4.7532965829649605,
+     "has_signal": true
+    },
+    {
+     "ticker": "ALL",
+     "name": "Allstate Corp.",
+     "group": "Insurers",
+     "last": 247.8800048828125,
+     "chg_pct": 3.4557590018255757,
+     "r1y_pct": 26.072956568755433,
+     "has_signal": true
+    },
+    {
+     "ticker": "BAC",
+     "name": "Bank of America Corp.",
+     "group": "Large banks",
+     "last": 51.22999954223633,
+     "chg_pct": -0.9090932568032728,
+     "r1y_pct": 0.08036454382502889,
+     "has_signal": true
+    },
+    {
+     "ticker": "C",
+     "name": "Citigroup Inc.",
+     "group": "Large banks",
+     "last": 124.26000213623047,
+     "chg_pct": 0.8522060381137786,
+     "r1y_pct": 27.168474537231326,
+     "has_signal": true
+    },
+    {
+     "ticker": "CB",
+     "name": "Chubb Ltd.",
+     "group": "Insurers",
+     "last": 359.7900085449219,
+     "chg_pct": 1.9841831770892382,
+     "r1y_pct": 30.455790857316245,
+     "has_signal": true
+    },
+    {
+     "ticker": "JPM",
+     "name": "JPMorgan Chase & Co.",
+     "group": "Large banks",
+     "last": 339.7200012207031,
+     "chg_pct": 1.2487713339045747,
+     "r1y_pct": 13.272551977471547,
+     "has_signal": true
+    },
+    {
+     "ticker": "KRE",
+     "name": "SPDR S&P Regional Banking ETF",
+     "group": "ETFs",
+     "last": 69.80999755859375,
+     "chg_pct": 0.08601800515233293,
+     "r1y_pct": 15.315635943992213,
+     "has_signal": true
+    },
+    {
+     "ticker": "PGR",
+     "name": "Progressive Corp.",
+     "group": "Insurers",
+     "last": 218.49000549316406,
+     "chg_pct": 2.217546429550432,
+     "r1y_pct": 2.7387606438657564,
+     "has_signal": true
+    },
+    {
+     "ticker": "PNC",
+     "name": "PNC Financial Services Group",
+     "group": "Large banks",
+     "last": 217.38999938964844,
+     "chg_pct": 1.1398515494620787,
+     "r1y_pct": 23.14766625409621,
+     "has_signal": true
+    },
+    {
+     "ticker": "TFC",
+     "name": "Truist Financial Corp.",
+     "group": "Large banks",
+     "last": 47.06999969482422,
+     "chg_pct": 1.0736525730653312,
+     "r1y_pct": 13.46826661615097,
+     "has_signal": true
+    },
+    {
+     "ticker": "TRV",
+     "name": "Travelers Companies",
+     "group": "Insurers",
+     "last": 389.5400085449219,
+     "chg_pct": 1.47177412302808,
+     "r1y_pct": 46.77809559675383,
+     "has_signal": true
+    },
+    {
+     "ticker": "USB",
+     "name": "U.S. Bancorp",
+     "group": "Large banks",
+     "last": 58.72999954223633,
+     "chg_pct": 2.334901841503756,
+     "r1y_pct": 31.300830862300533,
+     "has_signal": true
+    },
+    {
+     "ticker": "WFC",
+     "name": "Wells Fargo & Co.",
+     "group": "Large banks",
+     "last": 83.87000274658203,
+     "chg_pct": 1.3534776393740566,
+     "r1y_pct": -0.8802561801015019,
+     "has_signal": true
+    },
+    {
+     "ticker": "TOWN",
+     "name": "TowneBank",
+     "group": "Regional",
+     "last": 35.470001220703125,
+     "chg_pct": 0.5385556915544765,
+     "r1y_pct": 11.16266071934,
+     "has_signal": true
+    }
+   ]
+  },
+  "error": null
+ },
+ "advice": {
+  "success": true,
+  "data": {
+   "available": true,
+   "stale": true,
+   "advice": {
+    "generated_utc": "2026-10-18T05:51:14+00:00",
+    "model": "qwen3",
+    "prompt_version": "2026-10-18.2",
+    "focus": "COF",
+    "universe": [
+     "COF",
+     "JPM",
+     "BAC",
+     "WFC",
+     "C",
+     "USB",
+     "PNC",
+     "TFC",
+     "ALL",
+     "TRV",
+     "PGR",
+     "CB",
+     "KRE"
+    ],
+    "context": {
+     "as_of": "2026-10-16",
+     "focus": "COF",
+     "live_flood_alerts": 22,
+     "active_tropical_storms": [
+      "Trudy"
+     ],
+     "landfalls_in_price_history": [
+      {
+       "storm": "Milton",
+       "landfall": "2024-10-10T00:30:00"
+      },
+      {
+       "storm": "Isaias",
+       "landfall": "2026-10-10T01:30:00"
+      }
+     ]
+    },
+    "analysts": {
+     "COF": {
+      "status": "ok",
+      "analysis": {
+       "ticker": "COF",
+       "view": "neutral",
+       "expected_move": "flat",
+       "confidence": 45,
+       "headline": "Clear flood signal but weak data and storm underperformance",
+       "reasoning": "Today's signal is clear: 0 of 220 Nessie branches/ATMs are under flood alerts, but that is no signal rather than proof of safety because the footprint is sandbox and customers are synthetic. Past storms cut mildly negative: mean excess return is -0.2728% over 12 storms, with 5 of 12 underperforming KRE. The price trend also cuts negative, with COF down 4.75% over 1 year versus KRE up 15.32%, despite a +1.45% 1-day move.",
+       "evidence_used": [
+        "0 of 220 branches/ATMs under flood alerts",
+        "207 branches and 13 ATMs are sandbox footprint",
+        "synthetic customers 4/500 and $195,373.60 loan balance",
+        "mean storm excess return -0.2728% over 12 storms",
+        "5 of 12 storms underperformed KRE",
+        "1-year return -4.75% vs KRE 15.32%",
+        "1-day return +1.45%"
+       ],
+       "data_gaps": [
+        "real Capital One branch and ATM network",
+        "real customer and loan portfolio exposure",
+        "future storm path and alert changes"
+       ]
+      }
+     },
+     "JPM": {
+      "status": "ok",
+      "analysis": {
+       "ticker": "JPM",
+       "view": "neutral",
+       "expected_move": "flat",
+       "confidence": 55,
+       "headline": "Minor flood exposure offsets weak one-year relative price trend",
+       "reasoning": "Only 0.1041% of deposits and 22 branches are under active flood alerts, a minor signal rather than material risk. JPM's 1-year return of 13.27% trails KRE's 15.32%, while its 12-storm mean excess return is +0.41% with 4/12 underperformances. The +1.25% one-day move does not change the neutral read given alert forecasts are not observed flooding.",
+       "evidence_used": [
+        "0.1041% deposits under alerts",
+        "22 branches under alerts",
+        "1-year return 13.27% vs KRE 15.32%",
+        "12-storm mean excess 0.41%",
+        "4/12 storms underperformed",
+        "1-day change 1.25%"
+       ],
+       "data_gaps": [
+        "satellite flood maps not yet available",
+        "live alerts are forecasts not observed flooding"
+       ]
+      }
+     },
+     "BAC": {
+      "status": "ok",
+      "analysis": {
+       "ticker": "BAC",
+       "view": "neutral",
+       "expected_move": "flat",
+       "confidence": 55,
+       "headline": "Minor flood exposure offsets weak price trend",
+       "reasoning": "Today's flood signal cuts mildly positive: only 0.3538% of deposits and 31 branches are under alerts, and BAC's landfall-to-+5d mean excess return vs KRE is +0.23% across 12 storms. That is offset by a weak price trend, with BAC +0.08% over 1y vs KRE +15.32% and -0.91% on the day, plus the 2026 Isaias -7.01% outlier. Confidence is reduced because live alerts are forecasts, not observed flooding.",
+       "evidence_used": [
+        "0.3538% deposits under flood alerts",
+        "31 branches under alerts",
+        "mean excess return +0.23% vs KRE over 12 storms",
+        "4/12 storms underperformed",
+        "BAC 1y return +0.08% vs KRE +15.32%",
+        "1d change -0.91%",
+        "Isaias 2026 excess -7.01%",
+        "caveat live alerts are forecasts"
+       ],
+       "data_gaps": [
+        "observed flood damage rather than forecast alerts",
+        "satellite flood maps after next Sentinel-1 pass",
+        "actual customer or branch operational impact"
+       ]
+      }
+     },
+     "WFC": {
+      "status": "ok",
+      "analysis": {
+       "ticker": "WFC",
+       "view": "neutral",
+       "expected_move": "flat",
+       "confidence": 55,
+       "headline": "Minor flood exposure, mixed storm history, weak price trend suggest neutral",
+       "reasoning": "Today's flood signal is minor but not absent: 41 branches and 0.44% of deposits, or $6.92B, are under active alerts. Past landfalls cut mixed, with mean excess return +0.21% vs KRE over 12 storms but 6/12 underperformances, including Ida at -9.43%. WFC's price trend is weak, -0.88% over 1 year vs KRE +15.32%, so the signal cuts neutral rather than positive.",
+       "evidence_used": [
+        "41 branches under alerts",
+        "0.44% deposits under alerts",
+        "$6.92B deposits under alerts",
+        "mean excess return +0.21% over 12 storms",
+        "6/12 storms underperformed",
+        "Ida excess return -9.43%",
+        "WFC 1-year return -0.88%",
+        "KRE 1-year return +15.32%",
+        "live alerts are forecasts not observed flooding"
+       ],
+       "data_gaps": [
+        "No observed flood damage or branch closure data",
+        "No deposit outflow or customer impact data",
+        "No storm path or duration beyond current live alerts"
+       ]
+      }
+     },
+     "C": {
+      "status": "ok",
+      "analysis": {
+       "ticker": "C",
+       "view": "neutral",
+       "expected_move": "flat",
+       "confidence": 55,
+       "headline": "Low flood exposure and momentum offset mixed storm history",
+       "reasoning": "Only 0.0738% of deposits, or $665M across 4 branches, are under Flash Flood Warnings, so the signal is minor and not proof of safety. C's 1-year return of 27.17% versus KRE's 15.32% and 1-day gain of 0.85% cut positive, but storm history cuts neutral: mean excess return is +0.21% over 12 landfalls, with 4/12 underperforming, including Milton at -6.35% and Isaias at -5.39%.",
+       "evidence_used": [
+        "0.0738% deposits under alerts",
+        "4 branches under alerts",
+        "$665M deposits under alerts",
+        "Flash Flood Warning alert type",
+        "1-year return 27.17% vs KRE 15.32%",
+        "1-day change 0.85%",
+        "mean excess return 0.21% over 12 storms",
+        "4/12 storms underperformed",
+        "Milton excess -6.35%",
+        "Isaias excess -5.39%",
+        "live alerts are forecasts caveat"
+       ],
+       "data_gaps": [
+        "observed flooding after next Sentinel-1 pass",
+        "actual branch closures or customer impact",
+        "duration and severity of current flood alerts"
+       ]
+      }
+     },
+     "USB": {
+      "status": "ok",
+      "analysis": {
+       "ticker": "USB",
+       "view": "neutral",
+       "expected_move": "flat",
+       "confidence": 55,
+       "headline": "No flood signal; strong price trend and mild storm history",
+       "reasoning": "USB's 1-year return of 31.3% vs KRE's 15.32% and +2.33% 1-day move show positive momentum. Its 12-storm history averaged +0.65% excess return, with 4/12 underperforming, so past landfalls cut mildly positive. However, today's 0.0% deposits under flood alerts is no signal, not proof of safety, and live alerts are forecasts.",
+       "evidence_used": [
+        "USB 1-year return 31.3% vs KRE 15.32%",
+        "1-day change +2.33%",
+        "12-storm mean excess +0.65%",
+        "4/12 storms underperformed",
+        "0.0% deposits under flood alerts",
+        "live alerts are forecasts"
+       ],
+       "data_gaps": [
+        "Observed flood damage",
+        "Satellite flood maps after Sentinel-1 pass",
+        "Customer-level deposit exposure beyond branch polygons"
+       ]
+      }
+     },
+     "PNC": {
+      "status": "ok",
+      "analysis": {
+       "ticker": "PNC",
+       "view": "neutral",
+       "expected_move": "flat",
+       "confidence": 55,
+       "headline": "Minor flood exposure, strong price trend, storm history neutral",
+       "reasoning": "Only 0.4471% of deposits, or $2.04B across 23 branches, are under active flood alerts, so the signal is minor rather than a clear negative. PNC's 1-year return of 23.15% vs KRE's 15.32% cuts positive, while the 12-storm mean excess return of -0.03% and 5/12 underperformance cut neutral-to-slightly negative. Because live alerts are forecasts, not observed flooding, the net read is flat.",
+       "evidence_used": [
+        "0.4471% deposits under flood alerts",
+        "23 branches under alerts",
+        "$2.04B deposits under alerts",
+        "1-year return 23.15% vs KRE 15.32%",
+        "12-storm mean excess return -0.03%",
+        "5/12 storms underperformed",
+        "live alerts are forecasts not observed flooding"
+       ],
+       "data_gaps": [
+        "Observed flood damage not confirmed",
+        "Satellite flood maps pending next Sentinel-1 pass",
+        "Customer impact beyond deposit share not provided"
+       ]
+      }
+     },
+     "TFC": {
+      "status": "ok",
+      "analysis": {
+       "ticker": "TFC",
+       "view": "neutral",
+       "expected_move": "flat",
+       "confidence": 58,
+       "headline": "Modest flood exposure, mixed storm history, lagging benchmark suggest neutral",
+       "reasoning": "TFC has 1.66% of deposits, or $6.96B, across 55 branches under active flood alerts, a limited but real exposure. Its 12-storm history shows only +0.11% mean excess return vs KRE and 4/12 underperformance, while the 1-year return of 13.47% trails KRE's 15.32%. Because the alerts are forecasts, not observed flooding, the evidence cuts toward a neutral, flat near-term view.",
+       "evidence_used": [
+        "1.66% deposits under flood alerts",
+        "55 branches under alerts",
+        "$6.96B deposits under alerts",
+        "mean excess +0.11% over 12 storms",
+        "4/12 storms underperformed",
+        "1y return 13.47% vs KRE 15.32%",
+        "alerts are forecasts not observed flooding"
+       ],
+       "data_gaps": [
+        "observed flood damage vs forecast alerts",
+        "satellite flood confirmation",
+        "branch operational impact",
+        "alert duration and severity"
+       ]
+      }
+     },
+     "ALL": {
+      "status": "ok",
+      "analysis": {
+       "ticker": "ALL",
+       "view": "neutral",
+       "expected_move": "flat",
+       "confidence": 45,
+       "headline": "Neutral: strong price trend, but storm alerts lack company-specific impact",
+       "reasoning": "ALL trades at 247.88 after +3.46% one-day and +26.07% one-year vs SPY +15.98%, showing positive momentum. Past landfalls averaged +1.07% excess return over 12 storms, but 6/12 underperformed, so storm history is mixed. Current weather signal is national: 22 flood alerts, 17 coastal alerts, and only Trudy in the east Pacific, with no company-specific affected locations, so it is effectively no signal rather than proof of safety.",
+       "evidence_used": [
+        "price +3.46% 1d",
+        "1y return +26.07% vs SPY +15.98%",
+        "avg landfall excess +1.07% over 12 storms",
+        "6/12 storms underperformed",
+        "22 active NWS flood alerts",
+        "17 coastal flood alerts",
+        "1 active NHC storm: Trudy east pacific",
+        "caveat: national alerts, no state-level premium mix"
+       ],
+       "data_gaps": [
+        "state-level premium mix",
+        "specific affected customers or claims",
+        "storm path and landfall risk",
+        "company exposure to active alerts"
+       ]
+      }
+     },
+     "TRV": {
+      "status": "ok",
+      "analysis": {
+       "ticker": "TRV",
+       "view": "neutral",
+       "expected_move": "flat",
+       "confidence": 55,
+       "headline": "TRV momentum offsets weak national weather signal",
+       "reasoning": "TRV is up 46.78% over 1 year vs SPY 15.98%, but the current weather signal is only 22 CONUS flood alerts, 17 coastal alerts, and one east-pacific storm, with no branch/customer exposure mapped. Past landfalls show a mixed +0.39% mean 5-day excess return and 6/12 underperformance, so the alert data cuts neither clearly positive nor negative.",
+       "evidence_used": [
+        "1y return 46.78% vs SPY 15.98%",
+        "22 active NWS flood alerts",
+        "17 coastal flood alerts",
+        "1 active NHC storm (Trudy, east pacific)",
+        "mean landfall +5d excess 0.39%",
+        "6/12 storms underperformed",
+        "caveat: state-level premium mix not modeled"
+       ],
+       "data_gaps": [
+        "state-level premium mix",
+        "branch/customer exposure to current alerts",
+        "storm path/landfall timing",
+        "current alerts not mapped to TRV claims"
+       ]
+      }
+     },
+     "PGR": {
+      "status": "ok",
+      "analysis": {
+       "ticker": "PGR",
+       "view": "neutral",
+       "expected_move": "flat",
+       "confidence": 45,
+       "headline": "Weather alerts unmapped to exposure; storm history mildly positive, price lags SPY",
+       "reasoning": "Today's signal is national weather counts (22 active NWS flood alerts, 17 coastal flood alerts, 1 active NHC storm in the east Pacific) with no PGR exposure mapped, so it is no signal rather than proof of safety. PGR's storm history cuts mildly positive: +0.1485% average excess return vs SPY over 12 landfalls and only 3/12 underperformed. However, PGR's 1-year return of +2.74% trails SPY's +15.98%, limiting conviction despite the +2.22% 1-day move.",
+       "evidence_used": [
+        "22 active NWS flood alerts",
+        "17 coastal flood alerts",
+        "1 active NHC storm (Trudy, east pacific)",
+        "Avg excess return landfall to +5d +0.1485% vs SPY",
+        "3/12 storms underperformed",
+        "PGR 1y return +2.74% vs SPY +15.98%",
+        "PGR 1d return +2.22%",
+        "Caveat: state-level premium mix not modeled; alerts are national counts"
+       ],
+       "data_gaps": [
+        "No mapping of alerts to PGR policyholder or property exposure",
+        "No affected customer/branch/store data",
+        "State-level premium mix not modeled"
+       ]
+      }
+     },
+     "CB": {
+      "status": "ok",
+      "analysis": {
+       "ticker": "CB",
+       "view": "neutral",
+       "expected_move": "flat",
+       "confidence": 40,
+       "headline": "National weather alerts weak; CB momentum and storm history mixed",
+       "reasoning": "The signal is national weather counts (22 flood alerts, 17 coastal alerts, 1 active NHC storm) with no company-specific affected locations, so it is not proof of safety. CB's price trend cuts positive, with a +1.98% 1-day move and +30.46% 1-year return vs SPY's +15.98%. Past landfalls are mixed, averaging +0.37% excess vs SPY over 12 storms but underperforming in 4/12.",
+       "evidence_used": [
+        "22 active NWS flood alerts",
+        "17 coastal flood alerts",
+        "1 active NHC storm",
+        "CB 1-day change +1.98%",
+        "CB 1-year return +30.46% vs SPY +15.98%",
+        "Avg excess return landfall to +5d +0.37% vs SPY",
+        "4/12 storms underperformed",
+        "Caveat: national alerts, no state-level premium mix modeled"
+       ],
+       "data_gaps": [
+        "Company-specific affected branches, customers, or premium mix",
+        "Storm path and CB exposure",
+        "Claims severity or reserve impact"
+       ]
+      }
+     },
+     "KRE": {
+      "status": "ok",
+      "analysis": {
+       "ticker": "KRE",
+       "view": "neutral",
+       "expected_move": "flat",
+       "confidence": 20,
+       "headline": "No storm signal for KRE; neutral despite 15.32% return",
+       "reasoning": "KRE is an index ETF with no company-specific storm signal; its 1-year return is 15.32% and 1-day change is 0.09%. Past storm history is absent (n=0), so there is no evidence of storm-driven underperformance. This cuts neutral/flat, not proof of safety.",
+       "evidence_used": [
+        "KRE 1-year return 15.32%",
+        "KRE 1-day change 0.09%",
+        "signal type benchmark with no company-specific data",
+        "past storms n=0",
+        "benchmark return 15.32% equals KRE"
+       ],
+       "data_gaps": [
+        "no past storm history",
+        "no company-specific flood or branch signal",
+        "no external benchmark comparison because benchmark is KRE itself"
+       ]
+      }
+     }
+    },
+    "evidence_hash": "5f30ce26c6187fd438798cc1ec13f179f78a7077f1af60f75196746b4b3572ce",
+    "status": "ok",
+    "portfolio": {
+     "headline": "COF looks weak on lagging price and storm history, but flood data is unvalidated; buy C, USB, TRV; avoid COF, WFC.",
+     "focus": {
+      "ticker": "COF",
+      "action": "avoid",
+      "confidence": 40,
+      "explanation": "Capital One's branch/ATM check shows 0 of 220 locations under flood alerts, but that is not proof of safety because the footprint is sandbox and customers are synthetic. Past storms were mildly negative: COF averaged -0.27% excess return versus KRE over 12 landfalls and underperformed in 5 of 12. The stock also lagged badly over one year, down 4.75% while KRE rose 15.32%, so the recent 1-day gain does not fix the trend. I would avoid it until real exposure data and satellite-confirmed flood maps show no branch/customer impact and the price trend improves versus KRE.",
+      "what_would_change_my_mind": "Real branch/ATM, customer, and loan exposure plus satellite-confirmed flood maps showing no impact, along with sustained outperformance versus KRE, would change my mind."
+     },
+     "picks": [
+      {
+       "ticker": "C",
+       "action": "buy",
+       "confidence": 58,
+       "reason": "C combines strong one-year momentum versus KRE, low branch/deposit flood-alert exposure, and mildly positive storm history, though alerts are forecast-only."
+      },
+      {
+       "ticker": "USB",
+       "action": "buy",
+       "confidence": 58,
+       "reason": "USB has the strongest bank price trend versus KRE, positive storm history, and no deposits under flood alerts, but that is a silent signal rather than proof of safety."
+      },
+      {
+       "ticker": "JPM",
+       "action": "hold",
+       "confidence": 55,
+       "reason": "JPM has minor flood-alert exposure and positive storm history, but its one-year return trails KRE."
+      },
+      {
+       "ticker": "PNC",
+       "action": "hold",
+       "confidence": 55,
+       "reason": "PNC has strong price momentum and minor flood-alert exposure, but storm history is neutral and satellite confirmation is pending."
+      },
+      {
+       "ticker": "TFC",
+       "action": "hold",
+       "confidence": 50,
+       "reason": "TFC has modest flood-alert exposure, mixed storm history, and a one-year return that trails KRE."
+      },
+      {
+       "ticker": "CB",
+       "action": "hold",
+       "confidence": 50,
+       "reason": "CB has strong price momentum and mixed storm history, but the current weather signal is national and not company-specific."
+      },
+      {
+       "ticker": "TRV",
+       "action": "buy",
+       "confidence": 48,
+       "reason": "TRV has very strong one-year momentum versus SPY, but its weather signal is national and not mapped to company exposure, so confidence is lower."
+      },
+      {
+       "ticker": "BAC",
+       "action": "hold",
+       "confidence": 45,
+       "reason": "BAC's storm history is mildly positive, but its one-year price trend is weak versus KRE and the Isaias outlier cuts confidence."
+      },
+      {
+       "ticker": "WFC",
+       "action": "avoid",
+       "confidence": 45,
+       "reason": "WFC's one-year return is negative versus KRE, it underperformed in 6 of 12 storms, and its flood alerts are forecast-only."
+      },
+      {
+       "ticker": "ALL",
+       "action": "hold",
+       "confidence": 45,
+       "reason": "ALL has strong price momentum and positive average storm excess return, but current weather alerts are national and not mapped to company exposure."
+      },
+      {
+       "ticker": "COF",
+       "action": "avoid",
+       "confidence": 40,
+       "reason": "COF has a weak one-year trend versus KRE, mildly negative storm history, and only sandbox/synthetic branch and customer exposure data."
+      },
+      {
+       "ticker": "PGR",
+       "action": "hold",
+       "confidence": 40,
+       "reason": "PGR's storm history is mildly positive, but its one-year return lags SPY and weather alerts are unmapped to policyholder exposure."
+      },
+      {
+       "ticker": "KRE",
+       "action": "hold",
+       "confidence": 20,
+       "reason": "KRE is a benchmark ETF with no company-specific storm history or flood exposure signal, so evidence quality is very low."
+      }
+     ],
+     "risks": [
+      "Live flood alerts are forecasts, not observed flooding.",
+      "Satellite flood maps are pending or unvalidated.",
+      "COF branch/ATM and customer data are sandbox/synthetic, making its exposure signal silent.",
+      "Insurer weather alerts are national and not mapped to company exposure.",
+      "Storm paths, alert duration, and severity can change quickly.",
+      "Weak price trends may persist if KRE continues to outperform."
+     ],
+     "method_note": "Combined analyst neutral views with relative price trend, storm excess returns, and flood-alert exposure, lowering confidence where signals were sandbox, national, or unvalidated."
+    },
+    "error": null
+   },
+   "hint": null
+  },
+  "error": null
+ },
+ "research": {
+  "COF": {
+   "success": true,
+   "data": {
+    "ticker": "COF",
+    "name": "Capital One Financial Corp.",
+    "as_of": "2026-10-16",
+    "options": [
+     {
+      "key": "branch_map",
+      "title": "Capital One branches & ATMs under live flood alerts",
+      "shows": "map of Capital One branches and ATMs (Nessie) with live NWS flood-alert polygons"
+     },
+     {
+      "key": "customer_stress",
+      "title": "Customer portfolio stress test (SYNTHETIC)",
+      "shows": "SYNTHETIC Capital One customer portfolio: Isaias stress test and loans under live alerts"
+     },
+     {
+      "key": "flood_map",
+      "title": "Hurricane Isaias: Sentinel-1 satellite flood map",
+      "shows": "Sentinel-1 radar before/after images and detected flood polygons for Hurricane Isaias (Oct 2026)"
+     },
+     {
+      "key": "storm_history",
+      "title": "How the stock moved after past hurricanes",
+      "shows": "the stock's excess return vs its benchmark after each past hurricane landfall"
+     }
+    ],
+    "panels": {
+     "branch_map": {
+      "title": "Capital One branches & ATMs under live flood alerts",
+      "nessie": {
+       "available": true,
+       "source": "data/processed/live/nessie_alert_exposure.parquet",
+       "n": 220,
+       "n_in_alert": 0,
+       "locations": [
+        {
+         "kind": "branch",
+         "name": "ARLINGTON",
+         "city": "Arlington",
+         "state": "VA",
+         "lat": 38.8974498607,
+         "lon": -77.1236568406,
+         "in_alert": false,
+         "alert_events": ""
+        },
+        {
+         "kind": "branch",
+         "name": "LEE HIGHWAY/GEORGE MASON",
+         "city": "Arlington",
+         "state": "VA",
+         "lat": 38.896269001,
+         "lon": -77.1334634027,
+         "in_alert": false,
+         "alert_events": ""
+        },
+        {
+         "kind": "branch",
+         "name": "BALLSTON COMMON MALL",
+         "city": "Arlington",
+         "state": "VA",
+         "lat": 38.8798073959,
+         "lon": -77.1091331599,
+         "in_alert": false,
+         "alert_events": ""
+        },
+        {
+         "kind": "atm",
+         "name": "Arlington 1",
+         "city": null,
+         "state": "",
+         "lat": 38.8981779,
+         "lon": -77.1211338,
+         "in_alert": false,
+         "alert_events": ""
+        }
+       ]
+      },
+      "alerts": {
+       "available": true,
+       "source": "data/processed/live/live_summary.json",
+       "generated_utc": "2026-10-17T20:35:46.008362+00:00",
+       "n_alerts_conus": 22,
+       "alerts_by_event": {
+        "Coastal Flood Advisory": 9,
+        "Coastal Flood Watch": 6,
+        "Flood Warning": 4,
+        "Coastal Flood Warning": 2,
+        "Flash Flood Warning": 1
+       },
+       "active_storms": [
+        {
+         "id": "ep212026",
+         "binNumber": "EP1",
+         "name": "Trudy",
+         "classification": "HU",
+         "intensity": "80",
+         "pressure": "979",
+         "latitudeNumeric": 17,
+         "longitudeNumeric": -104.3,
+         "movementDir": 325,
+         "movementSpeed": 10,
+         "lastUpdate": "2026-10-17T18:00:00.000Z",
+         "basin": "east_pacific"
+        }
+       ]
+      }
+     },
+     "customer_stress": {
+      "title": "Customer portfolio stress test (SYNTHETIC)",
+      "storm": "isaias",
+      "stress": {
+       "available": true,
+       "synthetic": true,
+       "source": "data/processed/isaias/SYNTHETIC_stress_results.parquet",
+       "n_customers": 500,
+       "n_pushed": 500,
+       "groups": [
+        {
+         "group_label": "Not flooded",
+         "n": 500,
+         "ead": 23361814.16,
+         "expected_loss": 438034.0155,
+         "pd_12m": 0.025,
+         "withdrawal": 0.0,
+         "missed": 0.046,
+         "loss_rate_pct": 1.875
+        }
+       ],
+       "incremental_expected_loss": 0.0,
+       "baseline_expected_loss": 438034.0155
+      },
+      "live": {
+       "available": true,
+       "synthetic": true,
+       "source": "data/processed/live/SYNTHETIC_portfolio_alert_exposure.parquet",
+       "n": 500,
+       "n_in_alert": 4,
+       "loan_in_alert": 195373.59999999998
+      }
+     },
+     "flood_map": {
+      "title": "Hurricane Isaias: Sentinel-1 satellite flood map",
+      "storm": "isaias",
+      "name": "Isaias",
+      "flood": {
+       "available": true,
+       "source": "data/processed/isaias/flood_meta.json",
+       "storm_key": "isaias",
+       "landfall_utc": "2026-10-10T01:30:00Z",
+       "event_time_utc": "2026-10-11T05:38:28.955147+00:00",
+       "hours_landfall_to_event": 28.1,
+       "flooded_km2": 2.99,
+       "coverage_pct": 52.34,
+       "n_passes": 1,
+       "orbits": [
+        19
+       ],
+       "mosaic_complete_utc": "2026-10-11T05:38:28.955147+00:00",
+       "resolution_m": 40,
+       "diff_db_threshold": -3.0,
+       "aoi_bbox": [
+        -88.6,
+        29.6,
+        -83.5,
+        32.2
+       ],
+       "preview_bounds": [
+        [
+         29.579689969503757,
+         -87.78457149768346
+        ],
+        [
+         32.24774398249417,
+         -84.0611538973324
+        ]
+       ],
+       "previews": [
+        "preview_pre.png",
+        "preview_post.png",
+        "preview_change.png",
+        "diagnostic_diff.png"
+       ]
+      },
+      "nessie": {
+       "available": true,
+       "source": "data/processed/isaias/nessie_exposure.parquet",
+       "buffer_m": 500,
+       "n": 220,
+       "n_in_aoi": 0,
+       "n_exposed": 0,
+       "locations": [
+        {
+         "kind": "branch",
+         "name": "ARLINGTON",
+         "city": "Arlington",
+         "state": "VA",
+         "lat": 38.8974498607,
+         "lon": -77.1236568406,
+         "in_aoi": false,
+         "sar_covered": false,
+         "dist_to_flood_m": null,
+         "exposed": false
+        },
+        {
+         "kind": "branch",
+         "name": "LEE HIGHWAY/GEORGE MASON",
+         "city": "Arlington",
+         "state": "VA",
+         "lat": 38.896269001,
+         "lon": -77.1334634027,
+         "in_aoi": false,
+         "sar_covered": false,
+         "dist_to_flood_m": null,
+         "exposed": false
+        },
+        {
+         "kind": "branch",
+         "name": "BALLSTON COMMON MALL",
+         "city": "Arlington",
+         "state": "VA",
+         "lat": 38.8798073959,
+         "lon": -77.1091331599,
+         "in_aoi": false,
+         "sar_covered": false,
+         "dist_to_flood_m": null,
+         "exposed": false
+        },
+        {
+         "kind": "atm",
+         "name": "Arlington 1",
+         "city": null,
+         "state": "",
+         "lat": 38.8981779,
+         "lon": -77.1211338,
+         "in_aoi": false,
+         "sar_covered": false,
+         "dist_to_flood_m": null,
+         "exposed": false
+        }
+       ]
+      }
+     },
+     "storm_history": {
+      "title": "How the stock moved after past hurricanes",
+      "bench": "KRE",
+      "window": "landfall → +5 trading days",
+      "rows": [
+       {
+        "storm": "Harvey",
+        "year": 2017,
+        "excess_pct": -1.0402845742942368
+       },
+       {
+        "storm": "Irma",
+        "year": 2017,
+        "excess_pct": -2.392962116976083
+       },
+       {
+        "storm": "Florence",
+        "year": 2018,
+        "excess_pct": -0.09454264716031169
+       },
+       {
+        "storm": "Michael",
+        "year": 2018,
+        "excess_pct": 1.4024679885618951
+       },
+       {
+        "storm": "Laura",
+        "year": 2020,
+        "excess_pct": 3.5251837391493623
+       },
+       {
+        "storm": "Sally",
+        "year": 2020,
+        "excess_pct": 2.8497023999469295
+       },
+       {
+        "storm": "Ida",
+        "year": 2021,
+        "excess_pct": -8.554959809099039
+       },
+       {
+        "storm": "Ian",
+        "year": 2022,
+        "excess_pct": 2.6387651456415195
+       },
+       {
+        "storm": "Idalia",
+        "year": 2023,
+        "excess_pct": 0.528645543432793
+       },
+       {
+        "storm": "Helene",
+        "year": 2024,
+        "excess_pct": 0.2827612010440905
+       },
+       {
+        "storm": "Milton",
+        "year": 2024,
+        "excess_pct": -2.502137660842152
+       },
+       {
+        "storm": "Isaias",
+        "year": 2026,
+        "excess_pct": 0.08435113844615927
+       }
+      ],
+      "events": [
+       {
+        "key": "harvey",
+        "name": "Harvey",
+        "landfall": "2017-08-26T03:00:00",
+        "event_time": null
+       },
+       {
+        "key": "irma",
+        "name": "Irma",
+        "landfall": "2017-09-10T13:00:00",
+        "event_time": null
+       }
+      ]
+     }
+    }
+   },
+   "error": null
+  },
+  "JPM": {
+   "success": true,
+   "data": {
+    "ticker": "JPM",
+    "name": "JPMorgan Chase & Co.",
+    "as_of": "2026-10-16",
+    "options": [
+     {
+      "key": "alert_exposure",
+      "title": "Bank deposits under live flood alerts",
+      "shows": "US banks ranked by deposits in branches under live NWS flood alerts (FDIC Summary of Deposits)"
+     },
+     {
+      "key": "alerts_map",
+      "title": "Live flood alerts & tropical storms",
+      "shows": "map of live NWS flood alerts plus active NHC tropical storms"
+     },
+     {
+      "key": "flood_map",
+      "title": "Hurricane Isaias: Sentinel-1 satellite flood map",
+      "shows": "Sentinel-1 radar before/after images and detected flood polygons for Hurricane Isaias (Oct 2026)"
+     },
+     {
+      "key": "storm_history",
+      "title": "How the stock moved after past hurricanes",
+      "shows": "the stock's excess return vs its benchmark after each past hurricane landfall"
+     }
+    ],
+    "panels": {
+     "alert_exposure": {
+      "title": "Bank deposits under live flood alerts",
+      "banks": {
+       "available": true,
+       "source": "data/processed/live/bank_alert_exposure.parquet",
+       "n": 57,
+       "rows": [
+        {
+         "bank_name": "TowneBank",
+         "holding_company": null,
+         "ticker": "TOWN",
+         "n_branches_in_alert": 35,
+         "deposits_in_alert_k": 11273549,
+         "exposure_pct": 59.8946950272,
+         "alert_events": "Coastal Flood Advisory;Coastal Flood Watch",
+         "total_deposits_k": 18822283.0
+        },
+        {
+         "bank_name": "Bank of America, National Association",
+         "holding_company": "BANK OF AMERICA CORPORATION",
+         "ticker": "BAC",
+         "n_branches_in_alert": 31,
+         "deposits_in_alert_k": 7016909,
+         "exposure_pct": 0.3537668221,
+         "alert_events": "Coastal Flood Advisory;Coastal Flood Watch;Flash Flood Warning",
+         "total_deposits_k": 1983484194.0
+        },
+        {
+         "bank_name": "Truist Bank",
+         "holding_company": "TRUIST FINANCIAL CORPORATION",
+         "ticker": "TFC",
+         "n_branches_in_alert": 55,
+         "deposits_in_alert_k": 6955426,
+         "exposure_pct": 1.6591667223,
+         "alert_events": "Coastal Flood Advisory;Coastal Flood Watch;Flash Flood Warning",
+         "total_deposits_k": 419212000.0
+        },
+        {
+         "bank_name": "Wells Fargo Bank, National Association",
+         "holding_company": "WELLS FARGO & COMPANY",
+         "ticker": "WFC",
+         "n_branches_in_alert": 41,
+         "deposits_in_alert_k": 6917024,
+         "exposure_pct": 0.4449351415,
+         "alert_events": "Coastal Flood Advisory;Coastal Flood Watch;Flash Flood Warning",
+         "total_deposits_k": 1554614000.0
+        },
+        {
+         "bank_name": "JPMorgan Chase Bank, National Association",
+         "holding_company": "JPMORGAN CHASE & CO.",
+         "ticker": "JPM",
+         "n_branches_in_alert": 22,
+         "deposits_in_alert_k": 2318995,
+         "exposure_pct": 0.1041407138,
+         "alert_events": "Coastal Flood Advisory;Coastal Flood Watch;Flash Flood Warning",
+         "total_deposits_k": 2226790000.0
+        },
+        {
+         "bank_name": "PNC Bank, National Association",
+         "holding_company": "PNC FINANCIAL SERVICES GROUP, INC., THE",
+         "ticker": "PNC",
+         "n_branches_in_alert": 23,
+         "deposits_in_alert_k": 2043822,
+         "exposure_pct": 0.4471368472,
+         "alert_events": "Coastal Flood Advisory;Coastal Flood Watch;Flash Flood Warning",
+         "total_deposits_k": 457090936.0
+        }
+       ],
+       "ticker_rows": [
+        {
+         "bank_name": "JPMorgan Chase Bank, National Association",
+         "holding_company": "JPMORGAN CHASE & CO.",
+         "ticker": "JPM",
+         "n_branches_in_alert": 22,
+         "deposits_in_alert_k": 2318995,
+         "exposure_pct": 0.1041407138,
+         "alert_events": "Coastal Flood Advisory;Coastal Flood Watch;Flash Flood Warning",
+         "total_deposits_k": 2226790000.0
+        }
+       ]
+      },
+      "alerts": {
+       "available": true,
+       "source": "data/processed/live/live_summary.json",
+       "generated_utc": "2026-10-17T20:35:46.008362+00:00",
+       "n_alerts_conus": 22,
+       "alerts_by_event": {
+        "Coastal Flood Advisory": 9,
+        "Coastal Flood Watch": 6,
+        "Flood Warning": 4,
+        "Coastal Flood Warning": 2,
+        "Flash Flood Warning": 1
+       },
+       "active_storms": [
+        {
+         "id": "ep212026",
+         "binNumber": "EP1",
+         "name": "Trudy",
+         "classification": "HU",
+         "intensity": "80",
+         "pressure": "979",
+         "latitudeNumeric": 17,
+         "longitudeNumeric": -104.3,
+         "movementDir": 325,
+         "movementSpeed": 10,
+         "lastUpdate": "2026-10-17T18:00:00.000Z",
+         "basin": "east_pacific"
+        }
+       ]
+      }
+     },
+     "alerts_map": {
+      "title": "Live flood alerts & tropical storms",
+      "alerts": {
+       "available": true,
+       "source": "data/processed/live/live_summary.json",
+       "generated_utc": "2026-10-17T20:35:46.008362+00:00",
+       "n_alerts_conus": 22,
+       "alerts_by_event": {
+        "Coastal Flood Advisory": 9,
+        "Coastal Flood Watch": 6,
+        "Flood Warning": 4,
+        "Coastal Flood Warning": 2,
+        "Flash Flood Warning": 1
+       },
+       "active_storms": [
+        {
+         "id": "ep212026",
+         "binNumber": "EP1",
+         "name": "Trudy",
+         "classification": "HU",
+         "intensity": "80",
+         "pressure": "979",
+         "latitudeNumeric": 17,
+         "longitudeNumeric": -104.3,
+         "movementDir": 325,
+         "movementSpeed": 10,
+         "lastUpdate": "2026-10-17T18:00:00.000Z",
+         "basin": "east_pacific"
+        }
+       ]
+      }
+     },
+     "flood_map": {
+      "title": "Hurricane Isaias: Sentinel-1 satellite flood map",
+      "storm": "isaias",
+      "name": "Isaias",
+      "flood": {
+       "available": true,
+       "source": "data/processed/isaias/flood_meta.json",
+       "storm_key": "isaias",
+       "landfall_utc": "2026-10-10T01:30:00Z",
+       "event_time_utc": "2026-10-11T05:38:28.955147+00:00",
+       "hours_landfall_to_event": 28.1,
+       "flooded_km2": 2.99,
+       "coverage_pct": 52.34,
+       "n_passes": 1,
+       "orbits": [
+        19
+       ],
+       "mosaic_complete_utc": "2026-10-11T05:38:28.955147+00:00",
+       "resolution_m": 40,
+       "diff_db_threshold": -3.0,
+       "aoi_bbox": [
+        -88.6,
+        29.6,
+        -83.5,
+        32.2
+       ],
+       "preview_bounds": [
+        [
+         29.579689969503757,
+         -87.78457149768346
+        ],
+        [
+         32.24774398249417,
+         -84.0611538973324
+        ]
+       ],
+       "previews": [
+        "preview_pre.png",
+        "preview_post.png",
+        "preview_change.png",
+        "diagnostic_diff.png"
+       ]
+      },
+      "nessie": null
+     },
+     "storm_history": {
+      "title": "How the stock moved after past hurricanes",
+      "bench": "KRE",
+      "window": "landfall → +5 trading days",
+      "rows": [
+       {
+        "storm": "Harvey",
+        "year": 2017,
+        "excess_pct": 0.21133273822391274
+       },
+       {
+        "storm": "Irma",
+        "year": 2017,
+        "excess_pct": -1.1507185119178587
+       },
+       {
+        "storm": "Florence",
+        "year": 2018,
+        "excess_pct": 2.0053198327727895
+       },
+       {
+        "storm": "Michael",
+        "year": 2018,
+        "excess_pct": 0.7720147851665082
+       },
+       {
+        "storm": "Laura",
+        "year": 2020,
+        "excess_pct": 1.5192885522208321
+       },
+       {
+        "storm": "Sally",
+        "year": 2020,
+        "excess_pct": 2.3353304204130065
+       },
+       {
+        "storm": "Ida",
+        "year": 2021,
+        "excess_pct": 0.38211978634032917
+       },
+       {
+        "storm": "Ian",
+        "year": 2022,
+        "excess_pct": 0.09814809306951666
+       },
+       {
+        "storm": "Idalia",
+        "year": 2023,
+        "excess_pct": -0.0489561776723324
+       },
+       {
+        "storm": "Helene",
+        "year": 2024,
+        "excess_pct": -0.1487779384921506
+       },
+       {
+        "storm": "Milton",
+        "year": 2024,
+        "excess_pct": -1.8719826313136068
+       },
+       {
+        "storm": "Isaias",
+        "year": 2026,
+        "excess_pct": 0.8483543910383418
+       }
+      ],
+      "events": [
+       {
+        "key": "harvey",
+        "name": "Harvey",
+        "landfall": "2017-08-26T03:00:00",
+        "event_time": null
+       },
+       {
+        "key": "irma",
+        "name": "Irma",
+        "landfall": "2017-09-10T13:00:00",
+        "event_time": null
+       }
+      ]
+     }
+    }
+   },
+   "error": null
+  },
+  "BAC": {
+   "success": true,
+   "data": {
+    "ticker": "BAC",
+    "name": "Bank of America Corp.",
+    "as_of": "2026-10-16",
+    "options": [
+     {
+      "key": "alert_exposure",
+      "title": "Bank deposits under live flood alerts",
+      "shows": "US banks ranked by deposits in branches under live NWS flood alerts (FDIC Summary of Deposits)"
+     },
+     {
+      "key": "alerts_map",
+      "title": "Live flood alerts & tropical storms",
+      "shows": "map of live NWS flood alerts plus active NHC tropical storms"
+     },
+     {
+      "key": "flood_map",
+      "title": "Hurricane Isaias: Sentinel-1 satellite flood map",
+      "shows": "Sentinel-1 radar before/after images and detected flood polygons for Hurricane Isaias (Oct 2026)"
+     },
+     {
+      "key": "storm_history",
+      "title": "How the stock moved after past hurricanes",
+      "shows": "the stock's excess return vs its benchmark after each past hurricane landfall"
+     }
+    ],
+    "panels": {
+     "storm_history": {
+      "title": "How the stock moved after past hurricanes",
+      "bench": "KRE",
+      "window": "landfall → +5 trading days",
+      "rows": [
+       {
+        "storm": "Harvey",
+        "year": 2017,
+        "excess_pct": 2.2658024314999636
+       },
+       {
+        "storm": "Irma",
+        "year": 2017,
+        "excess_pct": 1.6004949745001884
+       },
+       {
+        "storm": "Florence",
+        "year": 2018,
+        "excess_pct": 1.0266914173662212
+       },
+       {
+        "storm": "Michael",
+        "year": 2018,
+        "excess_pct": 1.1039593276921167
+       },
+       {
+        "storm": "Laura",
+        "year": 2020,
+        "excess_pct": 0.7522707861657985
+       },
+       {
+        "storm": "Sally",
+        "year": 2020,
+        "excess_pct": 2.067104997224156
+       },
+       {
+        "storm": "Ida",
+        "year": 2021,
+        "excess_pct": -0.34696321106850725
+       },
+       {
+        "storm": "Ian",
+        "year": 2022,
+        "excess_pct": -0.48241476281813966
+       },
+       {
+        "storm": "Idalia",
+        "year": 2023,
+        "excess_pct": 0.6581741103698135
+       },
+       {
+        "storm": "Helene",
+        "year": 2024,
+        "excess_pct": 1.3584905788174506
+       },
+       {
+        "storm": "Milton",
+        "year": 2024,
+        "excess_pct": -0.25756190554222513
+       },
+       {
+        "storm": "Isaias",
+        "year": 2026,
+        "excess_pct": -7.009296703894696
+       }
+      ],
+      "events": [
+       {
+        "key": "harvey",
+        "name": "Harvey",
+        "landfall": "2017-08-26T03:00:00",
+        "event_time": null
+       },
+       {
+        "key": "irma",
+        "name": "Irma",
+        "landfall": "2017-09-10T13:00:00",
+        "event_time": null
+       }
+      ]
+     }
+    }
+   },
+   "error": null
+  },
+  "WFC": {
+   "success": true,
+   "data": {
+    "ticker": "WFC",
+    "name": "Wells Fargo & Co.",
+    "as_of": "2026-10-16",
+    "options": [
+     {
+      "key": "alert_exposure",
+      "title": "Bank deposits under live flood alerts",
+      "shows": "US banks ranked by deposits in branches under live NWS flood alerts (FDIC Summary of Deposits)"
+     },
+     {
+      "key": "alerts_map",
+      "title": "Live flood alerts & tropical storms",
+      "shows": "map of live NWS flood alerts plus active NHC tropical storms"
+     },
+     {
+      "key": "flood_map",
+      "title": "Hurricane Isaias: Sentinel-1 satellite flood map",
+      "shows": "Sentinel-1 radar before/after images and detected flood polygons for Hurricane Isaias (Oct 2026)"
+     },
+     {
+      "key": "storm_history",
+      "title": "How the stock moved after past hurricanes",
+      "shows": "the stock's excess return vs its benchmark after each past hurricane landfall"
+     }
+    ],
+    "panels": {
+     "storm_history": {
+      "title": "How the stock moved after past hurricanes",
+      "bench": "KRE",
+      "window": "landfall → +5 trading days",
+      "rows": [
+       {
+        "storm": "Harvey",
+        "year": 2017,
+        "excess_pct": -1.1390336571723392
+       },
+       {
+        "storm": "Irma",
+        "year": 2017,
+        "excess_pct": -0.5962544868909347
+       },
+       {
+        "storm": "Florence",
+        "year": 2018,
+        "excess_pct": -1.4026801782933251
+       },
+       {
+        "storm": "Michael",
+        "year": 2018,
+        "excess_pct": 6.434322345213506
+       },
+       {
+        "storm": "Laura",
+        "year": 2020,
+        "excess_pct": 1.1492660390815868
+       },
+       {
+        "storm": "Sally",
+        "year": 2020,
+        "excess_pct": 2.4432820366869556
+       },
+       {
+        "storm": "Ida",
+        "year": 2021,
+        "excess_pct": -9.427310535905331
+       },
+       {
+        "storm": "Ian",
+        "year": 2022,
+        "excess_pct": 2.1705192945403518
+       },
+       {
+        "storm": "Idalia",
+        "year": 2023,
+        "excess_pct": 0.17765718146613985
+       },
+       {
+        "storm": "Helene",
+        "year": 2024,
+        "excess_pct": -0.4882128424283483
+       },
+       {
+        "storm": "Milton",
+        "year": 2024,
+        "excess_pct": 3.9187138036081315
+       },
+       {
+        "storm": "Isaias",
+        "year": 2026,
+        "excess_pct": -0.7703056245389028
+       }
+      ],
+      "events": [
+       {
+        "key": "harvey",
+        "name": "Harvey",
+        "landfall": "2017-08-26T03:00:00",
+        "event_time": null
+       },
+       {
+        "key": "irma",
+        "name": "Irma",
+        "landfall": "2017-09-10T13:00:00",
+        "event_time": null
+       }
+      ]
+     }
+    }
+   },
+   "error": null
+  },
+  "C": {
+   "success": true,
+   "data": {
+    "ticker": "C",
+    "name": "Citigroup Inc.",
+    "as_of": "2026-10-16",
+    "options": [
+     {
+      "key": "alert_exposure",
+      "title": "Bank deposits under live flood alerts",
+      "shows": "US banks ranked by deposits in branches under live NWS flood alerts (FDIC Summary of Deposits)"
+     },
+     {
+      "key": "alerts_map",
+      "title": "Live flood alerts & tropical storms",
+      "shows": "map of live NWS flood alerts plus active NHC tropical storms"
+     },
+     {
+      "key": "flood_map",
+      "title": "Hurricane Isaias: Sentinel-1 satellite flood map",
+      "shows": "Sentinel-1 radar before/after images and detected flood polygons for Hurricane Isaias (Oct 2026)"
+     },
+     {
+      "key": "storm_history",
+      "title": "How the stock moved after past hurricanes",
+      "shows": "the stock's excess return vs its benchmark after each past hurricane landfall"
+     }
+    ],
+    "panels": {
+     "storm_history": {
+      "title": "How the stock moved after past hurricanes",
+      "bench": "KRE",
+      "window": "landfall → +5 trading days",
+      "rows": [
+       {
+        "storm": "Harvey",
+        "year": 2017,
+        "excess_pct": 1.4885296093086087
+       },
+       {
+        "storm": "Irma",
+        "year": 2017,
+        "excess_pct": -0.4599773142982322
+       },
+       {
+        "storm": "Florence",
+        "year": 2018,
+        "excess_pct": 4.007098966708611
+       },
+       {
+        "storm": "Michael",
+        "year": 2018,
+        "excess_pct": 2.9820841845901835
+       },
+       {
+        "storm": "Laura",
+        "year": 2020,
+        "excess_pct": 1.1087573465736966
+       },
+       {
+        "storm": "Sally",
+        "year": 2020,
+        "excess_pct": 4.062411897111318
+       },
+       {
+        "storm": "Ida",
+        "year": 2021,
+        "excess_pct": 0.06455917417547141
+       },
+       {
+        "storm": "Ian",
+        "year": 2022,
+        "excess_pct": -2.0500743964228185
+       },
+       {
+        "storm": "Idalia",
+        "year": 2023,
+        "excess_pct": 1.6962097719930735
+       },
+       {
+        "storm": "Helene",
+        "year": 2024,
+        "excess_pct": 1.3937319877181498
+       },
+       {
+        "storm": "Milton",
+        "year": 2024,
+        "excess_pct": -6.347009586031582
+       },
+       {
+        "storm": "Isaias",
+        "year": 2026,
+        "excess_pct": -5.391099016039735
+       }
+      ],
+      "events": [
+       {
+        "key": "harvey",
+        "name": "Harvey",
+        "landfall": "2017-08-26T03:00:00",
+        "event_time": null
+       },
+       {
+        "key": "irma",
+        "name": "Irma",
+        "landfall": "2017-09-10T13:00:00",
+        "event_time": null
+       }
+      ]
+     }
+    }
+   },
+   "error": null
+  },
+  "USB": {
+   "success": true,
+   "data": {
+    "ticker": "USB",
+    "name": "U.S. Bancorp",
+    "as_of": "2026-10-16",
+    "options": [
+     {
+      "key": "alert_exposure",
+      "title": "Bank deposits under live flood alerts",
+      "shows": "US banks ranked by deposits in branches under live NWS flood alerts (FDIC Summary of Deposits)"
+     },
+     {
+      "key": "alerts_map",
+      "title": "Live flood alerts & tropical storms",
+      "shows": "map of live NWS flood alerts plus active NHC tropical storms"
+     },
+     {
+      "key": "flood_map",
+      "title": "Hurricane Isaias: Sentinel-1 satellite flood map",
+      "shows": "Sentinel-1 radar before/after images and detected flood polygons for Hurricane Isaias (Oct 2026)"
+     },
+     {
+      "key": "storm_history",
+      "title": "How the stock moved after past hurricanes",
+      "shows": "the stock's excess return vs its benchmark after each past hurricane landfall"
+     }
+    ],
+    "panels": {
+     "storm_history": {
+      "title": "How the stock moved after past hurricanes",
+      "bench": "KRE",
+      "window": "landfall → +5 trading days",
+      "rows": [
+       {
+        "storm": "Harvey",
+        "year": 2017,
+        "excess_pct": -0.3334774869869772
+       },
+       {
+        "storm": "Irma",
+        "year": 2017,
+        "excess_pct": -1.1098091151127143
+       },
+       {
+        "storm": "Florence",
+        "year": 2018,
+        "excess_pct": 0.03451078296703436
+       },
+       {
+        "storm": "Michael",
+        "year": 2018,
+        "excess_pct": 0.37934224845592723
+       },
+       {
+        "storm": "Laura",
+        "year": 2020,
+        "excess_pct": 2.7344039282935384
+       },
+       {
+        "storm": "Sally",
+        "year": 2020,
+        "excess_pct": 2.7669088871274283
+       },
+       {
+        "storm": "Ida",
+        "year": 2021,
+        "excess_pct": -1.1678630847123728
+       },
+       {
+        "storm": "Ian",
+        "year": 2022,
+        "excess_pct": -1.072697588390481
+       },
+       {
+        "storm": "Idalia",
+        "year": 2023,
+        "excess_pct": 1.5469213361116285
+       },
+       {
+        "storm": "Helene",
+        "year": 2024,
+        "excess_pct": 0.1922955235463153
+       },
+       {
+        "storm": "Milton",
+        "year": 2024,
+        "excess_pct": 2.17189320533433
+       },
+       {
+        "storm": "Isaias",
+        "year": 2026,
+        "excess_pct": 1.6971058630407043
+       }
+      ],
+      "events": [
+       {
+        "key": "harvey",
+        "name": "Harvey",
+        "landfall": "2017-08-26T03:00:00",
+        "event_time": null
+       },
+       {
+        "key": "irma",
+        "name": "Irma",
+        "landfall": "2017-09-10T13:00:00",
+        "event_time": null
+       }
+      ]
+     }
+    }
+   },
+   "error": null
+  },
+  "PNC": {
+   "success": true,
+   "data": {
+    "ticker": "PNC",
+    "name": "PNC Financial Services Group",
+    "as_of": "2026-10-16",
+    "options": [
+     {
+      "key": "alert_exposure",
+      "title": "Bank deposits under live flood alerts",
+      "shows": "US banks ranked by deposits in branches under live NWS flood alerts (FDIC Summary of Deposits)"
+     },
+     {
+      "key": "alerts_map",
+      "title": "Live flood alerts & tropical storms",
+      "shows": "map of live NWS flood alerts plus active NHC tropical storms"
+     },
+     {
+      "key": "flood_map",
+      "title": "Hurricane Isaias: Sentinel-1 satellite flood map",
+      "shows": "Sentinel-1 radar before/after images and detected flood polygons for Hurricane Isaias (Oct 2026)"
+     },
+     {
+      "key": "storm_history",
+      "title": "How the stock moved after past hurricanes",
+      "shows": "the stock's excess return vs its benchmark after each past hurricane landfall"
+     }
+    ],
+    "panels": {
+     "storm_history": {
+      "title": "How the stock moved after past hurricanes",
+      "bench": "KRE",
+      "window": "landfall → +5 trading days",
+      "rows": [
+       {
+        "storm": "Harvey",
+        "year": 2017,
+        "excess_pct": -0.5560911059136586
+       },
+       {
+        "storm": "Irma",
+        "year": 2017,
+        "excess_pct": 0.6458123132095039
+       },
+       {
+        "storm": "Florence",
+        "year": 2018,
+        "excess_pct": 0.5527208332586131
+       },
+       {
+        "storm": "Michael",
+        "year": 2018,
+        "excess_pct": -3.699354130274557
+       },
+       {
+        "storm": "Laura",
+        "year": 2020,
+        "excess_pct": 0.8455334023097727
+       },
+       {
+        "storm": "Sally",
+        "year": 2020,
+        "excess_pct": 2.037761227372359
+       },
+       {
+        "storm": "Ida",
+        "year": 2021,
+        "excess_pct": 1.0405321016146551
+       },
+       {
+        "storm": "Ian",
+        "year": 2022,
+        "excess_pct": 1.940511302920056
+       },
+       {
+        "storm": "Idalia",
+        "year": 2023,
+        "excess_pct": 0.672126525113681
+       },
+       {
+        "storm": "Helene",
+        "year": 2024,
+        "excess_pct": -0.6820663439068841
+       },
+       {
+        "storm": "Milton",
+        "year": 2024,
+        "excess_pct": -2.1447064173147012
+       },
+       {
+        "storm": "Isaias",
+        "year": 2026,
+        "excess_pct": -1.0708774213470384
+       }
+      ],
+      "events": [
+       {
+        "key": "harvey",
+        "name": "Harvey",
+        "landfall": "2017-08-26T03:00:00",
+        "event_time": null
+       },
+       {
+        "key": "irma",
+        "name": "Irma",
+        "landfall": "2017-09-10T13:00:00",
+        "event_time": null
+       }
+      ]
+     }
+    }
+   },
+   "error": null
+  },
+  "TFC": {
+   "success": true,
+   "data": {
+    "ticker": "TFC",
+    "name": "Truist Financial Corp.",
+    "as_of": "2026-10-16",
+    "options": [
+     {
+      "key": "alert_exposure",
+      "title": "Bank deposits under live flood alerts",
+      "shows": "US banks ranked by deposits in branches under live NWS flood alerts (FDIC Summary of Deposits)"
+     },
+     {
+      "key": "alerts_map",
+      "title": "Live flood alerts & tropical storms",
+      "shows": "map of live NWS flood alerts plus active NHC tropical storms"
+     },
+     {
+      "key": "flood_map",
+      "title": "Hurricane Isaias: Sentinel-1 satellite flood map",
+      "shows": "Sentinel-1 radar before/after images and detected flood polygons for Hurricane Isaias (Oct 2026)"
+     },
+     {
+      "key": "storm_history",
+      "title": "How the stock moved after past hurricanes",
+      "shows": "the stock's excess return vs its benchmark after each past hurricane landfall"
+     }
+    ],
+    "panels": {
+     "alert_exposure": {
+      "title": "Bank deposits under live flood alerts",
+      "banks": {
+       "available": true,
+       "source": "data/processed/live/bank_alert_exposure.parquet",
+       "n": 57,
+       "rows": [
+        {
+         "bank_name": "TowneBank",
+         "holding_company": null,
+         "ticker": "TOWN",
+         "n_branches_in_alert": 35,
+         "deposits_in_alert_k": 11273549,
+         "exposure_pct": 59.8946950272,
+         "alert_events": "Coastal Flood Advisory;Coastal Flood Watch",
+         "total_deposits_k": 18822283.0
+        },
+        {
+         "bank_name": "Bank of America, National Association",
+         "holding_company": "BANK OF AMERICA CORPORATION",
+         "ticker": "BAC",
+         "n_branches_in_alert": 31,
+         "deposits_in_alert_k": 7016909,
+         "exposure_pct": 0.3537668221,
+         "alert_events": "Coastal Flood Advisory;Coastal Flood Watch;Flash Flood Warning",
+         "total_deposits_k": 1983484194.0
+        },
+        {
+         "bank_name": "Truist Bank",
+         "holding_company": "TRUIST FINANCIAL CORPORATION",
+         "ticker": "TFC",
+         "n_branches_in_alert": 55,
+         "deposits_in_alert_k": 6955426,
+         "exposure_pct": 1.6591667223,
+         "alert_events": "Coastal Flood Advisory;Coastal Flood Watch;Flash Flood Warning",
+         "total_deposits_k": 419212000.0
+        },
+        {
+         "bank_name": "Wells Fargo Bank, National Association",
+         "holding_company": "WELLS FARGO & COMPANY",
+         "ticker": "WFC",
+         "n_branches_in_alert": 41,
+         "deposits_in_alert_k": 6917024,
+         "exposure_pct": 0.4449351415,
+         "alert_events": "Coastal Flood Advisory;Coastal Flood Watch;Flash Flood Warning",
+         "total_deposits_k": 1554614000.0
+        },
+        {
+         "bank_name": "JPMorgan Chase Bank, National Association",
+         "holding_company": "JPMORGAN CHASE & CO.",
+         "ticker": "JPM",
+         "n_branches_in_alert": 22,
+         "deposits_in_alert_k": 2318995,
+         "exposure_pct": 0.1041407138,
+         "alert_events": "Coastal Flood Advisory;Coastal Flood Watch;Flash Flood Warning",
+         "total_deposits_k": 2226790000.0
+        },
+        {
+         "bank_name": "PNC Bank, National Association",
+         "holding_company": "PNC FINANCIAL SERVICES GROUP, INC., THE",
+         "ticker": "PNC",
+         "n_branches_in_alert": 23,
+         "deposits_in_alert_k": 2043822,
+         "exposure_pct": 0.4471368472,
+         "alert_events": "Coastal Flood Advisory;Coastal Flood Watch;Flash Flood Warning",
+         "total_deposits_k": 457090936.0
+        }
+       ],
+       "ticker_rows": [
+        {
+         "bank_name": "Truist Bank",
+         "holding_company": "TRUIST FINANCIAL CORPORATION",
+         "ticker": "TFC",
+         "n_branches_in_alert": 55,
+         "deposits_in_alert_k": 6955426,
+         "exposure_pct": 1.6591667223,
+         "alert_events": "Coastal Flood Advisory;Coastal Flood Watch;Flash Flood Warning",
+         "total_deposits_k": 419212000.0
+        }
+       ]
+      },
+      "alerts": {
+       "available": true,
+       "source": "data/processed/live/live_summary.json",
+       "generated_utc": "2026-10-17T20:35:46.008362+00:00",
+       "n_alerts_conus": 22,
+       "alerts_by_event": {
+        "Coastal Flood Advisory": 9,
+        "Coastal Flood Watch": 6,
+        "Flood Warning": 4,
+        "Coastal Flood Warning": 2,
+        "Flash Flood Warning": 1
+       },
+       "active_storms": [
+        {
+         "id": "ep212026",
+         "binNumber": "EP1",
+         "name": "Trudy",
+         "classification": "HU",
+         "intensity": "80",
+         "pressure": "979",
+         "latitudeNumeric": 17,
+         "longitudeNumeric": -104.3,
+         "movementDir": 325,
+         "movementSpeed": 10,
+         "lastUpdate": "2026-10-17T18:00:00.000Z",
+         "basin": "east_pacific"
+        }
+       ]
+      }
+     },
+     "alerts_map": {
+      "title": "Live flood alerts & tropical storms",
+      "alerts": {
+       "available": true,
+       "source": "data/processed/live/live_summary.json",
+       "generated_utc": "2026-10-17T20:35:46.008362+00:00",
+       "n_alerts_conus": 22,
+       "alerts_by_event": {
+        "Coastal Flood Advisory": 9,
+        "Coastal Flood Watch": 6,
+        "Flood Warning": 4,
+        "Coastal Flood Warning": 2,
+        "Flash Flood Warning": 1
+       },
+       "active_storms": [
+        {
+         "id": "ep212026",
+         "binNumber": "EP1",
+         "name": "Trudy",
+         "classification": "HU",
+         "intensity": "80",
+         "pressure": "979",
+         "latitudeNumeric": 17,
+         "longitudeNumeric": -104.3,
+         "movementDir": 325,
+         "movementSpeed": 10,
+         "lastUpdate": "2026-10-17T18:00:00.000Z",
+         "basin": "east_pacific"
+        }
+       ]
+      }
+     },
+     "flood_map": {
+      "title": "Hurricane Isaias: Sentinel-1 satellite flood map",
+      "storm": "isaias",
+      "name": "Isaias",
+      "flood": {
+       "available": true,
+       "source": "data/processed/isaias/flood_meta.json",
+       "storm_key": "isaias",
+       "landfall_utc": "2026-10-10T01:30:00Z",
+       "event_time_utc": "2026-10-11T05:38:28.955147+00:00",
+       "hours_landfall_to_event": 28.1,
+       "flooded_km2": 2.99,
+       "coverage_pct": 52.34,
+       "n_passes": 1,
+       "orbits": [
+        19
+       ],
+       "mosaic_complete_utc": "2026-10-11T05:38:28.955147+00:00",
+       "resolution_m": 40,
+       "diff_db_threshold": -3.0,
+       "aoi_bbox": [
+        -88.6,
+        29.6,
+        -83.5,
+        32.2
+       ],
+       "preview_bounds": [
+        [
+         29.579689969503757,
+         -87.78457149768346
+        ],
+        [
+         32.24774398249417,
+         -84.0611538973324
+        ]
+       ],
+       "previews": [
+        "preview_pre.png",
+        "preview_post.png",
+        "preview_change.png",
+        "diagnostic_diff.png"
+       ]
+      },
+      "nessie": null
+     },
+     "storm_history": {
+      "title": "How the stock moved after past hurricanes",
+      "bench": "KRE",
+      "window": "landfall → +5 trading days",
+      "rows": [
+       {
+        "storm": "Harvey",
+        "year": 2017,
+        "excess_pct": 0.7212446350650215
+       },
+       {
+        "storm": "Irma",
+        "year": 2017,
+        "excess_pct": -4.319949629809816
+       },
+       {
+        "storm": "Florence",
+        "year": 2018,
+        "excess_pct": 0.7740057796545852
+       },
+       {
+        "storm": "Michael",
+        "year": 2018,
+        "excess_pct": 1.2117321420764604
+       },
+       {
+        "storm": "Laura",
+        "year": 2020,
+        "excess_pct": 2.954625910108666
+       },
+       {
+        "storm": "Sally",
+        "year": 2020,
+        "excess_pct": -0.8446249386865556
+       },
+       {
+        "storm": "Ida",
+        "year": 2021,
+        "excess_pct": -0.06738388635447734
+       },
+       {
+        "storm": "Ian",
+        "year": 2022,
+        "excess_pct": 1.6265971258002665
+       },
+       {
+        "storm": "Idalia",
+        "year": 2023,
+        "excess_pct": 0.5069601684657865
+       },
+       {
+        "storm": "Helene",
+        "year": 2024,
+        "excess_pct": 0.03968134326006734
+       },
+       {
+        "storm": "Milton",
+        "year": 2024,
+        "excess_pct": -2.189056125253641
+       },
+       {
+        "storm": "Isaias",
+        "year": 2026,
+        "excess_pct": 0.9080211051865295
+       }
+      ],
+      "events": [
+       {
+        "key": "harvey",
+        "name": "Harvey",
+        "landfall": "2017-08-26T03:00:00",
+        "event_time": null
+       },
+       {
+        "key": "irma",
+        "name": "Irma",
+        "landfall": "2017-09-10T13:00:00",
+        "event_time": null
+       }
+      ]
+     }
+    }
+   },
+   "error": null
+  },
+  "ALL": {
+   "success": true,
+   "data": {
+    "ticker": "ALL",
+    "name": "Allstate Corp.",
+    "as_of": "2026-10-16",
+    "options": [
+     {
+      "key": "alerts_map",
+      "title": "Live flood alerts & tropical storms",
+      "shows": "map of live NWS flood alerts plus active NHC tropical storms"
+     },
+     {
+      "key": "flood_map",
+      "title": "Hurricane Isaias: Sentinel-1 satellite flood map",
+      "shows": "Sentinel-1 radar before/after images and detected flood polygons for Hurricane Isaias (Oct 2026)"
+     },
+     {
+      "key": "storm_history",
+      "title": "How the stock moved after past hurricanes",
+      "shows": "the stock's excess return vs its benchmark after each past hurricane landfall"
+     }
+    ],
+    "panels": {
+     "alerts_map": {
+      "title": "Live flood alerts & tropical storms",
+      "alerts": {
+       "available": true,
+       "source": "data/processed/live/live_summary.json",
+       "generated_utc": "2026-10-17T20:35:46.008362+00:00",
+       "n_alerts_conus": 22,
+       "alerts_by_event": {
+        "Coastal Flood Advisory": 9,
+        "Coastal Flood Watch": 6,
+        "Flood Warning": 4,
+        "Coastal Flood Warning": 2,
+        "Flash Flood Warning": 1
+       },
+       "active_storms": [
+        {
+         "id": "ep212026",
+         "binNumber": "EP1",
+         "name": "Trudy",
+         "classification": "HU",
+         "intensity": "80",
+         "pressure": "979",
+         "latitudeNumeric": 17,
+         "longitudeNumeric": -104.3,
+         "movementDir": 325,
+         "movementSpeed": 10,
+         "lastUpdate": "2026-10-17T18:00:00.000Z",
+         "basin": "east_pacific"
+        }
+       ]
+      }
+     },
+     "flood_map": {
+      "title": "Hurricane Isaias: Sentinel-1 satellite flood map",
+      "storm": "isaias",
+      "name": "Isaias",
+      "flood": {
+       "available": true,
+       "source": "data/processed/isaias/flood_meta.json",
+       "storm_key": "isaias",
+       "landfall_utc": "2026-10-10T01:30:00Z",
+       "event_time_utc": "2026-10-11T05:38:28.955147+00:00",
+       "hours_landfall_to_event": 28.1,
+       "flooded_km2": 2.99,
+       "coverage_pct": 52.34,
+       "n_passes": 1,
+       "orbits": [
+        19
+       ],
+       "mosaic_complete_utc": "2026-10-11T05:38:28.955147+00:00",
+       "resolution_m": 40,
+       "diff_db_threshold": -3.0,
+       "aoi_bbox": [
+        -88.6,
+        29.6,
+        -83.5,
+        32.2
+       ],
+       "preview_bounds": [
+        [
+         29.579689969503757,
+         -87.78457149768346
+        ],
+        [
+         32.24774398249417,
+         -84.0611538973324
+        ]
+       ],
+       "previews": [
+        "preview_pre.png",
+        "preview_post.png",
+        "preview_change.png",
+        "diagnostic_diff.png"
+       ]
+      },
+      "nessie": null
+     },
+     "storm_history": {
+      "title": "How the stock moved after past hurricanes",
+      "bench": "SPY",
+      "window": "landfall → +5 trading days",
+      "rows": [
+       {
+        "storm": "Harvey",
+        "year": 2017,
+        "excess_pct": -3.387651878180975
+       },
+       {
+        "storm": "Irma",
+        "year": 2017,
+        "excess_pct": -0.14063712887741886
+       },
+       {
+        "storm": "Florence",
+        "year": 2018,
+        "excess_pct": 2.023104264412634
+       },
+       {
+        "storm": "Michael",
+        "year": 2018,
+        "excess_pct": -2.9752198510689
+       },
+       {
+        "storm": "Laura",
+        "year": 2020,
+        "excess_pct": -0.6061045194825532
+       },
+       {
+        "storm": "Sally",
+        "year": 2020,
+        "excess_pct": -0.1264602541337645
+       },
+       {
+        "storm": "Ida",
+        "year": 2021,
+        "excess_pct": -2.643856875639461
+       },
+       {
+        "storm": "Ian",
+        "year": 2022,
+        "excess_pct": 3.0724867714532422
+       },
+       {
+        "storm": "Idalia",
+        "year": 2023,
+        "excess_pct": 2.7728951613337216
+       },
+       {
+        "storm": "Helene",
+        "year": 2024,
+        "excess_pct": 0.3344028330725557
+       },
+       {
+        "storm": "Milton",
+        "year": 2024,
+        "excess_pct": 4.755699469202579
+       },
+       {
+        "storm": "Isaias",
+        "year": 2026,
+        "excess_pct": 9.722011916386286
+       }
+      ],
+      "events": [
+       {
+        "key": "harvey",
+        "name": "Harvey",
+        "landfall": "2017-08-26T03:00:00",
+        "event_time": null
+       },
+       {
+        "key": "irma",
+        "name": "Irma",
+        "landfall": "2017-09-10T13:00:00",
+        "event_time": null
+       }
+      ]
+     }
+    }
+   },
+   "error": null
+  },
+  "TRV": {
+   "success": true,
+   "data": {
+    "ticker": "TRV",
+    "name": "Travelers Companies",
+    "as_of": "2026-10-16",
+    "options": [
+     {
+      "key": "alerts_map",
+      "title": "Live flood alerts & tropical storms",
+      "shows": "map of live NWS flood alerts plus active NHC tropical storms"
+     },
+     {
+      "key": "flood_map",
+      "title": "Hurricane Isaias: Sentinel-1 satellite flood map",
+      "shows": "Sentinel-1 radar before/after images and detected flood polygons for Hurricane Isaias (Oct 2026)"
+     },
+     {
+      "key": "storm_history",
+      "title": "How the stock moved after past hurricanes",
+      "shows": "the stock's excess return vs its benchmark after each past hurricane landfall"
+     }
+    ],
+    "panels": {
+     "storm_history": {
+      "title": "How the stock moved after past hurricanes",
+      "bench": "SPY",
+      "window": "landfall → +5 trading days",
+      "rows": [
+       {
+        "storm": "Harvey",
+        "year": 2017,
+        "excess_pct": -6.666966698205545
+       },
+       {
+        "storm": "Irma",
+        "year": 2017,
+        "excess_pct": -0.766140300298801
+       },
+       {
+        "storm": "Florence",
+        "year": 2018,
+        "excess_pct": 3.1054246574723443
+       },
+       {
+        "storm": "Michael",
+        "year": 2018,
+        "excess_pct": -2.8721371634788717
+       },
+       {
+        "storm": "Laura",
+        "year": 2020,
+        "excess_pct": 0.5384399936671613
+       },
+       {
+        "storm": "Sally",
+        "year": 2020,
+        "excess_pct": -0.07493517478334155
+       },
+       {
+        "storm": "Ida",
+        "year": 2021,
+        "excess_pct": -2.4444634260278875
+       },
+       {
+        "storm": "Ian",
+        "year": 2022,
+        "excess_pct": 2.608539666315135
+       },
+       {
+        "storm": "Idalia",
+        "year": 2023,
+        "excess_pct": 0.2403982805511795
+       },
+       {
+        "storm": "Helene",
+        "year": 2024,
+        "excess_pct": -0.3859546386535406
+       },
+       {
+        "storm": "Milton",
+        "year": 2024,
+        "excess_pct": 3.9504471939994623
+       },
+       {
+        "storm": "Isaias",
+        "year": 2026,
+        "excess_pct": 7.4720951613843845
+       }
+      ],
+      "events": [
+       {
+        "key": "harvey",
+        "name": "Harvey",
+        "landfall": "2017-08-26T03:00:00",
+        "event_time": null
+       },
+       {
+        "key": "irma",
+        "name": "Irma",
+        "landfall": "2017-09-10T13:00:00",
+        "event_time": null
+       }
+      ]
+     }
+    }
+   },
+   "error": null
+  },
+  "PGR": {
+   "success": true,
+   "data": {
+    "ticker": "PGR",
+    "name": "Progressive Corp.",
+    "as_of": "2026-10-16",
+    "options": [
+     {
+      "key": "alerts_map",
+      "title": "Live flood alerts & tropical storms",
+      "shows": "map of live NWS flood alerts plus active NHC tropical storms"
+     },
+     {
+      "key": "flood_map",
+      "title": "Hurricane Isaias: Sentinel-1 satellite flood map",
+      "shows": "Sentinel-1 radar before/after images and detected flood polygons for Hurricane Isaias (Oct 2026)"
+     },
+     {
+      "key": "storm_history",
+      "title": "How the stock moved after past hurricanes",
+      "shows": "the stock's excess return vs its benchmark after each past hurricane landfall"
+     }
+    ],
+    "panels": {
+     "storm_history": {
+      "title": "How the stock moved after past hurricanes",
+      "bench": "SPY",
+      "window": "landfall → +5 trading days",
+      "rows": [
+       {
+        "storm": "Harvey",
+        "year": 2017,
+        "excess_pct": -7.159986515464478
+       },
+       {
+        "storm": "Irma",
+        "year": 2017,
+        "excess_pct": -0.21357290907624282
+       },
+       {
+        "storm": "Florence",
+        "year": 2018,
+        "excess_pct": 1.9834247006704775
+       },
+       {
+        "storm": "Michael",
+        "year": 2018,
+        "excess_pct": 0.27006955065642657
+       },
+       {
+        "storm": "Laura",
+        "year": 2020,
+        "excess_pct": 0.15137368995405964
+       },
+       {
+        "storm": "Sally",
+        "year": 2020,
+        "excess_pct": 1.848345922531358
+       },
+       {
+        "storm": "Ida",
+        "year": 2021,
+        "excess_pct": -1.9274486121722667
+       },
+       {
+        "storm": "Ian",
+        "year": 2022,
+        "excess_pct": 0.046822423586334594
+       },
+       {
+        "storm": "Idalia",
+        "year": 2023,
+        "excess_pct": 2.596217542372692
+       },
+       {
+        "storm": "Helene",
+        "year": 2024,
+        "excess_pct": 0.7816020041764737
+       },
+       {
+        "storm": "Milton",
+        "year": 2024,
+        "excess_pct": 0.9316127813611352
+       },
+       {
+        "storm": "Isaias",
+        "year": 2026,
+        "excess_pct": 2.473662760805695
+       }
+      ],
+      "events": [
+       {
+        "key": "harvey",
+        "name": "Harvey",
+        "landfall": "2017-08-26T03:00:00",
+        "event_time": null
+       },
+       {
+        "key": "irma",
+        "name": "Irma",
+        "landfall": "2017-09-10T13:00:00",
+        "event_time": null
+       }
+      ]
+     }
+    }
+   },
+   "error": null
+  },
+  "CB": {
+   "success": true,
+   "data": {
+    "ticker": "CB",
+    "name": "Chubb Ltd.",
+    "as_of": "2026-10-16",
+    "options": [
+     {
+      "key": "alerts_map",
+      "title": "Live flood alerts & tropical storms",
+      "shows": "map of live NWS flood alerts plus active NHC tropical storms"
+     },
+     {
+      "key": "flood_map",
+      "title": "Hurricane Isaias: Sentinel-1 satellite flood map",
+      "shows": "Sentinel-1 radar before/after images and detected flood polygons for Hurricane Isaias (Oct 2026)"
+     },
+     {
+      "key": "storm_history",
+      "title": "How the stock moved after past hurricanes",
+      "shows": "the stock's excess return vs its benchmark after each past hurricane landfall"
+     }
+    ],
+    "panels": {
+     "storm_history": {
+      "title": "How the stock moved after past hurricanes",
+      "bench": "SPY",
+      "window": "landfall → +5 trading days",
+      "rows": [
+       {
+        "storm": "Harvey",
+        "year": 2017,
+        "excess_pct": -3.542679789644687
+       },
+       {
+        "storm": "Irma",
+        "year": 2017,
+        "excess_pct": 0.3230121842020317
+       },
+       {
+        "storm": "Florence",
+        "year": 2018,
+        "excess_pct": 2.28168910359674
+       },
+       {
+        "storm": "Michael",
+        "year": 2018,
+        "excess_pct": -6.489204596567788
+       },
+       {
+        "storm": "Laura",
+        "year": 2020,
+        "excess_pct": -2.6819403962520028
+       },
+       {
+        "storm": "Sally",
+        "year": 2020,
+        "excess_pct": 1.8183828943977076
+       },
+       {
+        "storm": "Ida",
+        "year": 2021,
+        "excess_pct": -2.1734929761026756
+       },
+       {
+        "storm": "Ian",
+        "year": 2022,
+        "excess_pct": 3.951047548910669
+       },
+       {
+        "storm": "Idalia",
+        "year": 2023,
+        "excess_pct": 0.6616617180304374
+       },
+       {
+        "storm": "Helene",
+        "year": 2024,
+        "excess_pct": 0.3363534924712752
+       },
+       {
+        "storm": "Milton",
+        "year": 2024,
+        "excess_pct": 2.676692082033938
+       },
+       {
+        "storm": "Isaias",
+        "year": 2026,
+        "excess_pct": 7.292498179739226
+       }
+      ],
+      "events": [
+       {
+        "key": "harvey",
+        "name": "Harvey",
+        "landfall": "2017-08-26T03:00:00",
+        "event_time": null
+       },
+       {
+        "key": "irma",
+        "name": "Irma",
+        "landfall": "2017-09-10T13:00:00",
+        "event_time": null
+       }
+      ]
+     }
+    }
+   },
+   "error": null
+  },
+  "KRE": {
+   "success": true,
+   "data": {
+    "ticker": "KRE",
+    "name": "SPDR S&P Regional Banking ETF",
+    "as_of": "2026-10-16",
+    "options": [],
+    "panels": {}
+   },
+   "error": null
+  }
+ }
+}

@@ -5,7 +5,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HttpError, type WalletAdapter } from "../api/adapter";
-import { money, toCents } from "../format";
+import { isShopifyGrant, money, toCents } from "../format";
 import { DIRECTORY_ID } from "../services";
 import {
   amountInput,
@@ -260,7 +260,7 @@ export function NewAgentSheet({ adapter, offline = false, embed, chatUrl, knownN
             <div className="created-services" aria-label="Connected services">
               {agent.services.map((s) => (
                 <span key={s.id} className="created-service">
-                  <ServiceTile name={s.name} color={s.color} size="sm" /> {s.name}
+                  <ServiceTile name={s.name} color={s.color} size="sm" shopify={isShopifyGrant(s)} /> {s.name}
                 </span>
               ))}
             </div>
@@ -451,7 +451,7 @@ export function NewAgentSheet({ adapter, offline = false, embed, chatUrl, knownN
                 <li key={s.id}>
                   <label className={`svc-pick${on ? " svc-pick-on" : ""}`} title={s.summary}>
                     <input type="checkbox" checked={on} onChange={() => toggleService(s.id)} />
-                    <ServiceTile name={s.name} color={s.color} size="sm" />
+                    <ServiceTile name={s.name} color={s.color} size="sm" shopify={isShopifyGrant(s)} />
                     <span className="svc-pick-text">
                       <strong>{s.name}</strong>
                       <small>{s.pricing}</small>

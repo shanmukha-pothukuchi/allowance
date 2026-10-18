@@ -1,6 +1,8 @@
+import { checkingLine, masked } from "../bank";
+import { money } from "../format";
 import { navigate, type Route } from "../route";
 import type { DashboardState } from "../state";
-import { Moon, Snowflake, Sun } from "./Icons";
+import { Bank, Moon, Snowflake, Sun } from "./Icons";
 
 const STATUS_LABEL: Record<DashboardState["connection"], string> = {
   connecting: "Connecting",
@@ -16,11 +18,15 @@ interface NavProps {
   theme: "dark" | "light";
   onToggleTheme(): void;
   onToggleDetails(): void;
+  /** Opens the Capital One sheet (§16.5). */
+  onOpenBank?(): void;
 }
 
-/** The owner's console navigation: a quiet left rail (brand, views, connection, preferences). */
-export function SideNav({ state, route, theme, onToggleTheme, onToggleDetails }: NavProps) {
+/** The owner's console navigation: a quiet left rail (brand, views, linked bank, connection, preferences). */
+export function SideNav({ state, route, theme, onToggleTheme, onToggleDetails, onOpenBank }: NavProps) {
   const pending = state.approvals.length;
+  // §16.5: the owner's checking, only once the bank is linked. Without a Nessie key, nothing.
+  const bank = state.totals.bank?.linked ? state.totals.bank : null;
   const item = (view: Route["view"], label: string, badge?: number) => (
     <button className={`nav-item${route.view === view ? " nav-on" : ""}`} aria-current={route.view === view ? "page" : undefined} onClick={() => navigate({ view })}>
       <span>{label}</span>
@@ -33,11 +39,32 @@ export function SideNav({ state, route, theme, onToggleTheme, onToggleDetails }:
         <span className="brand-mark" aria-hidden />
         <span className="brand-name">Allowance</span>
       </div>
-      <p className="nav-caption">Owner's wallet</p>
       <nav className="nav-list" aria-label="Views">
         {item("overview", "Overview", pending)}
         {item("services", "Services")}
       </nav>
+
+      {bank && (
+        <div className="nav-section">
+          <p className="nav-section-title">Linked bank</p>
+          <button
+            type="button"
+            className="nav-bank"
+            onClick={onOpenBank}
+            title={`${checkingLine(bank)}. Capital One's Nessie sandbox: sandbox money, not real dollars.`}
+            aria-label={`${checkingLine(bank)}, Nessie sandbox. Open the bank.`}
+          >
+            <span className="nav-bank-ic" aria-hidden>
+              <Bank width={15} height={15} />
+            </span>
+            <span className="nav-bank-text">
+              <span>Capital One</span>
+              <span className="nav-bank-sub">Checking {masked(bank.checkingLast4)}</span>
+            </span>
+            <span className="nav-bank-amt">{bank.checkingBalance !== undefined ? money(bank.checkingBalance) : "—"}</span>
+          </button>
+        </div>
+      )}
 
       <div className="nav-foot">
         <span className={`live-pill live-${state.connection}`}>
@@ -52,7 +79,7 @@ export function SideNav({ state, route, theme, onToggleTheme, onToggleDetails }:
             <span>Technical details</span>
           </label>
           <button className="icon-btn" onClick={onToggleTheme} title={theme === "dark" ? "Switch to light" : "Switch to dark"} aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}>
-            {theme === "dark" ? <Sun width={18} height={18} /> : <Moon width={18} height={18} />}
+            {theme === "dark" ? <Sun width={16} height={16} /> : <Moon width={16} height={16} />}
           </button>
         </div>
       </div>

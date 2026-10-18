@@ -127,6 +127,64 @@ export interface Receipt {
   approvalId?: string;
   /** For blocked/denied receipts: why. */
   reason?: string;
+  /** Capital One (Nessie sandbox) mirror of this receipt, when the bank is linked (ARCHITECTURE §16). */
+  bank?: ReceiptBank;
+}
+
+// ----------------------------------------------------------------------------
+// Bank: Capital One via the Nessie sandbox (docs/ARCHITECTURE.md §16)
+// ----------------------------------------------------------------------------
+
+/** How a receipt shows on the agent's Capital One allowance account statement. */
+export interface ReceiptBank {
+  status: "queued" | "posted" | "failed";
+  /** Nessie transaction id (transfer, purchase or deposit) once posted. */
+  ref?: string;
+  /** Masked account the entry lands on, e.g. "••1234". */
+  account: string;
+  postedAt?: IsoDate;
+  error?: string;
+}
+
+export interface BankAccountView {
+  id: string;
+  nickname: string;
+  last4: string;
+  /** Dollars as Nessie reports them (sandbox money). */
+  balance: string;
+}
+
+export interface BankSummary {
+  /** NESSIE_API_KEY is set. */
+  enabled: boolean;
+  /** Owner customer and checking account exist. */
+  linked: boolean;
+  provider: "Capital One";
+  sandbox: "Nessie";
+  checking?: BankAccountView;
+  accounts: (BankAccountView & { agentId: string; agentName: string })[];
+  queue: { pending: number; failed: number };
+  /** Set when Nessie couldn't be reached; balances are the last known ones. */
+  error?: string;
+  updatedAt: IsoDate;
+}
+
+export interface BankStatementEntry {
+  id: string;
+  kind: "transfer_in" | "transfer_out" | "purchase" | "deposit";
+  amount: string;
+  description: string;
+  merchant?: string;
+  /** YYYY-MM-DD as Nessie stores it. */
+  date: string;
+  /** Nessie's own status, e.g. "pending", "executed", "completed", "cancelled". */
+  status: string;
+  receiptId?: string;
+}
+
+export interface BankStatementResponse {
+  account: BankAccountView & { agentId?: string; agentName?: string };
+  entries: BankStatementEntry[];
 }
 
 // ----------------------------------------------------------------------------
@@ -193,10 +251,40 @@ export interface ServiceManifest {
   docs: string;
   /** "directory" for catalog entries, "agent" for custom services an agent proposed and the owner approved. */
   source?: "directory" | "agent";
+  /** Shopify stores only (see docs/ARCHITECTURE.md §15). */
+  shopify?: ShopifyStoreRef;
+}
+
+/**
+ * A Shopify store as seen by a shopper (docs/ARCHITECTURE.md §15). Any public store works: no store
+ * admin access is used or shown. The agent pays in USDC; Allowance pays the store with a single-use
+ * "Allowance Card" (simulated in this project: card issuing and Shopify's card checkout are not wired).
+ */
+export interface ShopifyStoreRef {
+  /** Subdomain of *.myshopify.com, e.g. "weareallbirds". */
+  handle: string;
+  /** e.g. "weareallbirds.myshopify.com" */
+  domain: string;
+  /** The public storefront the shopper knows, e.g. "https://www.allbirds.com". */
+  storefrontUrl: string;
+  /** The store advertises card payments for agents (UCP payment handler "dev.shopify.card"). */
+  cardCheckout: boolean;
+}
+
+/** A store the bridge knows about. */
+export interface ShopifyStore extends ShopifyStoreRef {
+  name: string;
+  /** Presentment currency for US shoppers (always "USD"; other stores are unsupported). */
+  currency: string;
+  /** Up to 4 product image URLs for previews (from the store's CDN). */
+  sampleImages?: string[];
+  /** Rough catalog size at discovery time, if known. */
+  productCount?: number;
+  addedAt?: IsoDate;
 }
 
 /** Shown on approval cards and stored on the connection. */
-export type ServiceGrant = Pick<ServiceManifest, "id" | "name" | "provider" | "icon" | "color" | "kind" | "summary" | "baseUrl" | "pricing" | "maxPrice" | "permissions" | "source"> & {
+export type ServiceGrant = Pick<ServiceManifest, "id" | "name" | "provider" | "icon" | "color" | "kind" | "summary" | "baseUrl" | "pricing" | "maxPrice" | "permissions" | "source" | "shopify"> & {
   /** Directory category; custom (agent-proposed) services default to "tools". */
   category?: ServiceCategory;
 };
@@ -215,6 +303,10 @@ export interface ServiceRequest {
   serviceId?: string;
   /** Custom service not in the directory (Muse-style "write a connector"). Owner sees it flagged as agent-proposed. */
   custom?: { name: string; baseUrl: string; summary: string; maxPrice: string; docs?: string };
+  /** A Shopify store to add (e.g. "https://crypto-app-test.myshopify.com"); discovered via the bridge. */
+  shopifyStoreUrl?: string;
+  /** Shopify only: per-order cap the agent asks for (dollars). Defaults to the agent's max per payment. */
+  maxPrice?: string;
   /** The agent's reason, shown to the owner verbatim (untrusted). */
   reason?: string;
 }
@@ -244,7 +336,9 @@ export type EventType =
   | "topup"
   | "service.requested"
   | "service.connected"
-  | "service.disconnected";
+  | "service.disconnected"
+  | "bank.posted"
+  | "bank.failed";
 
 export interface WalletEvent {
   id: string;
@@ -392,6 +486,8 @@ export interface EarningRequest {
 export interface MeResponse {
   agent: AgentPublic;
   limits: { maxPerTx: string; dailyCap: string; approvalThreshold: string; remainingToday: string };
+  /** The agent's Capital One allowance account (no balance), when the bank is linked (§16). */
+  bank?: { provider: "Capital One"; account: string; last4: string };
 }
 
 /** POST /v1/agents (owner) */
@@ -424,6 +520,8 @@ export interface SummaryResponse {
   pendingApprovals: Approval[];
   chainMode: "mock" | "base-sepolia";
   telegramConnected: boolean;
+  /** Owner's Capital One checking (Nessie sandbox), from the wallet's cache (§16). */
+  bank?: { linked: boolean; checkingLast4?: string; checkingBalance?: string };
 }
 
 /** Standard error body for 4xx/5xx. */

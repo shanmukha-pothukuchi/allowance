@@ -84,7 +84,8 @@ export function formatEvent(e: WalletEvent): TelegramMessage | null {
       const s = e.data?.service as Partial<ConnectedService> | undefined;
       if (!s?.name) return { text: `🔌 ${esc(e.message)}` };
       const verb = e.type === "service.connected" ? "connected to" : "disconnected from";
-      return { text: `🔌 ${esc(s.icon ?? "")}${s.icon ? " " : ""}<b>${esc(s.name)}</b> ${verb} ${agent}.` };
+      const shop = s.shopify ? ` (Shopify store <code>${esc(storefrontHost(s.shopify))}</code>)` : "";
+      return { text: `🔌 ${esc(s.icon ?? "")}${s.icon ? " " : ""}<b>${esc(s.name)}</b>${shop} ${verb} ${agent}.` };
     }
     case "payment.blocked": {
       if (e.reason === "service_not_connected" || r?.reason === "service_not_connected") {
@@ -113,6 +114,14 @@ export function formatEvent(e: WalletEvent): TelegramMessage | null {
       return { text: `💰 ${agent} earned <b>${esc(money(r?.amount))}</b> from ${esc(counterpartyLabel(r))}${receiptLink(r)}` };
     case "topup":
       return { text: `➕ Added <b>${esc(money(r?.amount))}</b> to ${agent}${receiptLink(r)}` };
+    case "bank.posted":
+      // The Capital One statement mirror (§16) is bookkeeping: quiet when it works.
+      return null;
+    case "bank.failed": {
+      // One short line; the reason and the Retry button live on the dashboard.
+      if (r?.kind === "topup") return { text: `⚠️ Couldn't move <b>${esc(money(r.amount))}</b> from Capital One to ${agent}. Retry it on the dashboard.` };
+      return { text: `⚠️ Couldn't put ${agent}'s <b>${esc(money(r?.amount))}</b> (${esc(counterpartyLabel(r))}) on the Capital One statement. Retry it on the dashboard.` };
+    }
     case "approval.approved":
     case "approval.denied":
       // Handled by editing the original approval message (see notifier.ts); nothing new is sent.
@@ -126,6 +135,7 @@ export function formatEvent(e: WalletEvent): TelegramMessage | null {
 export function serviceRequestMessage(a: Approval): TelegramMessage | null {
   const s: Partial<ServiceGrant> | undefined = a.service;
   if (!s?.name) return null;
+  if (s.shopify) return shopifyRequestMessage(a, s, s.shopify);
   const agent = esc(a.agentName || "An agent");
   const custom = s.source === "agent";
   const lines = [`🔌 <b>${agent}</b> wants to connect ${s.icon ? `${esc(s.icon)} ` : ""}<b>${esc(s.name)}</b>${!custom && s.provider ? ` (${esc(s.provider)})` : ""}.`];
@@ -134,6 +144,40 @@ export function serviceRequestMessage(a: Approval): TelegramMessage | null {
   const perms = (s.permissions ?? []).slice(0, 6);
   if (perms.length) lines.push("", "It could:", ...perms.map((p) => `• ${esc(p)}`));
   if (s.pricing) lines.push(`Pricing: ${esc(s.pricing)}`);
+  if (a.reason) {
+    const reason = a.reason.length > 300 ? `${a.reason.slice(0, 300)}…` : a.reason;
+    lines.push("", `Reason (from the agent): “${esc(reason)}”`);
+  }
+  return { text: lines.join("\n"), keyboard: approvalKeyboard(a.id) };
+}
+
+/** The storefront domain people know: "https://www.allbirds.com" → "allbirds.com" (else the myshopify address). */
+export function storefrontHost(shop: { domain: string; storefrontUrl?: string }): string {
+  try {
+    if (shop.storefrontUrl) return new URL(shop.storefrontUrl).host.replace(/^www\./, "");
+  } catch {
+    /* fall through */
+  }
+  return shop.domain;
+}
+
+/**
+ * A Shopify store (ARCHITECTURE §15): say it is a Shopify store, show its storefront domain, the
+ * per-order cap and how it is paid. A store the agent found is "added" (approving puts it in the directory).
+ *   🛍️ shopper wants to add the Shopify store Allbirds.
+ *   Store: allbirds.com (new: approving adds it to your directory)
+ *   Per-order cap: $20.00 · pays with a single-use Allowance card (simulated)
+ */
+function shopifyRequestMessage(a: Approval, s: Partial<ServiceGrant>, shop: NonNullable<ServiceGrant["shopify"]>): TelegramMessage {
+  const agent = esc(a.agentName || "An agent");
+  const adding = s.source === "agent";
+  const lines = [
+    `🛍️ <b>${agent}</b> wants to ${adding ? "add" : "connect"} the Shopify store <b>${esc(s.name)}</b>.`,
+    `Store: <code>${esc(storefrontHost(shop))}</code>${adding ? " (new: approving adds it to your directory)" : ""}`,
+    `Per-order cap: <b>${esc(money(s.maxPrice ?? a.amount))}</b> · pays with a single-use Allowance card (simulated)`,
+  ];
+  const perms = (s.permissions ?? []).slice(0, 6);
+  if (perms.length) lines.push("", "It could:", ...perms.map((p) => `• ${esc(p)}`));
   if (a.reason) {
     const reason = a.reason.length > 300 ? `${a.reason.slice(0, 300)}…` : a.reason;
     lines.push("", `Reason (from the agent): “${esc(reason)}”`);

@@ -81,7 +81,7 @@ export async function createMerchantApp(config: AppConfig, deps: MerchantDeps = 
 
   // ---- x402 paid routes -------------------------------------------------------------
   const facilitatorClient = new HTTPFacilitatorClient({ url: config.x402FacilitatorUrl });
-  const resourceServer = new x402ResourceServer(facilitatorClient).register(BASE_SEPOLIA_NETWORK, new ExactEvmScheme());
+  const newResourceServer = () => new x402ResourceServer(facilitatorClient).register(BASE_SEPOLIA_NETWORK, new ExactEvmScheme());
   const accepts = (price: string) => ({ scheme: "exact", price, network: BASE_SEPOLIA_NETWORK, payTo, maxTimeoutSeconds: 300 });
   const routes: RoutesConfig = {
     "GET /api/weather": { accepts: accepts("$0.05"), description: "Acme Weather", serviceName: SITE_NAME, mimeType: "application/json" },
@@ -91,8 +91,26 @@ export async function createMerchantApp(config: AppConfig, deps: MerchantDeps = 
   };
   // syncFacilitatorOnStart=true: initialization is kicked off now and, if the facilitator is
   // not up yet, retried lazily on the first paid request instead of crashing the process
-  // (verified in @x402/express: only capability/route-config errors are fatal).
-  app.use(paymentMiddleware(routes, resourceServer, undefined, undefined, true));
+  // (verified in @x402/express: only capability/route-config errors are fatal). That retry awaits
+  // the failed startup sync first, so the first paid request after a late facilitator start would
+  // answer 500 once; instead, watch the facilitator and rebuild the paywall when it answers.
+  let paywall: RequestHandler = paymentMiddleware(routes, newResourceServer(), undefined, undefined, true);
+  void (async () => {
+    for (let attempt = 0; attempt < 300; attempt++) {
+      try {
+        await facilitatorClient.getSupported();
+        if (attempt > 0) {
+          paywall = paymentMiddleware(routes, newResourceServer(), undefined, undefined, true);
+          log(`facilitator ${config.x402FacilitatorUrl} is up; paywall synced`);
+        }
+        return;
+      } catch {
+        if (attempt === 0) log(`facilitator ${config.x402FacilitatorUrl} isn't answering yet; paid requests wait for it`);
+      }
+      await new Promise((r) => setTimeout(r, 2000).unref());
+    }
+  })();
+  app.use((req, res, next) => paywall(req, res, next));
 
   app.get("/api/weather", (req, res) => {
     const city = typeof req.query.city === "string" && req.query.city.trim() ? req.query.city.trim() : "San Francisco";

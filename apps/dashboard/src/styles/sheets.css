@@ -622,6 +622,7 @@ html.embed.embed-sheet-doc #root {
   border: 1px solid var(--border);
   background: var(--surface-2);
 }
+/* scoped: the Receipts panel's own .receipt-row is a grid (app.css) */
 .receipt-card .receipt-row {
   display: flex;
   flex-wrap: wrap;

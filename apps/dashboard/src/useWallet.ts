@@ -5,9 +5,11 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { mockRequested, type WalletAdapter } from "./api/adapter";
 import { createHttpAdapter, walletServiceReachable } from "./api/httpAdapter";
-import { createMockAdapter, mockChainMode } from "./api/mockAdapter";
-import { initialState, reducer, refreshesSummary, serviceKey, type DashboardState } from "./state";
-import type { ConnectionStatus, WalletEvent } from "./types";
+import { createMockAdapter, mockBankMode, mockChainMode } from "./api/mockAdapter";
+import { isBankEvent } from "./bank";
+import { serviceIdOfEvent } from "./format";
+import { initialState, isMoneyEvent, reducer, refreshesSummary, serviceKey, type DashboardState } from "./state";
+import type { ConnectionStatus, DirectoryService, WalletEvent } from "./types";
 
 export interface WalletActions {
   approve(id: string): Promise<void>;
@@ -20,12 +22,18 @@ export interface WalletActions {
   /** Fetch usage docs for the detail sheet (once per service). */
   loadServiceDocs(serviceId: string): Promise<void>;
   reloadDirectory(): Promise<void>;
+  /** The owner added a service (a Shopify store): show it now, then reload the directory and balances. */
+  serviceAdded(service: DirectoryService): void;
   /** Refetch the summary soon (after a sheet created an agent or added money). */
   refresh(): void;
+  /** `POST /v1/bank/retry`: post that receipt (or every "Not on statement" one) again (§16.4). */
+  retryBank(receiptId?: string): Promise<void>;
   toggleDetails(): void;
 }
 
 const SUMMARY_DEBOUNCE_MS = 500;
+/** Nessie balances are cached 10 s by the wallet; no point asking more often than every second or so. */
+const BANK_DEBOUNCE_MS = 1200;
 
 export function useWallet(): { state: DashboardState; actions: WalletActions; adapter: WalletAdapter | null } {
   const [state, dispatch] = useReducer(reducer, initialState);
@@ -33,7 +41,32 @@ export function useWallet(): { state: DashboardState; actions: WalletActions; ad
   // The same adapter the dashboard uses, for the owner sheets (so the mock's new agents show up here).
   const [adapter, setAdapter] = useState<WalletAdapter | null>(null);
   const summaryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const bankTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // The wallet has a bank (its summary carries `bank`): only then is /v1/bank ever asked (§16.4).
+  const bankOn = useRef(false);
   const docsRequested = useRef(new Set<string>());
+  // Directory ids we know, so a connection to a new entry (an approved Shopify store) reloads it.
+  const knownIds = useRef(new Set<string>());
+  useEffect(() => {
+    knownIds.current = new Set(state.directory.map((s) => s.id));
+  }, [state.directory]);
+
+  const loadBank = useCallback(async (a: WalletAdapter) => {
+    try {
+      dispatch({ type: "bank", bank: await a.getBank() });
+    } catch (err) {
+      // An older wallet without /v1/bank, or a hiccup: keep what we have (the summary still shows checking).
+      console.warn("[dashboard] bank refetch failed", err);
+    }
+  }, []);
+
+  const refetchBank = useCallback(() => {
+    if (!bankOn.current) return;
+    clearTimeout(bankTimer.current);
+    bankTimer.current = setTimeout(() => {
+      if (adapterRef.current) void loadBank(adapterRef.current);
+    }, BANK_DEBOUNCE_MS);
+  }, [loadBank]);
 
   const refetchSummary = useCallback(() => {
     clearTimeout(summaryTimer.current);
@@ -41,12 +74,17 @@ export function useWallet(): { state: DashboardState; actions: WalletActions; ad
       const a = adapterRef.current;
       if (!a) return;
       try {
-        dispatch({ type: "summary", summary: await a.getSummary() });
+        const summary = await a.getSummary();
+        dispatch({ type: "summary", summary });
+        const had = bankOn.current;
+        bankOn.current = !!summary.bank;
+        if (bankOn.current) refetchBank();
+        else if (had) dispatch({ type: "bank", bank: null });
       } catch (err) {
         console.warn("[dashboard] summary refetch failed", err);
       }
     }, SUMMARY_DEBOUNCE_MS);
-  }, []);
+  }, [refetchBank]);
 
   const loadDirectory = useCallback(async (a: WalletAdapter) => {
     dispatch({ type: "directoryLoading" });
@@ -65,7 +103,9 @@ export function useWallet(): { state: DashboardState; actions: WalletActions; ad
       a.getPendingApprovals(),
     ]);
     dispatch({ type: "loaded", summary, events, receipts, approvals });
-  }, []);
+    bankOn.current = !!summary.bank;
+    if (bankOn.current) await loadBank(a);
+  }, [loadBank]);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,7 +116,7 @@ export function useWallet(): { state: DashboardState; actions: WalletActions; ad
       if (mockRequested()) {
         // Only on explicit request (?mock=1). Never a silent fallback: fake activity on the
         // owner's screen would be worse than an honest "offline".
-        adapter = createMockAdapter({ chainMode: mockChainMode() });
+        adapter = createMockAdapter({ chainMode: mockChainMode(), bank: mockBankMode() });
       } else {
         while (!(await walletServiceReachable())) {
           if (cancelled) return;
@@ -103,6 +143,13 @@ export function useWallet(): { state: DashboardState; actions: WalletActions; ad
       const onEvent = (e: WalletEvent) => {
         dispatch({ type: "event", event: e });
         if (refreshesSummary(e.type)) refetchSummary();
+        if (isBankEvent(e.type) || isMoneyEvent(e.type) || e.type === "agent.created") refetchBank();
+        // §15.3: approving an agent's Shopify store adds it to the directory first.
+        const sid = e.type === "service.connected" ? serviceIdOfEvent(e) : undefined;
+        if (sid && knownIds.current.size && !knownIds.current.has(sid)) {
+          knownIds.current.add(sid);
+          void loadDirectory(adapter);
+        }
       };
       const onStatus = (s: ConnectionStatus) => {
         if (adapter.kind === "mock") return; // stays "demo"
@@ -118,8 +165,9 @@ export function useWallet(): { state: DashboardState; actions: WalletActions; ad
       cancelled = true;
       unsubscribe?.();
       clearTimeout(summaryTimer.current);
+      clearTimeout(bankTimer.current);
     };
-  }, [loadAll, loadDirectory, refetchSummary]);
+  }, [loadAll, loadDirectory, refetchSummary, refetchBank]);
 
   const run = useCallback(
     async (busy: { type: "busyApproval" | "busyAgent"; id: string } | { type: "busyService"; key: string }, fn: (a: WalletAdapter) => Promise<unknown>) => {
@@ -165,6 +213,25 @@ export function useWallet(): { state: DashboardState; actions: WalletActions; ad
       if (adapterRef.current) await loadDirectory(adapterRef.current);
     },
     refresh: () => refetchSummary(),
+    retryBank: async (receiptId) => {
+      const a = adapterRef.current;
+      if (!a) return;
+      try {
+        await a.retryBank(receiptId);
+        dispatch({ type: "bankRetried", receiptId });
+        dispatch({ type: "error", message: undefined });
+      } catch (err) {
+        dispatch({ type: "error", message: `Capital One retry failed: ${(err as Error).message}` });
+      } finally {
+        refetchBank();
+      }
+    },
+    serviceAdded: (service) => {
+      dispatch({ type: "directoryUpsert", service });
+      knownIds.current.add(service.id);
+      if (adapterRef.current) void loadDirectory(adapterRef.current);
+      refetchSummary();
+    },
     toggleDetails: () => dispatch({ type: "toggleDetails" }),
   };
 

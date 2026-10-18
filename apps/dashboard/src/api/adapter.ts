@@ -5,7 +5,21 @@
  * The mock is used only on explicit request (?mock=1 in the URL or VITE_MOCK=1); otherwise HTTP,
  * and an unreachable wallet-service shows "offline" (never a silent fallback, §12).
  */
-import type { AgentPublic, Approval, ConnectionStatus, CreateAgentRequest, CreateAgentResponse, DirectoryService, Receipt, SummaryResponse, WalletEvent } from "../types";
+import type {
+  AddShopifyStoreRequest,
+  AgentPublic,
+  Approval,
+  BankStatementResponse,
+  BankSummary,
+  ConnectionStatus,
+  CreateAgentRequest,
+  CreateAgentResponse,
+  DirectoryService,
+  Receipt,
+  ShopifyStore,
+  SummaryResponse,
+  WalletEvent,
+} from "../types";
 
 /** A failed wallet call: HTTP status plus the contract's `error` code (both adapters throw these). */
 export class HttpError extends Error {
@@ -42,6 +56,21 @@ export interface WalletAdapter {
   /** Owner connects a directory service to an agent directly (`connectedBy: "owner"`). */
   connectService(agentId: string, serviceId: string): Promise<AgentPublic>;
   disconnectService(agentId: string, serviceId: string): Promise<AgentPublic>;
+  /** `GET /v1/directory/shopify/preview?url=` (§15.3): what the bridge sees at that link. No side effects. */
+  previewShopifyStore(url: string): Promise<ShopifyStore>;
+  /** `POST /v1/directory/shopify` (§15.3): add the store to the directory, optionally connecting agents. */
+  addShopifyStore(req: AddShopifyStoreRequest): Promise<{ service: DirectoryService; agents?: AgentPublic[] }>;
+  /**
+   * Capital One (Nessie sandbox, §16.4). Called only when the summary carries `bank`, so a wallet
+   * without a Nessie key is never asked.
+   */
+  getBank(): Promise<BankSummary>;
+  /** One agent's allowance account statement (`agentId`), or checking's (none). Newest first. */
+  getBankStatement(agentId?: string, limit?: number): Promise<BankStatementResponse>;
+  /** `POST /v1/bank/retry { receiptId? }`: re-queue that receipt, or every entry that didn't reach the statement. */
+  retryBank(receiptId?: string): Promise<{ queued: number }>;
+  /** `POST /v1/bank/link` (idempotent): create the owner and checking at Nessie. */
+  linkBank(): Promise<BankSummary>;
   /** Live events. Returns an unsubscribe function. `onStatus` reports stream health. */
   subscribe(onEvent: (e: WalletEvent) => void, onStatus?: (s: ConnectionStatus) => void): () => void;
 }

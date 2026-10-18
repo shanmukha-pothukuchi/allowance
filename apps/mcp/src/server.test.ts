@@ -86,6 +86,25 @@ describe("get_wallet", () => {
     expect(t).toContain("over $10.00 need owner approval");
     expect(t).toContain("Status: active");
     expect(t).toContain("Connected services: Acme Weather (acme-weather), Acme Pizza (acme-pizza)");
+    expect(t).not.toContain("Capital One");
+    expect(r.structuredContent).not.toHaveProperty("bank");
+  });
+
+  it("says which Capital One account funds it, once the wallet reports one", async () => {
+    const agent = wallet.agents.get(wallet.token)!;
+    agent.bank = { provider: "Capital One", account: "Allowance · claude-desktop", last4: "1234" };
+    try {
+      const r = await mcp.call("get_wallet");
+      const t = textOf(r);
+      expect(t.split("\n")).toContain("Funded from your owner's Capital One account ••1234 (Nessie sandbox).");
+      expect(t.split("\n").indexOf("Funded from your owner's Capital One account ••1234 (Nessie sandbox).")).toBe(t.split("\n").findIndex((l) => l.startsWith("Balance:")) + 1);
+      expect(r.structuredContent).toMatchObject({ bank: { provider: "Capital One", last4: "1234" } });
+      // A malformed last4 is ignored rather than shown.
+      agent.bank = { provider: "Capital One", account: "x", last4: "<b>1234</b>" };
+      expect(textOf(await mcp.call("get_wallet"))).not.toContain("Capital One");
+    } finally {
+      delete agent.bank;
+    }
   });
 });
 

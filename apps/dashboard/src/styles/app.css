@@ -483,6 +483,13 @@
     padding: 2px 16px;
   }
 }
+/* phones: the balance and today's numbers wrap instead of pushing the page sideways */
+@media (max-width: 480px) {
+  .totals {
+    flex-wrap: wrap;
+    gap: 10px 18px;
+  }
+}
 
 .empty {
   color: var(--muted);

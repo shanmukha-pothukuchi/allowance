@@ -120,6 +120,17 @@ describe("formatEvent", () => {
     expect(formatEvent(event("policy.updated"))).toBeNull();
   });
 
+  it("Capital One statement events: posted is quiet, failed is one short line", () => {
+    const posted = receipt({ bank: { status: "posted", ref: "6532a1", account: "••5678" }, counterparty: { address: "0x1", name: "Acme Weather" } });
+    expect(formatEvent(event("bank.posted", { agentName: "researcher", receipt: posted }))).toBeNull();
+    const failed = receipt({ bank: { status: "failed", account: "••5678", error: "Nessie POST /accounts/x/purchases answered 500" }, counterparty: { address: "0x1", name: "Acme <Weather>" } });
+    const m = formatEvent(event("bank.failed", { agentName: "researcher", message: "long message", receipt: failed }))!;
+    expect(m.text).toBe("⚠️ Couldn't put researcher's <b>$0.05</b> (Acme &lt;Weather&gt;) on the Capital One statement. Retry it on the dashboard.");
+    expect(m.text.split("\n")).toHaveLength(1);
+    expect(m.keyboard).toBeUndefined();
+    expect(formatEvent(event("bank.failed", { agentName: "shopper", receipt: receipt({ kind: "topup", amount: "20.00" }) }))!.text).toBe("⚠️ Couldn't move <b>$20.00</b> from Capital One to shopper. Retry it on the dashboard.");
+  });
+
   it("escapes HTML and never leaks a private key field", () => {
     const m = formatEvent(event("payment.blocked", { message: "Blocked: <b>x</b> & y", data: { frozen: false, privateKey: PK } }))!;
     expect(m.text).toContain("&lt;b&gt;x&lt;/b&gt; &amp; y");
@@ -346,5 +357,77 @@ describe("parseSseBlock", () => {
     expect(parseSseBlock(": ping")).toBeNull();
     expect(parseSseBlock("event: topup\nid: evt_1\ndata: {\"a\":1}")).toEqual({ type: "topup", data: '{"a":1}' });
     expect(parseSseBlock("data: a\ndata: b")).toEqual({ type: "message", data: "a\nb" });
+  });
+});
+
+describe("Shopify store requests (§15)", () => {
+  const ALLBIRDS_GRANT = {
+    id: "shopify-weareallbirds",
+    name: "Allbirds",
+    provider: "Shopify store",
+    icon: "🛍️",
+    color: "#95BF47",
+    kind: "x402" as const,
+    category: "shopping" as const,
+    summary: "Shop at Allbirds (allbirds.com): search products, build a cart, and pay up to $20.00 per order with your Allowance card.",
+    baseUrl: "http://localhost:4070/shops/weareallbirds",
+    pricing: "Store prices · paid with your Allowance card · up to $20.00 per order",
+    maxPrice: "20.00",
+    permissions: ["Browse Allbirds's catalog", "Pay up to $20.00 per order with a single-use Allowance card", "Place orders on your behalf"],
+    source: "agent" as const,
+    shopify: { handle: "weareallbirds", domain: "weareallbirds.myshopify.com", storefrontUrl: "https://www.allbirds.com", cardCheckout: true },
+  };
+  const shopApproval = (service: Approval["service"], reason = "The owner wants new sneakers.") =>
+    serviceApproval({ agentName: "shopper", amount: service!.maxPrice, description: `Add the Shopify store ${service!.name} (allbirds.com)`, service, reason });
+
+  it("a store the agent found: says Shopify, the storefront domain, that approving adds it, the cap and how it pays", () => {
+    const m = formatEvent(event("service.requested", { agentName: "shopper", approval: shopApproval(ALLBIRDS_GRANT) }))!;
+    expect(m.text).toBe(
+      [
+        "🛍️ <b>shopper</b> wants to add the Shopify store <b>Allbirds</b>.",
+        "Store: <code>allbirds.com</code> (new: approving adds it to your directory)",
+        "Per-order cap: <b>$20.00</b> · pays with a single-use Allowance card (simulated)",
+        "",
+        "It could:",
+        "• Browse Allbirds's catalog",
+        "• Pay up to $20.00 per order with a single-use Allowance card",
+        "• Place orders on your behalf",
+        "",
+        "Reason (from the agent): “The owner wants new sneakers.”",
+      ].join("\n"),
+    );
+    expect(m.text).not.toMatch(/Not in the directory|Mode:|myshopify|admin/);
+    expect(m.keyboard!.inline_keyboard[0].map((b) => (b as { callback_data: string }).callback_data)).toEqual(["apr:apr_svc:approve", "apr:apr_svc:deny"]);
+  });
+
+  it("a listed store is 'connect'; a store without a custom domain shows its myshopify address; names and reasons are escaped", () => {
+    const socks = {
+      ...ALLBIRDS_GRANT,
+      id: "shopify-cool-socks",
+      name: "Cool <Socks> & Co",
+      maxPrice: "8.00",
+      pricing: "Store prices · paid with your Allowance card · up to $8.00 per order",
+      permissions: ["Browse Cool <Socks> & Co's catalog", "Pay up to $8.00 per order with a single-use Allowance card", "Place orders on your behalf"],
+      source: "directory" as const,
+      shopify: { handle: "cool-socks", domain: "cool-socks.myshopify.com", storefrontUrl: "https://cool-socks.myshopify.com", cardCheckout: false },
+    };
+    const m = formatEvent(event("service.requested", { approval: shopApproval(socks, "<i>please</i>") }))!;
+    expect(m.text).toContain("🛍️ <b>shopper</b> wants to connect the Shopify store <b>Cool &lt;Socks&gt; &amp; Co</b>.");
+    expect(m.text).toContain("Store: <code>cool-socks.myshopify.com</code>\n");
+    expect(m.text).not.toContain("approving adds it");
+    expect(m.text).toContain("Per-order cap: <b>$8.00</b> · pays with a single-use Allowance card (simulated)");
+    expect(m.text).toContain("“&lt;i&gt;please&lt;/i&gt;”");
+    expect(m.text).not.toContain("<Socks>");
+  });
+
+  it("connected lines show the storefront domain; the card is edited like other approvals", async () => {
+    expect(formatEvent(event("service.connected", { agentName: "shopper", data: { service: ALLBIRDS_GRANT, connectedBy: "approval" } }))!.text).toBe(
+      "🔌 🛍️ <b>Allbirds</b> (Shopify store <code>allbirds.com</code>) connected to shopper.",
+    );
+    const { api, n } = make();
+    await n.handleEvent(event("service.requested", { agentName: "shopper", approval: shopApproval(ALLBIRDS_GRANT) }));
+    await n.handleEvent(event("approval.approved", { approval: { ...shopApproval(ALLBIRDS_GRANT), status: "approved", decidedBy: "dashboard" } }));
+    expect(api.sent[0].text).toContain("wants to add the Shopify store");
+    expect(api.edits.at(-1)?.text).toContain("✅ <b>Approved</b> via dashboard");
   });
 });

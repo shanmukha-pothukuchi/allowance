@@ -14,6 +14,9 @@ file change requests and the lead decides. Types live in `packages/shared/src/ty
 | dashboard | `apps/dashboard` | 4040 | Vite + React owner UI. Talks to wallet-service only. |
 | mcp | `apps/mcp` | stdio | MCP server for Claude Desktop. Talks to wallet-service + any URL. |
 | agent-chat | `apps/agent-chat` | 4050 | Chat agents: LLM tool loop over the MCP tools, one per agent token. Chat page + API. Idle until messaged. |
+| directory | `apps/directory` | 4060 | Catalog of services agents can connect (§13). |
+| shopify-bridge | `apps/shopify-bridge` | 4070 | Any public Shopify store as an x402 service (§15). |
+| quantcomm-bridge | `apps/quantcomm-bridge` | 4080 | Quantcomm's flood and bank research as an x402 service (§17). |
 | agents | `apps/agents` | — | `setup`, `reset`, and the scripted offline demo (no model). |
 
 Packages: `packages/shared` (types, config, money), `packages/wallet` (policy engine, EIP-3009
@@ -576,3 +579,323 @@ owner is done with this sheet" (cancel, done, or saved the token). The wallet's 
 event carries `data.agent` (`AgentPublic`), and `initialBalance` is range-checked like a top-up.
 `{ type: "allowance:sheet-size", sheet, height }`, `{ type: "allowance:agent-created", name }`,
 `{ type: "allowance:money-added", name, amount }`, `{ type: "allowance:sheet-close", sheet }`.
+
+## 15. Shopify stores, from the shopper's side (Phase 6 contract, revised)
+
+Allowance is the **shopper's** wallet. A shopper (the owner) can point their agents at **any public
+Shopify store**, by pasting a link or by asking an agent to shop there. Nothing uses or shows a
+store's admin. How a purchase works:
+
+1. **Real:** discovery, catalog and prices come from the store's public Storefront API (no token,
+   `@inContext(country: US)` for USD prices), falling back to the store's UCP endpoint when a public
+   agent profile is configured (`UCP_AGENT_PROFILE_URL`). The cart is a real Shopify cart
+   (`cartCreate`), with Shopify's own totals and checkout link.
+2. **Real:** the agent pays the cart total in USDC from its wallet over x402, under its normal policy
+   (connected-service prefix, per-store cap, approval threshold, daily cap).
+3. **Simulated:** that USDC funds a single-use **Allowance Card** (a virtual card), which would pay
+   the store through Shopify's agent checkout (UCP `complete_checkout` with the store's
+   `dev.shopify.card` payment handler, which real stores like Allbirds and Gymshark advertise). Card
+   issuing and that last call are not wired, so the order confirmation is labelled simulated and
+   carries an Allowance reference, not a Shopify order number.
+
+Stores whose catalog isn't public (password-protected storefronts, e.g. a fresh dev store, and no
+UCP access) are reported as unsupported with a plain explanation. Stores that don't sell in USD to
+the US are unsupported.
+
+### 15.1 Shopify bridge (`apps/shopify-bridge`, port 4070, `SHOPIFY_BRIDGE_URL`)
+
+Holds the **Allowance Card treasury** wallet (`DATA_DIR/shopify-bridge-key.json`, never logged), the
+x402 `payTo` for every store, and a store registry (`DATA_DIR/shopify-stores.json`).
+
+| Method | Path | Auth | Body → Response |
+|---|---|---|---|
+| GET | `/stores/discover?url=` | none | Accepts any store link: `x.myshopify.com`, a custom domain (`allbirds.com`), a product or collection URL on either (path ignored). Resolves the myshopify domain via the store's `/.well-known/ucp` (service endpoint host) or Storefront `shop { primaryDomain }`. → `ShopifyStore` (name, domain, storefrontUrl, currency "USD", cardCheckout, productCount, sampleImages). No side effects. 400 `invalid_store_url` (incl. IPs, localhost, admin.shopify.com links: "That's a store admin link; paste the shop's own address"), 404 `store_not_found`, 422 `store_unsupported` with `reason: "private_catalog" | "currency" | "catalog_unreachable"` and an owner-readable `message`. |
+| POST | `/stores` | `X-Owner-Key` | `{ url }` → `201 { store }` · 409 `store_exists` (with it) |
+| GET | `/stores` · `/stores/:handle` | none | `{ stores }` · `{ store }` |
+| GET | `/shops/:handle/products?q=&limit=` | none | `{ store: { name, storefrontUrl, currency }, products: [{ id, handle, title, description (≤ 300), image, url (storefront product page), priceMin, priceMax, currency, available, variants: [{ id, title, price, available }] }] }` |
+| GET | `/shops/:handle/products/:productHandle` | none | `{ product }` (≤ 50 variants) |
+| POST | `/shops/:handle/carts` | none | `{ lines: [{ variantId, quantity }], email?, shippingAddress?, note? }` → `201 { cartId, store, lines: [{ variantId, title, variantTitle, quantity, unitPrice, lineTotal, image, url }], subtotal, total, currency, expiresAt, checkoutUrl, shopifyCheckoutUrl, notes: ["Shipping and taxes are added at checkout"] }`. A real Shopify cart is created (`cartCreate`, buyer country US); `checkoutUrl` is the bridge's x402 URL `{BRIDGE}/shops/:handle/carts/:cartId/checkout`; `shopifyCheckoutUrl` is Shopify's. Quantities 1–20, ≤ 20 lines, 30-minute carts. |
+| POST | `/shops/:handle/carts/:cartId/checkout` | **x402** | Dynamic price = cart total; `payTo` = the treasury; resource description "{Store name} order". After payment: `200 { status: "placed", simulated: true, reference: "ALW-XXXX-XXXX", store: { name, storefrontUrl }, items, total, currency, card: { brand: "Allowance Card", last4 }, paidAt, explanation }` (`explanation`: one sentence on what would happen for real). Paid once (`409 cart_already_paid` returns the confirmation). Checkout prechecks (cart missing/expired 404, in progress 409) answer before the paywall. |
+| GET | `/health` | none | `{ ok, stores }` |
+
+No Shopify Admin API, no store credentials, no merchant-side order. `SHOPIFY_ADMIN_*` /
+`SHOPIFY_CLIENT_*` are not used.
+
+### 15.2 Directory
+
+`POST /services/shopify { url, maxPrice? }` and `DELETE /services/:id` (owner key) as before;
+dynamic entries in `DATA_DIR/directory-extra.json`. Manifest: `id "shopify-<handle>"`,
+`name <store name>`, `provider "Shopify store"`, `icon "🛍️"`, `color "#95BF47"`, `category "shopping"`,
+`kind "x402"`, `baseUrl {BRIDGE}/shops/<handle>`, `maxPrice` (cap, default `"100.00"`, ≤ `MAX_TOPUP`),
+`pricing "Store prices · paid with your Allowance card · up to $<cap> per order"`, `permissions`
+["Browse <store>'s catalog", "Pay up to $<cap> per order with a single-use Allowance card",
+"Place orders on your behalf"], generated `docs` (search, cart, pay the cart's `checkoutUrl`; say
+that placement is simulated), and `shopify: { handle, domain, storefrontUrl, cardCheckout }`.
+
+### 15.3 Wallet
+
+Owner `GET /v1/directory/shopify/preview?url=` and `POST /v1/directory/shopify { url, maxPrice?,
+connectTo? }` (per-agent caps) as before; agent `POST /v1/services/requests { shopifyStoreUrl,
+maxPrice?, reason }` (approval, then add and connect) as before. No mode branching: every supported
+store is payable up to its cap.
+
+### 15.4 MCP
+
+`request_service { shopify_store_url }` ("To shop at any Shopify store, pass its link"). Friendly
+texts name the store and its storefront, never an admin. `fetch_url` shows the bridge JSON.
+
+### 15.5 UI
+
+- **Chat:** product cards (real images when the store has them), cart card, **order confirmation
+  card** (store name and storefront link, items with images linking to the product pages, total,
+  "Paid with Allowance Card ••1234", a clear "Simulated order" badge with the one-line explanation,
+  Allowance reference). No admin links anywhere. Connection request cards show the store's
+  storefront domain.
+- **Dashboard:** "Add a Shopify store" accepts any store or product link → preview (name, storefront
+  domain, sample product images, product count, "accepts card checkout for agents" when advertised,
+  or a plain reason why it's unsupported) → cap → Add / connect. Store cards show the storefront
+  domain, not a mode.
+
+## 16. A Capital One bank behind Allowance (Phase 7 contract, Nessie sandbox)
+
+The owner's money lives at Capital One. Each agent gets its **own Capital One allowance account**,
+funded from the owner's checking. Adding money moves dollars from checking into the agent's account,
+and the bank confirms first. Every payment an agent makes shows on that account's statement under the
+merchant's name. The bank is Capital One's **Nessie** hackathon API: real API calls, sandbox accounts
+and money. USDC still does the paying (x402); Nessie carries the dollar side. Turning bank dollars
+into USDC is simulated: mock mode mints, as top-ups do today. UI copy says "Capital One (Nessie
+sandbox)" wherever balances appear.
+
+### 16.1 Config and ownership
+
+`NESSIE_API_KEY` (optional), `NESSIE_BASE_URL` (default `https://api.nessieisreal.com`, HTTPS only),
+`NESSIE_OPENING_BALANCE` (default `"5000.00"`). The bank is **enabled** only when the key is set.
+Without it, nothing changes, and mock mode stays offline. Only wallet-service reads the key. It goes
+to Nessie as `?key=` and is never logged; `redact()` covers it. Agents never talk to Nessie.
+
+Nessie facts, verified live on 2026-10-18:
+- POST returns `{ objectCreated: { _id, … } }`. Reads are scoped to the key; writes need a real key (401 otherwise).
+- Bodies are validated strictly (extra fields → 400 with a list of the bad fields).
+- **Amounts are integers** (a $0.05 purchase posted as `0.05` was stored as `0`). Allowance therefore
+  stores every Nessie amount, and each account's opening `balance`, in **integer cents**; dollars
+  appear only in Allowance's own API and UI. `bank.json` carries `units: "cents"`; a link without it
+  is replaced by a fresh customer.
+- **Balances never move**: transactions (any status) leave `GET /accounts/{id}` `balance` unchanged.
+  Allowance computes each balance from the account's own Nessie transactions: opening balance +
+  deposits − withdrawals − purchases − transfers.
+- **Transfers have no payee**: `{ amount, transaction_date, status, description }` only, recorded on
+  one account (`?type=payer`); list items use `id`, not `_id`. Moving money between two accounts is
+  therefore two records (a transfer on the payer, a deposit on the payee).
+- Deposits need `{ medium: "balance", amount, transaction_date, status, description }`; purchases
+  `{ merchant_id, medium, amount, purchase_date, status, description }`; merchants only need `name`.
+  Allowance posts everything with `status: "completed"`.
+
+### 16.2 Objects (created by wallet-service, ids in `DATA_DIR/bank.json`)
+
+| Object | Nessie call | Body |
+|---|---|---|
+| owner | `POST /customers` | `{ first_name: "Allowance", last_name: "Owner", address: { street_number: "1", street_name: "Demo Way", city: "College Park", state: "MD", zip: "20742" } }` |
+| checking | `POST /customers/{owner}/accounts` | `{ type: "Checking", nickname: "Allowance owner checking", rewards: 0, balance: <opening> }` |
+| agent account | `POST /customers/{owner}/accounts` | `{ type: "Checking", nickname: "Allowance · <agent name>", rewards: 0, balance: 0 }`, created the first time that agent's money moves (or when the agent is created) |
+| merchant | `POST /merchants` | `{ name, category: <directory category or "online">, address: <owner address>, geocode: { lat: 38.9897, lng: -76.9378 } }`, one per counterparty name, cached by name |
+
+`bank.json` = `{ customerId, checkingId, accounts: { [agentId]: { id, nickname, last4 } },
+merchants: { [name]: id }, created: [{ kind, id, at }], queue: BankJob[] }`.
+- `last4` is the last 4 digits of Nessie's `account_number` when it returns one, else of the `_id`.
+- Startup with the key set and no `bank.json` links the bank: it creates the owner and checking. `POST /v1/bank/link` does the same and is idempotent.
+- If a stored id 404s at Nessie (the sandbox was wiped), the bank relinks once and logs it.
+
+### 16.3 Money flows
+
+| Allowance event | Nessie call | Timing |
+|---|---|---|
+| Owner adds money (`POST /v1/agents/:id/topup`) | `POST /accounts/{checking}/transfers { amount, transaction_date: "YYYY-MM-DD", status: "completed", description: "Allowance top-up · <agent>" }`, then `POST /accounts/{agent account}/deposits { medium: "balance", amount, transaction_date, status: "completed", description: "Top-up from Capital One Checking ••1234" }` | The checking transfer is **synchronous, before the USDC is credited** (10 s timeout); it is the bank's confirmation. If the deposit then fails, the top-up still counts and the deposit is queued. See the failure rule below. |
+| Agent created with `initialBalance`; mock seed balances at startup | the same two records | queued (startup must not wait on the bank) |
+| x402 payment settled (`spend` receipt → `settled`) or transfer sent | `POST /accounts/{agent account}/purchases { merchant_id, medium: "balance", purchase_date, amount, status: "completed", description: "<receipt description> · paid in USDC" }`. The merchant is the connected service's name when the URL is under one (e.g. "Quantcomm Flood Research"), else the counterparty name; a transfer's merchant is "Transfer to 0x12…ab". | queued |
+| Earning received (agent-work payout) | `POST /accounts/{agent account}/deposits { medium: "balance", transaction_date, amount, status: "completed", description: "Earned · <description>" }` | queued |
+| Blocked, denied, pending, failed | none | never reaches the bank |
+
+**Top-up failure.** If the bank fails, nothing is credited:
+- `409 bank_insufficient_funds` when checking's computed balance is below the amount. Message: "Your Capital One checking has $X.XX, not enough to add $Y.YY."
+- `502 bank_unavailable` otherwise. Message: "Capital One didn't confirm the transfer, so nothing was added."
+
+**Queue.** Persisted in `bank.json`, processed one job at a time, at least 150 ms between Nessie
+writes. A failed job retries 5 times over about 2 minutes, then is marked `failed`. Amounts are rounded to cents, and
+anything under $0.01 is skipped. Each mirrored receipt carries `bank` (shared type
+`ReceiptBank`): `{ status: "queued" | "posted" | "failed", ref?: <Nessie id>, account: "••1234",
+postedAt?, error? }`. The wallet emits `bank.posted` / `bank.failed` with `{ receipt }`, and the
+`topup` receipt is created already `posted`, with `ref` set to the transfer id. An owner top-up emits
+only `topup` (no `bank.posted`). `account` is `""` while the agent's account is still being opened.
+If the bank moved money but the USDC credit then fails, the wallet reverses it: a transfer on the
+agent's account ("Allowance top-up reversed · <agent>") plus a deposit on checking.
+
+Known gap: Nessie has no idempotency keys. A write that Nessie commits but whose response is lost
+shows on the statement without a `receiptId` (top-up), or can post twice when a queued job retries.
+
+`bank.json` also keeps `checkingLast4`, last-known `balances` (served when Nessie is unreachable)
+and the queued job details. `npm run reset` keeps `bank.json` and empties its queue; a recreated agent
+gets its old account back by nickname. Each reset's seed balances come out of checking again;
+delete `bank.json` to start over with a fresh Nessie customer.
+
+### 16.4 Wallet endpoints
+
+Owner (`X-Owner-Key`):
+
+| Method | Path | Response |
+|---|---|---|
+| GET | `/v1/bank` | `BankSummary` (see below) |
+| GET | `/v1/bank/statement?agentId=&limit=50` | `{ account, entries: [{ id, kind: "transfer_in" \| "transfer_out" \| "purchase" \| "deposit", amount, description, merchant?, date, status, receiptId? }] }`, newest first |
+| POST | `/v1/bank/link` | → `BankSummary` (idempotent) |
+| POST | `/v1/bank/retry` | `{ receiptId? }` (one receipt, or every failed job) → `{ queued }` |
+
+`BankSummary` = `{ enabled, linked, provider: "Capital One", sandbox: "Nessie", checking?: { id,
+nickname, last4, balance }, accounts: [{ agentId, agentName, id, nickname, last4, balance }], queue:
+{ pending, failed }, error?, updatedAt }`.
+- `enabled: false` when there is no key.
+- Balances are computed from each account's Nessie transactions (§16.1) and cached for 10 s.
+- If Nessie can't be reached, `/v1/bank` returns the last known balances plus `error`.
+
+`/v1/bank/statement`:
+- Built from Nessie's own lists (`GET /accounts/{id}/purchases`, `/transfers?type=payer`, `/deposits`, `/withdrawals`). Agent account: a deposit whose description starts with "Top-up from" is `transfer_in`, other deposits `deposit`, purchases `purchase`, transfers `transfer_out` (reversals). Checking (no `agentId`): transfers `transfer_out`, deposits `transfer_in`.
+- `limit` 1–200 (default 50). Errors: `409 bank_not_enabled` (also on link and retry), `409 bank_not_linked`, `404 agent_not_found`, `404 bank_account_not_found` ("<name> has no Capital One account yet; it opens the first time money moves."), `502 bank_unavailable`.
+- `status` is Nessie's own status.
+- `receiptId` is matched through the stored refs.
+
+Additions to existing responses:
+- `SummaryResponse.bank?`: `{ linked, checkingLast4, checkingBalance }`, from the cache.
+- `MeResponse.bank?` (agent): `{ provider: "Capital One", account: "Allowance · <name>", last4 }`, with no balance.
+- MCP `get_wallet` adds one line: "Funded from your owner's Capital One account ••1234 (Nessie sandbox)."
+
+### 16.5 UI
+
+- **Dashboard top bar:** "Capital One Checking ••1234 · $4,982.00" (a sandbox note in its title) when linked; nothing when not enabled.
+- **Add money sheet:**
+  - shows "From Capital One Checking ••1234 · $4,982.00 available";
+  - shows the bank errors in plain words;
+  - on success: "Moved $20.00 from Checking to shopper's allowance account".
+- **Agent sheet/detail:** "Capital One allowance account ••5678 · $X", plus the latest statement entries (merchant, amount, date, Nessie status) and a "Nessie sandbox" note.
+- **Receipts and activity:** a small marker per receipt: "On Capital One statement" (posted), "Posting to Capital One…" (queued) or "Not on statement · Retry" (failed). Blocked payments read "Stopped before it reached your bank" when linked.
+- **Bank sheet** (`/?sheet=bank`, also `&embed=1`): checking and every agent's account with balances, plus recent bank activity.
+- **Chat:** the agent header shows "Capital One ••5678" beside the balance when the agent's `/v1/me` has `bank`.
+  The chat server copies it into `wallet.bank` of the agent summary (`GET /api/agents`, SSE
+  `snapshot`, and the `wallet` event).
+
+## 17. Quantcomm research as a paid service (Phase 7 contract)
+
+Quantcomm (the sibling repo `../technica2026`, a FastAPI app on `QUANTCOMM_URL`, default
+`http://127.0.0.1:8000`) has satellite flood maps, live NWS flood alerts with the banks under
+them, Capital One (Nessie) branches under those alerts, and AI analyst views on bank and insurer
+stocks. Agents buy that research per request over x402, like any other connected service. Its
+payments land on their Capital One statements (§16).
+
+### 17.1 Bridge (`apps/quantcomm-bridge`, port 4080, `QUANTCOMM_BRIDGE_URL`)
+
+The bridge holds Quantcomm's earnings wallet (`DATA_DIR/quantcomm-bridge-key.json`, never logged),
+which is the x402 `payTo`. It is read-only against Quantcomm and never calls
+`POST /api/advice/run`. Quantcomm runs from its own repo:
+`cd ../technica2026 && .venv/bin/python -m quantcomm.web`.
+
+Upstream endpoints, verified 2026-10-18 at quantcomm `fa347bc`. Each returns
+`{ success, data, error }`:
+- `GET /api/markets`:
+  - `data.as_of`
+  - `data.universe` (the tickers with analyst views)
+  - `data.tickers[] { ticker, name, group, last, chg_pct, r1y_pct, has_signal }`
+- `GET /api/advice`:
+  - `data.stale`
+  - `data.advice.{ generated_utc, model }`
+  - `data.advice.analysts[T].analysis { view, expected_move, confidence, headline, reasoning, evidence_used[], data_gaps[], forecast? }`
+  - `data.advice.portfolio.picks[] { ticker, action, confidence, reason }`
+- `GET /api/research/{ticker}?panels=a,b`:
+  - `data.options[] { key, title, shows }`
+  - `data.panels[key]`, with keys `branch_map`, `customer_stress`, `flood_map`, `alert_exposure`, `alerts_map`, `parking_lot`, `storm_history`
+
+A shape mismatch upstream yields `502 quantcomm_changed`. Quantcomm is changing fast, so
+the bridge reads only these fields and checks them.
+
+| Method | Path | Price | Response |
+|---|---|---|---|
+| GET | `/quantcomm` | free | `{ name, asOf, companies: [{ ticker, name, group, analystView: boolean, research: [panel keys] }], endpoints }` (the universe) |
+| GET | `/quantcomm/alerts` | **$0.05** | live flood alerts and who sits under them |
+| GET | `/quantcomm/companies/:ticker/flood` | **$0.05** | that company's flood research |
+| GET | `/quantcomm/companies/:ticker/view` | **$0.10** | Quantcomm's AI analyst view of the company |
+| GET | `/health` | free | `{ ok, upstream: "up" \| "down", asOf? }` |
+
+**Checks before the paywall.** These never produce a 402, so a failed request is never charged:
+- `503 quantcomm_unavailable`: "Quantcomm isn't running right now; nothing was charged."
+- `404 ticker_not_covered`, with the covered tickers.
+- `404 no_analyst_view`, for `/view`.
+- `502 quantcomm_changed`.
+
+The upstream is cached for 60 s.
+
+Compact response shapes. Dollars are converted from Quantcomm's thousands and rounded, and the
+heavy geometry is dropped:
+
+- **alerts:** `{ asOf, ageHours, alerts: { total, byType }, activeStorms: [{ name, classification, basin, windKt }], banksUnderAlerts: { count, top: [≤10 { bank, ticker?, branches, depositsUnderAlert: "$11.27B", shareOfDeposits: "59.9%", alertTypes[] }] }, capitalOne: { locationsChecked, underAlert, locations: [≤10 in-alert { kind, name, city, state, alertTypes[] }], note: "Capital One's Nessie sandbox branches and ATMs (MD/VA/DC)" }, source: "NWS alerts, FDIC deposits and Capital One Nessie locations via Quantcomm", note? }`.
+  - `note` reads "Alerts are N hours old" when `ageHours` > 6.
+  - The alert overview and bank rows come from the `alerts_map` and `alert_exposure` panels of the first universe ticker that offers them; Capital One locations come from `branch_map`.
+- **flood:** `{ ticker, name, asOf, panels: { <key>: compact } }`. Per key:
+  - `branch_map`: the `capitalOne` block above.
+  - `customer_stress`: `{ synthetic: true, storm, customers, exposureAtDefault, baselineExpectedLoss, incrementalExpectedLoss, liveCustomersUnderAlert, liveLoansUnderAlert }`.
+  - `flood_map`: `{ storm, landfall, firstImagePublished, hoursAfterLandfall, floodedKm2, coveragePct, capitalOneLocationsExposed? }`.
+  - `alert_exposure`: `{ company: rows for this ticker, top: ≤5 }`.
+  - `alerts_map`: the alerts block.
+  - `storm_history`: `{ bench, window, storms: [{ storm, year, excessPct }], meanExcessPct, underperformed: "5 of 12" }`.
+  - `parking_lot`: `{ verdict, metrics, caveats }`.
+- **view:** `{ ticker, name, generatedAt, model, stale, view, expectedMove, confidence, headline, reasoning, evidence[], dataGaps[], forecast?, pick?: { action, confidence, reason }, disclaimer: "Quantcomm's AI analyst view, for research. Not financial advice." }`.
+  - When `stale` is true it adds `note: "Quantcomm's data changed since this view was generated."`
+
+**As built (additive to the shapes above):**
+- The index adds `provider`, `caveats`, and `endpoints[] { method, url, example?, price, returns }`.
+- The flood `branch_map` and `alert_exposure` panels carry `asOf` and `ageHours`; `alert_exposure` also has `banksUnderAlerts` (a count). `customer_stress` and `flood_map` carry a `note`.
+- `/flood` has a top-level `note` that collects the alert age and any missing panels.
+- `/view` `forecast` (only in advice from Quantcomm's newest prompt) is `{ horizonDays, fromDate, fromPrice, returnPct, lowPct, highPct }`, in percent.
+- `capitalOneLocationsExposed` is a string ("0 of 220"). `capitalOne.locations[].city` and `.state` are nullable, because Nessie ATMs have no city or state.
+- Missing Capital One data gives `capitalOne: null` plus a note.
+
+"Covered" means:
+- for `/flood`: universe tickers with at least one research panel (KRE has none);
+- for `/view`: tickers whose analyst status is `ok`.
+
+404s carry `ticker` and `covered`. A 503 also covers Quantcomm not having produced its core data yet.
+The 402 description, which becomes the receipt name and the Nessie merchant, is "Quantcomm Flood
+Research".
+
+Agents must use the `{QUANTCOMM_BRIDGE_URL}/quantcomm` URLs exactly. The connected-service match
+compares origins exactly, so `localhost` and `127.0.0.1` don't match each other.
+
+### 17.2 Directory entry (static, always listed)
+
+The entry's fields:
+- `id "quantcomm"`, `name "Quantcomm Flood Research"`, `provider "Quantcomm"`
+- `icon "🌊"`, `color "#1D4ED8"`, `category "data"`, `kind "x402"`
+- `baseUrl {QUANTCOMM_BRIDGE_URL}/quantcomm`, `maxPrice "0.10"`
+- `pricing "$0.05 per flood check · $0.10 per analyst view"`
+- summary: "Live flood alerts and which banks (Capital One included) sit under them, satellite flood maps, and AI analyst views on bank and insurer stocks."
+- `permissions`: ["Pay up to $0.10 per request", "Read Quantcomm's flood and bank research"]
+- `docs`: the endpoints with examples. They say: "pass through Quantcomm's caveats (sandbox branches, SYNTHETIC customers, stale data); the analyst view is research, not advice"
+
+No agent has it by default. In the demo, the researcher asks for it.
+
+### 17.3 Dev and MCP
+
+`npm run dev` adds `dev:quantcomm-bridge`. The MCP `fetch_url` blocklist does not include 4080,
+since it is a public paid service. `.env.example` documents `QUANTCOMM_URL`,
+`QUANTCOMM_BRIDGE_PORT`, `QUANTCOMM_BRIDGE_URL` and the `NESSIE_*` variables.
+
+### 17.4 UI (chat)
+
+- A **Flood research card** for `/quantcomm/alerts` and `/flood` results:
+  - alert counts by type;
+  - the top banks under alerts, with share bars;
+  - Capital One locations under alerts, or "0 of 220 under alerts";
+  - the as-of time, with the staleness note.
+- An **Analyst view card** for `/view`: view chip, confidence, headline, forecast range when present, and the disclaimer.
+- Step labels, e.g. "Checked live flood alerts · Quantcomm · $0.05".
+
+**Demo line.** Ask the researcher "Are any banks exposed to the coastal flooding right now? What
+about Capital One?" It asks to connect Quantcomm, the owner approves, it pays $0.05 and answers
+(TowneBank ≈ 60% of deposits under alerts; Capital One 0 of 220 sandbox locations). The $0.05 then
+shows on the researcher's Capital One allowance statement as a purchase at "Quantcomm Flood
+Research".

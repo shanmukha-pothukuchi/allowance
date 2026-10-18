@@ -69,6 +69,14 @@ beforeAll(async () => {
     agentChatHost: "127.0.0.1",
     agentChatUrl: "",
     llm: { baseUrl: "http://127.0.0.1:1", model: "test" },
+    shopifyBridgePort: 0,
+    shopifyBridgeUrl: "http://127.0.0.1:1",
+    shopify: { apiVersion: "2026-10" },
+    // No Nessie key: the bank stays off and nothing here talks to Capital One.
+    nessie: { baseUrl: "https://api.nessieisreal.com", openingBalance: "5000.00" },
+    quantcommBridgePort: 0,
+    quantcommBridgeUrl: "http://127.0.0.1:1",
+    quantcommUrl: "http://127.0.0.1:1",
   });
   for (const level of ["log", "warn", "error"] as const) {
     vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
@@ -965,9 +973,12 @@ describe("connected services (§13)", () => {
     const { agent, token } = await createAgent("svc-browse", shopperPolicy);
     await connect(agent.id, "acme-news");
     const all = await api("GET", "/v1/directory", undefined, token);
-    expect(all.body.services).toHaveLength(6);
+    // The whole catalog (it grows as services join the directory, e.g. Quantcomm in §17.2).
+    const catalogIds = buildCatalog({ merchantUrl: MERCHANT, directoryUrl: "http://127.0.0.1:1" }).map((s) => s.id);
+    expect(all.body.services).toHaveLength(catalogIds.length);
     const byId = Object.fromEntries(all.body.services.map((s: { id: string; connected: boolean }) => [s.id, s.connected]));
-    expect(byId).toEqual({ directory: true, "acme-weather": false, "acme-news": true, "acme-stocks": false, "acme-pizza": false, "acme-bounties": false });
+    expect(byId).toEqual(Object.fromEntries(catalogIds.map((id) => [id, id === "directory" || id === "acme-news"])));
+    expect(byId).toMatchObject({ directory: true, "acme-weather": false, "acme-news": true, "acme-stocks": false, "acme-pizza": false, "acme-bounties": false });
     expect(all.body.services[0]).not.toHaveProperty("connectedAgents");
     const pizza = await api("GET", "/v1/directory/acme-pizza", undefined, token);
     expect(pizza.body).toMatchObject({ id: "acme-pizza", connected: false });

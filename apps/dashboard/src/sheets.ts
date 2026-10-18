@@ -13,18 +13,20 @@ export { AGENT_NAME_RE, MAX_TOPUP };
 
 // ---------------------------------------------------------------------------- routes
 
-export type SheetId = "new-agent" | "add-money";
-export type SheetRoute = { sheet: "new-agent" } | { sheet: "add-money"; agent?: string };
+/** The sheets the chat can embed (§14.3, §16.5 bank); their ids ride on the postMessage contract. */
+export type SheetId = "new-agent" | "add-money" | "bank";
+export type EmbedSheetRoute = { sheet: "new-agent" } | { sheet: "add-money"; agent?: string } | { sheet: "bank" };
+/** Plus "Add a Shopify store" (§15.5) and an agent's detail (§16.5), which live on the dashboard only. */
+export type SheetRoute = EmbedSheetRoute | { sheet: "add-shopify" } | { sheet: "agent"; agent: string };
 
-/** `?sheet=new-agent` / `?sheet=add-money&agent=<name>` → the sheet to show, else null. */
+/** `?sheet=new-agent` / `add-money&agent=<name>` / `add-shopify` / `bank` / `agent&agent=<name>` → the sheet to show, else null. */
 export function sheetFromSearch(search: string): SheetRoute | null {
   const p = new URLSearchParams(search);
   const sheet = p.get("sheet");
-  if (sheet === "new-agent") return { sheet };
-  if (sheet === "add-money") {
-    const agent = p.get("agent")?.trim();
-    return agent ? { sheet, agent } : { sheet };
-  }
+  if (sheet === "new-agent" || sheet === "add-shopify" || sheet === "bank") return { sheet };
+  const agent = p.get("agent")?.trim();
+  if (sheet === "add-money") return agent ? { sheet, agent } : { sheet };
+  if (sheet === "agent" && agent) return { sheet, agent };
   return null;
 }
 
@@ -33,9 +35,11 @@ export function embedRequested(search: string): boolean {
   return e === "1" || e === "true";
 }
 
-/** `?sheet=…&embed=1` → the sheet to render alone for the chat, else null. */
-export function embedSheet(search: string): SheetRoute | null {
-  return embedRequested(search) ? sheetFromSearch(search) : null;
+/** `?sheet=…&embed=1` → the sheet to render alone for the chat, else null (add-shopify and agent are dashboard-only). */
+export function embedSheet(search: string): EmbedSheetRoute | null {
+  if (!embedRequested(search)) return null;
+  const r = sheetFromSearch(search);
+  return r && r.sheet !== "add-shopify" && r.sheet !== "agent" ? r : null;
 }
 
 /** The query string with the sheet params set (or removed), keeping everything else (mock, theme). */
@@ -45,7 +49,7 @@ export function withSheet(search: string, route: SheetRoute | null): string {
   p.delete("agent");
   if (route) {
     p.set("sheet", route.sheet);
-    if (route.sheet === "add-money" && route.agent) p.set("agent", route.agent);
+    if ((route.sheet === "add-money" || route.sheet === "agent") && route.agent) p.set("agent", route.agent);
   }
   const s = p.toString();
   return s ? `?${s}` : "";

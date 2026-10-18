@@ -2,10 +2,10 @@
  * Pure helpers for connected services (§13): catalog merge, search, labels.
  * No React, no fetch. Unit-tested in services.test.ts.
  */
-import { isServiceApproval, money, toCents } from "./format";
+import { isCustomGrant, isServiceApproval, isShopifyGrant, money, toCents } from "./format";
 import type { AgentPublic, Approval, ConnectedService, DirectoryService, ServiceCategory } from "./types";
 
-export { isCustomGrant, isServiceApproval, serviceIdOfEvent, serviceOfEvent } from "./format";
+export { isCustomGrant, isServiceApproval, isShopifyGrant, serviceIdOfEvent, serviceOfEvent } from "./format";
 
 export type CategoryFilter = "all" | ServiceCategory;
 
@@ -30,12 +30,17 @@ export interface CatalogEntry {
   service: DirectoryService;
   /** Agents that currently have it connected (directory: from their `services`, live). */
   connections: Connection[];
-  /** true for `source:"agent"` services, which only exist on agents, never in the directory. */
+  /**
+   * true for `source:"agent"` services the agent described itself; they only exist on agents, never
+   * in the directory. A Shopify store an agent asked for is not custom (§15.3).
+   */
   custom: boolean;
-  /** Custom services: who proposed it (the agents that hold it). */
+  /** Custom services: who proposed it (the agents that hold it). Pending proposals: who asked. */
   proposedBy: AgentPublic[];
   /** The always-on directory service. */
   builtIn: boolean;
+  /** A pending request for something not in the directory yet (a proposed custom service or Shopify store). */
+  proposal?: boolean;
 }
 
 type Searchable = Pick<DirectoryService, "name" | "summary" | "provider" | "category"> & { description?: string };
@@ -60,7 +65,7 @@ function customAsDirectory(c: ConnectedService): DirectoryService {
     provider: c.provider,
     icon: c.icon,
     color: c.color,
-    category: "tools",
+    category: c.category ?? (isShopifyGrant(c) ? "shopping" : "tools"),
     kind: c.kind,
     summary: c.summary,
     description: c.summary,
@@ -70,6 +75,7 @@ function customAsDirectory(c: ConnectedService): DirectoryService {
     permissions: c.permissions,
     source: c.source ?? "directory",
     docs: c.docs,
+    ...(c.shopify ? { shopify: c.shopify } : {}),
   };
 }
 
@@ -86,7 +92,7 @@ export function buildCatalog(directory: DirectoryService[], agents: AgentPublic[
   const out: CatalogEntry[] = directory.map((service) => ({
     service,
     connections: service.id === DIRECTORY_ID ? [] : connectionsOf(service.id),
-    custom: service.source === "agent",
+    custom: isCustomGrant(service),
     proposedBy: [],
     builtIn: service.id === DIRECTORY_ID || service.kind === "directory",
   }));
@@ -95,7 +101,7 @@ export function buildCatalog(directory: DirectoryService[], agents: AgentPublic[
   for (const agent of agents) {
     for (const s of agent.services ?? []) {
       if (known.has(s.id)) continue;
-      const isCustom = s.source === "agent";
+      const isCustom = isCustomGrant(s);
       const builtIn = s.id === DIRECTORY_ID || s.kind === "directory";
       const entry = custom.get(s.id) ?? { service: customAsDirectory(s), connections: [], custom: isCustom, proposedBy: [], builtIn };
       if (!entry.service.docs && s.docs) entry.service = { ...entry.service, docs: s.docs };
@@ -136,8 +142,9 @@ export function requestsFor(approvals: Approval[], serviceId: string): Approval[
 }
 
 /**
- * Add pending custom proposals (not yet on any agent) to the gallery so the owner can review them
- * there too. Directory requests already have a card; this only adds what has none.
+ * Add pending proposals (not yet on any agent) to the gallery so the owner can review them there
+ * too: custom services and Shopify stores an agent asked to add. Directory requests already have a
+ * card; this only adds what has none.
  */
 export function withProposals(entries: CatalogEntry[], approvals: Approval[], agents: AgentPublic[]): CatalogEntry[] {
   const known = new Set(entries.map((e) => e.service.id));
@@ -149,9 +156,10 @@ export function withProposals(entries: CatalogEntry[], approvals: Approval[], ag
     const entry = extra.get(g.id) ?? {
       service: customAsDirectory({ ...g, connectedAt: a.createdAt, connectedBy: "approval" }),
       connections: [],
-      custom: true,
+      custom: isCustomGrant(g),
       proposedBy: [],
       builtIn: false,
+      proposal: true,
     };
     if (proposer && !entry.proposedBy.some((p) => p.id === proposer.id)) entry.proposedBy.push(proposer);
     extra.set(g.id, entry);
