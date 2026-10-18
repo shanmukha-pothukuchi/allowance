@@ -197,25 +197,29 @@ export interface ServiceManifest {
   shopify?: ShopifyStoreRef;
 }
 
-/** How agents can buy from a Shopify store through the bridge. */
-export type ShopifyMode =
-  /** The owner's own store with Admin API credentials: the agent pays in USDC (x402) and the bridge creates a paid order. */
-  | "agent_checkout"
-  /** Any other store: browse and build a cart; the owner finishes payment at Shopify's checkout link. */
-  | "handoff";
-
+/**
+ * A Shopify store as seen by a shopper (docs/ARCHITECTURE.md §15). Any public store works: no store
+ * admin access is used or shown. The agent pays in USDC; Allowance pays the store with a single-use
+ * "Allowance Card" (simulated in this project: card issuing and Shopify's card checkout are not wired).
+ */
 export interface ShopifyStoreRef {
-  /** Subdomain of *.myshopify.com, e.g. "crypto-app-test". */
+  /** Subdomain of *.myshopify.com, e.g. "weareallbirds". */
   handle: string;
-  /** e.g. "crypto-app-test.myshopify.com" */
+  /** e.g. "weareallbirds.myshopify.com" */
   domain: string;
-  mode: ShopifyMode;
+  /** The public storefront the shopper knows, e.g. "https://www.allbirds.com". */
+  storefrontUrl: string;
+  /** The store advertises card payments for agents (UCP payment handler "dev.shopify.card"). */
+  cardCheckout: boolean;
 }
 
 /** A store the bridge knows about. */
 export interface ShopifyStore extends ShopifyStoreRef {
   name: string;
+  /** Presentment currency for US shoppers (always "USD"; other stores are unsupported). */
   currency: string;
+  /** Up to 4 product image URLs for previews (from the store's CDN). */
+  sampleImages?: string[];
   /** Rough catalog size at discovery time, if known. */
   productCount?: number;
   addedAt?: IsoDate;
