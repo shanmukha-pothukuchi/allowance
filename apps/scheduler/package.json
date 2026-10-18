@@ -1,0 +1,19 @@
+{
+  "name": "@allowance/scheduler",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Wakes chat agents on their own reminders, price watches and the owner's rules. Never spends: the woken agent acts through its wallet and policy.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@allowance/shared": "*"
+  }
+}
