@@ -150,6 +150,26 @@ Coded on the same path as mock mode, but **not exercised in our tests** (no fund
 
 Mainnet is never configured anywhere in this repo.
 
+## A Capital One bank behind it (optional)
+
+Put a Capital One [Nessie](http://api.nessieisreal.com) key in `.env` (`NESSIE_API_KEY=`) and
+restart. The wallet opens a checking account for you and a **Capital One allowance account for each
+agent**. "Add money" moves dollars from checking into that agent's account, and Capital One must
+confirm before anything is credited. Every payment the agent makes then shows on its account's
+statement under the merchant's name; blocked payments never reach the bank. See it on the
+dashboard (top bar, each agent card, the Bank sheet). Without a key nothing changes. Nessie is a
+sandbox: real API, sandbox money.
+
+## Quantcomm research (optional)
+
+[Quantcomm](https://github.com/shanmukha-pothukuchi/quantcomm) maps flooding from satellite radar
+and tracks which banks sit under live flood alerts. Run it from its repo
+(`cd ../technica2026 && .venv/bin/python -m quantcomm.web`), and `npm run dev` starts the bridge
+that sells its research to agents: $0.05 for live flood alerts and who's under them, $0.05 for a
+company's flood research, $0.10 for Quantcomm's AI analyst view (research, not advice). Agents ask
+to connect "Quantcomm Flood Research" like any other service. If Quantcomm isn't running, nothing
+is charged.
+
 ## Simulated vs real
 
 | Thing | Status |
@@ -164,10 +184,12 @@ Mainnet is never configured anywhere in this repo.
 | Checks on agent-reported settlements and bounty payouts | Real in mock mode (looked up on the ledger); skipped in `base-sepolia` mode |
 | Telegram approvals and alerts | Real (grammy, long polling) |
 | Pizza fulfillment, "virtual card" | **Simulated**. No card, no offramp, no pizza. |
-| "Add $20 with card" on the dashboard | Simulated top-up (mints on the mock ledger) |
+| "Add money" on the dashboard | Mints on the mock ledger; with `NESSIE_API_KEY`, Capital One moves the dollars from checking first and must confirm |
 | The poisoned bounty's attacker | A burn-style address; nothing is ever sent |
 | Shopify catalogs, prices and carts | Real (public Storefront API, any store) |
 | Paying a Shopify store with the Allowance Card | **Simulated** (the agent's USDC payment is real; card issuing and Shopify's agent card checkout are not wired) |
+| Capital One accounts (checking, one allowance account per agent, transfers, purchases, deposits) | Real Nessie API calls (Capital One's hackathon sandbox: sandbox money). Bank dollars → USDC is simulated (mock mint) |
+| Quantcomm flood and bank research | Real data from Quantcomm (live NWS alerts, FDIC deposits, Sentinel-1 flood maps); its Capital One customers are SYNTHETIC and its branches are Nessie sandbox ones |
 | Chat agents | Real LLM agents (OpenAI-compatible endpoint); they act only when you message them |
 | `npm run demo` | Scripted fallback; no model, labelled as such |
 
@@ -186,6 +208,7 @@ apps/dashboard/         Vite + React owner UI
 apps/agent-chat/        chat agents (LLM tool loop over the MCP tools), chat page on :4050
 apps/directory/         service directory (catalog of services agents can connect) on :4060
 apps/shopify-bridge/    any public Shopify store as an x402 service: catalog, real carts, USDC → Allowance Card, on :4070
+apps/quantcomm-bridge/  Quantcomm's flood and bank research (../technica2026) sold to agents over x402, on :4080
 apps/agents/            setup, reset, scripted offline demo
 docs/                   ARCHITECTURE.md, agent-work-spec.md, DEMO.md
 ```

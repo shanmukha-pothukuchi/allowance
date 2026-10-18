@@ -9,7 +9,7 @@ import { startMerchantStub, startWalletStub, type MerchantStub, type WalletStub 
 import { avatarFor } from "@allowance/shared/avatars";
 import { ChatAgent, sanitizeHistory, servicesBlock, systemPrompt, type AgentEvent, type LogEntry } from "./agent.js";
 import { chatCompletion, LlmError, type ChatMessage } from "./llm.js";
-import { createChatApp, lastMessageOf, type AgentSummary } from "./app.js";
+import { bankRef, createChatApp, lastMessageOf, type AgentSummary } from "./app.js";
 import { groupMembers } from "./roster.js";
 
 // ---- stub OpenAI-compatible LLM ------------------------------------------------------------
@@ -558,6 +558,73 @@ describe("chat server", () => {
       await chat.close();
       await new Promise((r) => server.close(() => r(null)));
     }
+  });
+
+  it("copies the agent's Capital One account from /v1/me into wallet.bank (summary, snapshot, wallet event)", async () => {
+    const plain = wallet.addToken("saver", []);
+    const banked = wallet.addToken("spender", []);
+    wallet.agents.get(banked)!.bank = { provider: "Capital One", account: "Allowance · spender", last4: "5678" };
+    const chat = createChatApp({
+      walletServiceUrl: wallet.url,
+      llm: { baseUrl: llm.url, apiKey: "k", model: "qwen3", backoffMs: 5 },
+      roster: [
+        { name: "saver", role: "s", token: plain },
+        { name: "spender", role: "s", token: banked },
+      ],
+      walletPollMs: 60_000,
+      approvalWaitMs: 2000,
+    });
+    await chat.ready;
+    const server: Server = await new Promise((r) => {
+      const s = chat.app.listen(0, "127.0.0.1", () => r(s));
+    });
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const ctrl = new AbortController();
+    try {
+      const list = (await (await fetch(`${base}/api/agents`)).json()) as { agents: AgentSummary[] };
+      const [saver, spender] = list.agents;
+      expect(spender.wallet.bank).toEqual({ provider: "Capital One", account: "Allowance · spender", last4: "5678" });
+      expect(spender.wallet.balance).toBe("20.00");
+      expect(saver.wallet).not.toHaveProperty("bank");
+
+      const frames: string[] = [];
+      void fetch(`${base}/api/events`, { signal: ctrl.signal }).then(async (r) => {
+        const reader = r.body!.getReader();
+        const dec = new TextDecoder();
+        for (;;) {
+          const { value, done } = await reader.read().catch(() => ({ value: undefined, done: true }));
+          if (done) break;
+          frames.push(dec.decode(value));
+        }
+      });
+      for (let i = 0; i < 40 && !frames.join("").includes("snapshot"); i++) await new Promise((r) => setTimeout(r, 25));
+      const snap = JSON.parse(frames.join("").split("event: snapshot\ndata: ")[1].split("\n")[0]) as { agents: AgentSummary[] };
+      expect(snap.agents.find((a) => a.name === "spender")!.wallet.bank).toEqual({ provider: "Capital One", account: "Allowance · spender", last4: "5678" });
+
+      // The bank links the saver's account later: the next wallet poll carries it.
+      wallet.agents.get(plain)!.bank = { provider: "Capital One", account: "Allowance · saver", last4: "1234" };
+      llm.script = () => reply("noted");
+      expect((await fetch(`${base}/api/agents/saver/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "hi" }) })).status).toBe(202);
+      const want = `"agent":"saver","wallet":`;
+      for (let i = 0; i < 80 && !frames.join("").split("event: wallet\ndata: ").some((f) => f.includes(want) && f.includes(`"bank":`)); i++) await new Promise((r) => setTimeout(r, 25));
+      const frame = frames.join("").split("event: wallet\ndata: ").find((f) => f.includes(want) && f.includes(`"bank":`))!;
+      expect(JSON.parse(frame.split("\n")[0]).wallet.bank).toEqual({ provider: "Capital One", account: "Allowance · saver", last4: "1234" });
+      for (let i = 0; i < 100 && [...chat.agents.values()].some((a) => a.busy); i++) await new Promise((r) => setTimeout(r, 25));
+    } finally {
+      ctrl.abort();
+      await chat.close();
+      await new Promise((r) => server.close(() => r(null)));
+    }
+  });
+
+  it("bankRef keeps plain strings and drops anything unexpected", () => {
+    expect(bankRef({ provider: "Capital One", account: "Allowance · x<b>", last4: "1234", balance: "99.00" })).toEqual({ provider: "Capital One", account: "Allowance · xb", last4: "1234" });
+    expect(bankRef({ provider: "Capital One", account: 5, last4: "1234" })).toEqual({ provider: "Capital One", account: "", last4: "1234" });
+    expect(bankRef({ provider: "Evil Bank", account: "a", last4: "1234" })).toBeUndefined();
+    expect(bankRef({ provider: "Capital One", account: "a", last4: "<img src=x>" })).toBeUndefined();
+    expect(bankRef({ provider: "Capital One", account: "a", last4: 1234 })).toBeUndefined();
+    expect(bankRef(null)).toBeUndefined();
+    expect(bankRef("Capital One")).toBeUndefined();
   });
 
   it("groups only include workers", () => {

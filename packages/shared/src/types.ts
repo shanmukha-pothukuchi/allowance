@@ -127,6 +127,64 @@ export interface Receipt {
   approvalId?: string;
   /** For blocked/denied receipts: why. */
   reason?: string;
+  /** Capital One (Nessie sandbox) mirror of this receipt, when the bank is linked (ARCHITECTURE §16). */
+  bank?: ReceiptBank;
+}
+
+// ----------------------------------------------------------------------------
+// Bank: Capital One via the Nessie sandbox (docs/ARCHITECTURE.md §16)
+// ----------------------------------------------------------------------------
+
+/** How a receipt shows on the agent's Capital One allowance account statement. */
+export interface ReceiptBank {
+  status: "queued" | "posted" | "failed";
+  /** Nessie transaction id (transfer, purchase or deposit) once posted. */
+  ref?: string;
+  /** Masked account the entry lands on, e.g. "••1234". */
+  account: string;
+  postedAt?: IsoDate;
+  error?: string;
+}
+
+export interface BankAccountView {
+  id: string;
+  nickname: string;
+  last4: string;
+  /** Dollars as Nessie reports them (sandbox money). */
+  balance: string;
+}
+
+export interface BankSummary {
+  /** NESSIE_API_KEY is set. */
+  enabled: boolean;
+  /** Owner customer and checking account exist. */
+  linked: boolean;
+  provider: "Capital One";
+  sandbox: "Nessie";
+  checking?: BankAccountView;
+  accounts: (BankAccountView & { agentId: string; agentName: string })[];
+  queue: { pending: number; failed: number };
+  /** Set when Nessie couldn't be reached; balances are the last known ones. */
+  error?: string;
+  updatedAt: IsoDate;
+}
+
+export interface BankStatementEntry {
+  id: string;
+  kind: "transfer_in" | "transfer_out" | "purchase" | "deposit";
+  amount: string;
+  description: string;
+  merchant?: string;
+  /** YYYY-MM-DD as Nessie stores it. */
+  date: string;
+  /** Nessie's own status, e.g. "pending", "executed", "completed", "cancelled". */
+  status: string;
+  receiptId?: string;
+}
+
+export interface BankStatementResponse {
+  account: BankAccountView & { agentId?: string; agentName?: string };
+  entries: BankStatementEntry[];
 }
 
 // ----------------------------------------------------------------------------
@@ -278,7 +336,9 @@ export type EventType =
   | "topup"
   | "service.requested"
   | "service.connected"
-  | "service.disconnected";
+  | "service.disconnected"
+  | "bank.posted"
+  | "bank.failed";
 
 export interface WalletEvent {
   id: string;
@@ -426,6 +486,8 @@ export interface EarningRequest {
 export interface MeResponse {
   agent: AgentPublic;
   limits: { maxPerTx: string; dailyCap: string; approvalThreshold: string; remainingToday: string };
+  /** The agent's Capital One allowance account (no balance), when the bank is linked (§16). */
+  bank?: { provider: "Capital One"; account: string; last4: string };
 }
 
 /** POST /v1/agents (owner) */
@@ -458,6 +520,8 @@ export interface SummaryResponse {
   pendingApprovals: Approval[];
   chainMode: "mock" | "base-sepolia";
   telegramConnected: boolean;
+  /** Owner's Capital One checking (Nessie sandbox), from the wallet's cache (§16). */
+  bank?: { linked: boolean; checkingLast4?: string; checkingBalance?: string };
 }
 
 /** Standard error body for 4xx/5xx. */

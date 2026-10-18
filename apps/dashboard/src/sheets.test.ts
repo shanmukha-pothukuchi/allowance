@@ -165,6 +165,16 @@ describe("sheet URLs", () => {
     expect(withSheet("?mock=1&sheet=add-shopify", null)).toBe("?mock=1");
   });
 
+  it("opens the bank (§16.5) on the dashboard and as a chat embed; an agent's detail on the dashboard only", () => {
+    expect(sheetFromSearch("?mock=1&sheet=bank")).toEqual({ sheet: "bank" });
+    expect(embedSheet("?sheet=bank&embed=1&theme=light")).toEqual({ sheet: "bank" });
+    expect(sheetFromSearch("?sheet=agent&agent=researcher")).toEqual({ sheet: "agent", agent: "researcher" });
+    expect(sheetFromSearch("?sheet=agent")).toBeNull(); // no agent, nothing to show
+    expect(embedSheet("?sheet=agent&agent=researcher&embed=1")).toBeNull();
+    expect(withSheet("?mock=1", { sheet: "agent", agent: "researcher" })).toBe("?mock=1&sheet=agent&agent=researcher");
+    expect(withSheet("?mock=1&sheet=agent&agent=researcher", { sheet: "bank" })).toBe("?mock=1&sheet=bank");
+  });
+
   it("sets and clears the sheet params, keeping the others", () => {
     expect(withSheet("?mock=1", { sheet: "add-money", agent: "shopper" })).toBe("?mock=1&sheet=add-money&agent=shopper");
     expect(withSheet("?mock=1&sheet=add-money&agent=shopper", null)).toBe("?mock=1");

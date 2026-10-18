@@ -3,12 +3,15 @@ import { ActivityFeed } from "./components/ActivityFeed";
 import { AddMoneySheet } from "./components/AddMoneySheet";
 import { AddShopifySheet } from "./components/AddShopifySheet";
 import { AgentCard } from "./components/AgentCard";
+import { AgentSheet } from "./components/AgentSheet";
+import { BankSheet } from "./components/BankSheet";
 import { ApprovalsPanel } from "./components/ApprovalsPanel";
 import { Plus } from "./components/Icons";
 import { NewAgentSheet } from "./components/NewAgentSheet";
 import { ReceiptsList } from "./components/ReceiptsList";
 import { ServicesView } from "./components/ServicesView";
 import { TopBar } from "./components/TopBar";
+import { accountFor, isLinked } from "./bank";
 import { navigate, useRoute, useSheetRoute } from "./route";
 import { chatUrlFrom } from "./sheets";
 import { applyTheme, effectiveTheme, saveTheme, storedTheme, themeFromSearch, type ThemePref } from "./theme";
@@ -46,10 +49,27 @@ export default function App() {
   const pendingIds = useMemo(() => new Set(state.approvals.map((a) => a.id)), [state.approvals]);
   // Frozen agents float to the top so the moment the wallet holds is never below the fold.
   const agents = useMemo(() => [...state.agents.filter((a) => a.frozen), ...state.agents.filter((a) => !a.frozen)], [state.agents]);
+  // Capital One (§16): only with a linked bank do cards, receipts and the feed carry bank lines.
+  const bankLinked = isLinked(state.totals.bank);
+  // Receipt ids with a retry in flight; "*" while every failed one is being retried.
+  const [retrying, setRetrying] = useState<string[]>([]);
+  const retryBank = useCallback(
+    async (receiptId?: string) => {
+      const key = receiptId ?? "*";
+      setRetrying((ids) => [...ids, key]);
+      try {
+        await actions.retryBank(receiptId);
+      } finally {
+        setRetrying((ids) => ids.filter((x) => x !== key));
+      }
+    },
+    [actions],
+  );
+  const sheetAgent = sheet?.sheet === "agent" ? state.agents.find((a) => a.name === sheet.agent) : undefined;
 
   return (
     <div className="app">
-      <TopBar state={state} route={route} theme={theme} onToggleTheme={toggleTheme} onToggleDetails={actions.toggleDetails} />
+      <TopBar state={state} route={route} theme={theme} onToggleTheme={toggleTheme} onToggleDetails={actions.toggleDetails} onOpenBank={() => setSheet({ sheet: "bank" })} />
       {route.view === "services" ? (
         <ServicesView state={state} actions={actions} selectedId={route.serviceId} now={now} onAddShopify={() => setSheet({ sheet: "add-shopify" })} />
       ) : (
@@ -72,6 +92,8 @@ export default function App() {
                   onFreeze={() => void actions.freeze(a.id)}
                   onUnfreeze={() => void actions.unfreeze(a.id)}
                   onAddMoney={() => setSheet({ sheet: "add-money", agent: a.name })}
+                  bankAccount={bankLinked ? accountFor(state.bank, a.id) : undefined}
+                  onOpenBank={() => setSheet({ sheet: "agent", agent: a.name })}
                 />
               ))}
             </div>
@@ -85,6 +107,9 @@ export default function App() {
             now={now}
             onApprove={(id) => void actions.approve(id)}
             onDeny={(id) => void actions.deny(id)}
+            bankLinked={bankLinked}
+            onRetryBank={(id) => void retryBank(id)}
+            retrying={retrying}
           />
 
           <aside className="side">
@@ -96,7 +121,7 @@ export default function App() {
               onApprove={(id) => void actions.approve(id)}
               onDeny={(id) => void actions.deny(id)}
             />
-            <ReceiptsList receipts={state.receipts} showDetails={state.showDetails} now={now} />
+            <ReceiptsList receipts={state.receipts} showDetails={state.showDetails} now={now} bankLinked={bankLinked} onRetryBank={(id) => void retryBank(id)} retrying={retrying} />
           </aside>
         </main>
       )}
@@ -124,6 +149,35 @@ export default function App() {
       )}
       {sheet?.sheet === "add-money" && (
         <AddMoneySheet adapter={adapter} offline={state.connection === "offline"} embed={false} agentName={sheet.agent} showDetails={state.showDetails} onClose={closeSheet} onAdded={actions.refresh} />
+      )}
+      {sheet?.sheet === "bank" && (
+        <BankSheet
+          adapter={adapter}
+          offline={state.connection === "offline"}
+          embed={false}
+          bank={state.bank}
+          receipts={state.receipts}
+          onClose={closeSheet}
+          onOpenAgent={(name) => setSheet({ sheet: "agent", agent: name })}
+          onRetry={retryBank}
+          onChanged={actions.refresh}
+        />
+      )}
+      {sheet?.sheet === "agent" && (
+        <AgentSheet
+          adapter={adapter}
+          agent={sheetAgent}
+          agentName={sheet.agent}
+          account={sheetAgent && bankLinked ? accountFor(state.bank, sheetAgent.id) : undefined}
+          bankLinked={bankLinked}
+          receipts={state.receipts}
+          now={now}
+          refreshKey={state.bank?.updatedAt}
+          retrying={retrying}
+          onRetry={(id) => void retryBank(id)}
+          onAddMoney={() => setSheet({ sheet: "add-money", agent: sheet.agent })}
+          onClose={closeSheet}
+        />
       )}
     </div>
   );

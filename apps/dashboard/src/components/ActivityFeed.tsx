@@ -1,7 +1,9 @@
+import { feedMarker } from "../bank";
 import { describeEvent, isServiceApproval, isShopifyGrant, isSoftBlock, money, relativeTime, serviceOfEvent, shortHex } from "../format";
 import { connectedByLabel } from "../services";
 import type { ConnectedService, EventType, WalletEvent } from "../types";
 import { AgentAvatar, ServiceTile } from "./Avatar";
+import { BankMarkerView } from "./BankParts";
 import { ArrowIn, ArrowOut, Check, Clock, Cross, Info, Plug, Plus, Shield, Snowflake, Sun, Unplug } from "./Icons";
 
 interface Props {
@@ -12,6 +14,11 @@ interface Props {
   now: number;
   onApprove(id: string): void;
   onDeny(id: string): void;
+  /** A Capital One account is linked (§16): rows carry their statement marker. */
+  bankLinked?: boolean;
+  onRetryBank?(receiptId: string): void;
+  /** Receipt ids with a retry in flight ("*": all of them). */
+  retrying?: string[];
 }
 
 type Tone = "neutral" | "out" | "in" | "danger" | "pending" | "ok" | "soft";
@@ -76,7 +83,7 @@ function IconFor({ type }: { type: EventType }) {
 
 const isServiceEvent = (e: WalletEvent) => e.type.startsWith("service.") || ((e.type === "approval.approved" || e.type === "approval.denied") && isServiceApproval(e.approval));
 
-export function ActivityFeed({ events, pendingIds, busyApprovals, showDetails, now, onApprove, onDeny }: Props) {
+export function ActivityFeed({ events, pendingIds, busyApprovals, showDetails, now, onApprove, onDeny, bankLinked = false, onRetryBank, retrying = [] }: Props) {
   return (
     <section className="panel feed">
       <h2 className="panel-title">Live activity</h2>
@@ -88,6 +95,7 @@ export function ActivityFeed({ events, pendingIds, busyApprovals, showDetails, n
           const asks = e.type === "payment.needs_approval" || e.type === "service.requested";
           const stillPending = asks && approvalId && pendingIds.has(approvalId);
           const svc = isServiceEvent(e) ? serviceOfEvent(e) : undefined;
+          const mark = feedMarker(e, bankLinked);
           const by = e.type === "service.connected" ? ((e.data as { connectedBy?: ConnectedService["connectedBy"] } | undefined)?.connectedBy ?? (svc as Partial<ConnectedService> | undefined)?.connectedBy) : undefined;
           // Rows are keyed by event id and mount once, so the CSS entry animation runs exactly once.
           return (
@@ -103,6 +111,9 @@ export function ActivityFeed({ events, pendingIds, busyApprovals, showDetails, n
                   {e.agentName && <span className="agent-chip">{e.agentName}</span>}
                   <time dateTime={e.at}>{relativeTime(e.at, now)}</time>
                   {by && <span className="by-chip">{connectedByLabel(by)}</span>}
+                  {mark && e.receipt && (
+                    <BankMarkerView marker={mark} onRetry={onRetryBank && (() => onRetryBank(e.receipt!.id))} busy={retrying.includes(e.receipt.id) || retrying.includes("*")} />
+                  )}
                   {showDetails && e.receipt?.txHash && (
                     e.receipt.explorerUrl ? (
                       <a className="hash" href={e.receipt.explorerUrl} target="_blank" rel="noreferrer">{shortHex(e.receipt.txHash, 8, 6)}</a>

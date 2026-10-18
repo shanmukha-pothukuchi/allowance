@@ -1,8 +1,9 @@
+import { masked } from "../bank";
 import { isShopifyGrant, money, pctOf, shortHex } from "../format";
 import { navigate } from "../route";
-import type { AgentPublic } from "../types";
+import type { AgentPublic, BankAccountView } from "../types";
 import { AgentAvatar, roleLabel, ServiceTile } from "./Avatar";
-import { Plus, Snowflake, Sun } from "./Icons";
+import { Chevron, Plus, Snowflake, Sun } from "./Icons";
 
 interface Props {
   agent: AgentPublic;
@@ -12,12 +13,16 @@ interface Props {
   onUnfreeze(): void;
   /** Opens the Add money sheet. */
   onAddMoney(): void;
+  /** Its Capital One allowance account (§16), once the bank opened one. Absent: no bank row at all. */
+  bankAccount?: Pick<BankAccountView, "last4" | "balance">;
+  /** Opens the agent's detail (account and statement). */
+  onOpenBank?(): void;
 }
 
 /** "claude-desktop" / "Claude Desktop" says the same thing twice. */
 const showRole = (name: string) => roleLabel(name).toLowerCase().replace(/\s+/g, "-") !== name.toLowerCase();
 
-export function AgentCard({ agent, showDetails, busy, onFreeze, onUnfreeze, onAddMoney }: Props) {
+export function AgentCard({ agent, showDetails, busy, onFreeze, onUnfreeze, onAddMoney, bankAccount, onOpenBank }: Props) {
   const pct = pctOf(agent.spentToday, agent.policy.dailyCap);
   const meterClass = pct >= 90 ? "meter-danger" : pct >= 60 ? "meter-warn" : "";
   const services = agent.services ?? [];
@@ -72,6 +77,18 @@ export function AgentCard({ agent, showDetails, busy, onFreeze, onUnfreeze, onAd
           </span>
         )}
       </div>
+
+      {bankAccount && (
+        <button type="button" className="agent-bank" onClick={onOpenBank} title={`Capital One allowance account ${masked(bankAccount.last4)} (Nessie sandbox). Open its statement.`}>
+          <span className="agent-services-label">Bank</span>
+          <span className="agent-bank-name">
+            <span className="agent-bank-brand">Capital One </span>
+            {masked(bankAccount.last4)}
+          </span>
+          <span className="agent-bank-bal">{money(bankAccount.balance)}</span>
+          <Chevron width={16} height={16} className="agent-bank-chev" />
+        </button>
+      )}
 
       {showDetails && (
         <div className="details">

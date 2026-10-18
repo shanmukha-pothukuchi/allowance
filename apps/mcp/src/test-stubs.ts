@@ -47,6 +47,8 @@ export interface StubAgent {
   id: string;
   name: string;
   services: ConnectedService[];
+  /** MeResponse.bank (Capital One allowance account, §16); absent = bank not linked. */
+  bank?: MeResponse["bank"];
 }
 
 export interface StubApproval {
@@ -348,6 +350,7 @@ export async function startWalletStub(opts: WalletStubOptions = {}): Promise<Wal
       frozen: stub.frozen,
     },
     limits: { maxPerTx: "20.00", dailyCap: "50.00", approvalThreshold: "10.00", remainingToday: "49.95" },
+    ...(agent.bank ? { bank: agent.bank } : {}),
   });
 
   app.get("/v1/me", (_req, res) => {

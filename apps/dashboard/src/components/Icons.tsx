@@ -81,3 +81,10 @@ export const ExternalLink = (p: SVGProps<SVGSVGElement>) => (
 export const CreditCard = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p}><rect x="2.5" y="5" width="19" height="14" rx="2.5" /><path d="M2.5 10h19M6.5 15h4" /></svg>
 );
+/** A bank building (Capital One, §16). */
+export const Bank = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}><path d="M3 10 12 4l9 6" /><path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8" /><path d="M3 20h18" /></svg>
+);
+export const Retry = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}><path d="M20 11a8 8 0 1 0-2.3 5.7" /><path d="M20 4v7h-7" /></svg>
+);

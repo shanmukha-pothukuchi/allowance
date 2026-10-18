@@ -159,17 +159,46 @@
     });
     return h;
   }
+  // A pipe table: header row, then a separator row like |---|:---:|.
+  var TABLE_ROW = /^\s*\|.*\|\s*$/;
+  var TABLE_SEP = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+  function tableCells(l) {
+    return l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(function (c) { return inlineMd(c.trim()); });
+  }
+  function mdTable(rows) {
+    var head = tableCells(rows[0]);
+    var body = rows.slice(2).map(function (r) {
+      var cells = tableCells(r);
+      while (cells.length < head.length) cells.push("");
+      return "<tr>" + cells.slice(0, head.length).map(function (c) { return "<td>" + c + "</td>"; }).join("") + "</tr>";
+    });
+    return '<div class="md-table"><table><thead><tr>' + head.map(function (c) { return "<th>" + c + "</th>"; }).join("") +
+      "</tr></thead><tbody>" + body.join("") + "</tbody></table></div>";
+  }
   function md(s) {
     var lines = esc(str(s).replace(/\r/g, "").trim()).split("\n");
-    return lines
-      .map(function (l) {
-        var b = l.match(/^\s*[-*•]\s+(.*)$/);
-        if (b) return "•&nbsp;" + inlineMd(b[1]);
-        var hd = l.match(/^\s*#{1,6}\s+(.*)$/);
-        if (hd) return "<strong>" + inlineMd(hd[1]) + "</strong>";
-        return inlineMd(l);
-      })
-      .join("<br>");
+    var out = [];
+    for (var i = 0; i < lines.length; i++) {
+      var l = lines[i];
+      if (TABLE_ROW.test(l) && i + 1 < lines.length && TABLE_SEP.test(lines[i + 1]) && lines[i + 1].indexOf("|") >= 0) {
+        var j = i + 2;
+        while (j < lines.length && TABLE_ROW.test(lines[j])) j++;
+        out.push({ block: true, html: mdTable(lines.slice(i, j)) });
+        i = j - 1;
+        continue;
+      }
+      var b = l.match(/^\s*[-*•]\s+(.*)$/);
+      var hd = l.match(/^\s*#{1,6}\s+(.*)$/);
+      out.push({ html: b ? "•&nbsp;" + inlineMd(b[1]) : hd ? "<strong>" + inlineMd(hd[1]) + "</strong>" : inlineMd(l) });
+    }
+    // Tables are blocks: no line break right before or after one (a blank line around it is enough).
+    var html = "";
+    for (var k = 0; k < out.length; k++) {
+      if (k > 0 && !out[k].block && !out[k - 1].block) html += "<br>";
+      if (out[k].block || (k > 0 && out[k - 1].block && out[k].html === "")) { html += out[k].block ? out[k].html : ""; continue; }
+      html += out[k].html;
+    }
+    return html;
   }
 
   // ================================================================ icons (inline SVG)
@@ -224,6 +253,8 @@
     chart: '<path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/>',
     bag: '<path d="M5 8h14l-1 12H6z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>',
     coins: '<circle cx="9" cy="9" r="6"/><path d="M15.5 9.5A6 6 0 1 1 9.5 15.5"/>',
+    wave: '<path d="M2 7c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 5 2"/><path d="M2 12c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 5 2"/><path d="M2 17c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 5 2"/>',
+    bank: '<path d="M3 10 12 4l9 6"/><path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8"/><path d="M3 20h18"/>',
   };
   function icon(name, extra) {
     return '<svg class="i' + (extra ? " " + extra : "") + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (P[name] || P.wrench) + "</svg>";
@@ -247,6 +278,7 @@
     openAct: {},
     openStep: {},
     openSim: {}, // order confirmation key -> its "Simulated order" explanation is open
+    openQc: {}, // Quantcomm analyst view key -> its reasoning and evidence are open
     holdScroll: false,
     forceBottom: false,
     stick: true, // thread pinned to the bottom (tracked from the user's own scrolling)
@@ -410,6 +442,8 @@
     "acme-stocks": { name: "Acme Stocks", icon: "📈", color: "#2F9E5B", provider: "Acme APIs", path: "/api/stock", pricing: "$0.15 per call", permissions: ["Pay up to $0.15 per call to Acme Stocks", "Look up quotes for symbols you ask about"] },
     "acme-pizza": { name: "Acme Pizza", icon: "🍕", color: "#E5523A", provider: "Acme APIs", path: "/pizza", pricing: "$18.50 per order", permissions: ["Pay up to $18.50 per order to Acme Pizza", "Place orders on your behalf"] },
     "acme-bounties": { name: "Acme Bounties", icon: "💼", color: "#9B5BFA", provider: "Acme APIs", path: "/agent-work", pricing: "Free (you earn $0.50–$0.75 per task)", permissions: ["Claim and submit Acme bounties", "Receive bounty payouts into your wallet"] },
+    // §17.2: Quantcomm's research, sold per request through its bridge (under /quantcomm on any host).
+    quantcomm: { name: "Quantcomm Flood Research", icon: "🌊", color: "#1D4ED8", provider: "Quantcomm", path: "/quantcomm", pricing: "$0.05 per flood check · $0.10 per analyst view", permissions: ["Pay up to $0.10 per request", "Read Quantcomm's flood and bank research"] },
   };
   var DEFAULT_SERVICES = { researcher: ["acme-weather", "acme-news", "acme-stocks"], shopper: [], "claude-desktop": ["acme-bounties", "acme-weather"] };
 
@@ -465,7 +499,7 @@
       shopify: shop,
     };
   }
-  var SVC_ICON = { directory: "search", "acme-weather": "cloud", "acme-news": "news", "acme-stocks": "chart", "acme-pizza": "bag", "acme-bounties": "briefcase" };
+  var SVC_ICON = { directory: "search", "acme-weather": "cloud", "acme-news": "news", "acme-stocks": "chart", "acme-pizza": "bag", "acme-bounties": "briefcase", quantcomm: "wave" };
   function tileHtml(info, cls) {
     var ic = info && (info.glyph || SVC_ICON[str(info.id)]);
     var face = ic ? icon(ic) : esc((str(info && info.name).replace(/^Acme\s+/, "")[0] || "?").toUpperCase());
@@ -1195,6 +1229,444 @@
     return out;
   }
 
+  // ================================================================ Quantcomm research (ARCHITECTURE §17)
+  // Quantcomm sells flood research per request through its bridge ({QUANTCOMM_BRIDGE_URL}/quantcomm).
+  // Agents buy it with fetch_url, so, as with Shopify, the page sees the bridge's compact JSON (§17.1)
+  // only as tool text, parsed here and escaped at render time. The research is Quantcomm's and is
+  // labelled as Quantcomm's: never advice from Allowance. Its SYNTHETIC and sandbox labels stay visible.
+  var QC_ID = "quantcomm";
+  var QC_DISCLAIMER = "Quantcomm's AI analyst view, for research. Not financial advice.";
+  var QC_PATHS = [
+    [/^\/quantcomm\/alerts\/?$/, "alerts"],
+    [/^\/quantcomm\/companies\/([A-Za-z][A-Za-z0-9.-]{0,9})\/flood\/?$/, "flood"],
+    [/^\/quantcomm\/companies\/([A-Za-z][A-Za-z0-9.-]{0,9})\/view\/?$/, "view"],
+    [/^\/quantcomm\/?$/, "universe"],
+  ];
+  /** A Quantcomm bridge URL (§17.1) → { op, ticker }, else null. Any host: the path says what it is. */
+  function qcOf(u) {
+    var full = str(u).trim();
+    if (!full) return null;
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(full)) full = "http://" + full;
+    var x;
+    try { x = new URL(full); } catch (e) { return null; }
+    for (var i = 0; i < QC_PATHS.length; i++) {
+      var m = x.pathname.match(QC_PATHS[i][0]);
+      if (m) return { op: QC_PATHS[i][1], ticker: str(m[1]).toUpperCase() };
+    }
+    return null;
+  }
+  /** A bridge answer in this tool entry: { h (parseHttp), q (qcOf), d (body or {}) }, else null. */
+  function qcCall(e) {
+    if (!e || e.result == null || (e.name !== "fetch_url" && e.name !== "check_approval")) return null;
+    var h = parseHttp(e.result);
+    if (!h) return null;
+    var q = qcOf(h.url);
+    return q ? { h: h, q: q, d: h.data || {} } : null;
+  }
+  function qcObj(v) {
+    return v && typeof v === "object" && !Array.isArray(v) ? v : null;
+  }
+  function qcArr(v, max) {
+    return (Array.isArray(v) ? v : []).slice(0, max || 20);
+  }
+  /** "OLD TOWN ALEXANDRIA" → "Old Town Alexandria"; mixed case is left alone. */
+  function qcTitle(s) {
+    s = str(s).replace(/\s+/g, " ").trim().slice(0, 80);
+    return s && s === s.toUpperCase() && /[A-Z]{3}/.test(s) ? s.toLowerCase().replace(/(^|[\s/(-])([a-z])/g, function (all, p, c) { return p + c.toUpperCase(); }) : s;
+  }
+  /** FDIC's legal names, as people say them: "Bank of America, National Association" → "Bank of America". */
+  function qcBank(s) {
+    return str(s).replace(/,?\s+(National Association|N\.\s?A\.?)$/i, "").replace(/\s+/g, " ").trim().slice(0, 60);
+  }
+  /** A percent as Quantcomm sends it: "59.9%" stays; -0.2728 → "−0.27%". */
+  function qcPct(v, signed) {
+    if (typeof v === "string" && /%$/.test(v.trim())) return v.trim().replace(/^-/, "−");
+    var n = num(v);
+    if (n == null) return "";
+    return (n < 0 ? "−" : signed && n > 0 ? "+" : "") + Math.abs(n).toFixed(2).replace(/\.?0+$/, "") + "%";
+  }
+  /** Dollars: "$11.27B" as the bridge rounds them, or a number made compact the same way. */
+  function qcUsd(v) {
+    if (typeof v === "string" && /^\$/.test(v.trim())) return v.trim().slice(0, 16);
+    var n = num(v);
+    if (n == null) return "";
+    var a = Math.abs(n);
+    var s = a >= 1e9 ? (a / 1e9).toFixed(2) + "B" : a >= 1e6 ? (a / 1e6).toFixed(1) + "M" : a >= 1e4 ? Math.round(a / 1e3) + "K" : a.toFixed(0);
+    return (n < 0 ? "−$" : "$") + s;
+  }
+  /** "2026-10-16" → "Oct 16"; an instant → "Oct 17, 4:35 PM" (your time). */
+  function qcWhen(v) {
+    var s = str(v).trim();
+    var d = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    try {
+      if (d) return new Date(Number(d[1]), Number(d[2]) - 1, Number(d[3])).toLocaleDateString([], { month: "short", day: "numeric" });
+      var t = Date.parse(s);
+      return isFinite(t) ? new Date(t).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+    } catch (e) {
+      return "";
+    }
+  }
+  var QC_STORM = { HU: "Hurricane", MH: "Major hurricane", TS: "Tropical storm", TD: "Tropical depression", STS: "Subtropical storm", STD: "Subtropical depression", PTC: "Potential tropical cyclone", PC: "Post-tropical cyclone" };
+  function qcStorms(list) {
+    return qcArr(list, 4).map(function (s) {
+      s = qcObj(s) || {};
+      var kind = QC_STORM[str(s.classification).toUpperCase()] || "";
+      var basin = str(s.basin).replace(/_/g, " ").replace(/\b[a-z]/g, function (c) { return c.toUpperCase(); });
+      var wind = num(s.windKt);
+      return [((kind ? kind + " " : "") + str(s.name).slice(0, 30)).trim(), basin, wind != null ? Math.round(wind) + " kt" : ""].filter(Boolean).join(" · ");
+    }).filter(Boolean);
+  }
+  function qcSec(title, aside, body, cls) {
+    return '<div class="qc-sec' + (cls ? " " + cls : "") + '"><div class="qc-h"><span>' + esc(title) + "</span>" + (aside || "") + "</div>" + body + "</div>";
+  }
+  function qcTag(text, cls) {
+    return '<span class="qc-tag' + (cls ? " " + cls : "") + '">' + esc(text) + "</span>";
+  }
+  /** Alert counts by type, and the storms in play. */
+  function qcAlertsHtml(b) {
+    var al = qcObj(b.alerts) || {};
+    var by = qcObj(al.byType) || {};
+    var types = Object.keys(by).map(function (k) { return [str(k).slice(0, 60), num(by[k])]; }).filter(function (x) { return x[0] && x[1] != null; }).sort(function (x, y) { return y[1] - x[1]; }).slice(0, 10);
+    var total = num(al.total);
+    if (total == null && types.length) total = types.reduce(function (t, x) { return t + x[1]; }, 0);
+    if (total == null) return "";
+    var storms = qcStorms(b.activeStorms);
+    return qcSec(
+      "Live flood alerts",
+      "<b>" + esc(String(total)) + "</b>",
+      (types.length ? '<div class="qc-types">' + types.map(function (x) { return '<span class="qc-type"><b>' + esc(String(x[1])) + "</b>" + esc(x[0]) + "</span>"; }).join("") + "</div>" : total === 0 ? '<p class="qc-line"><span>No flood alerts right now.</span></p>' : "") +
+        (storms.length ? '<p class="qc-line qc-storm">' + icon("cloud") + "<span>" + esc(storms.join("; ")) + "</span></p>" : ""),
+    );
+  }
+  function qcBankRow(r, mine) {
+    r = qcObj(r);
+    if (!r || !str(r.bank).trim()) return "";
+    var share = r.shareOfDeposits == null ? null : num(r.shareOfDeposits);
+    var w = share == null ? 0 : Math.max(0, Math.min(100, share));
+    var branches = num(r.branches);
+    var sub = [branches != null ? plural(Math.round(branches), "branch", "branches") : "", qcUsd(r.depositsUnderAlert) ? qcUsd(r.depositsUnderAlert) + " in deposits" : ""].filter(Boolean).join(" · ");
+    var tk = str(r.ticker).replace(/[^A-Za-z0-9.-]/g, "").slice(0, 8);
+    return (
+      '<li class="qc-bankrow' + (mine ? " mine" : "") + '"><div class="qc-bank-top"><span class="qc-bank">' + esc(qcBank(r.bank)) + "</span>" + (tk ? '<span class="qc-tk">' + esc(tk) + "</span>" : "") +
+      '<span class="qc-share">' + esc(qcPct(r.shareOfDeposits)) + "</span></div>" +
+      (share != null ? '<span class="qc-bar" role="img" aria-label="' + esc(qcPct(r.shareOfDeposits) + " of its deposits under alerts") + '"><i style="width:max(3px,' + w.toFixed(1) + '%)"></i></span>' : "") +
+      (sub ? '<span class="qc-bank-sub">' + esc(sub) + "</span>" : "") + "</li>"
+    );
+  }
+  /** The banks under alerts with share-of-deposits bars (top 5, the rest counted). `mine`: this company's rows. */
+  function qcBanksHtml(block, mine, title) {
+    block = qcObj(block) || {};
+    var top = qcArr(block.top, 10).filter(qcObj);
+    var own = qcArr(mine, 3).filter(qcObj);
+    var count = num(block.count);
+    if (!top.length && !own.length) return count === 0 ? qcSec(title || "Banks under alerts", "<b>0</b>", '<p class="qc-line"><span>No bank branches sit under these alerts.</span></p>') : "";
+    var isMine = function (r) { return own.some(function (o) { return str(o.bank) === str(r.bank); }); };
+    var shown = top.slice(0, 5);
+    var extra = own.filter(function (o) { return !shown.some(function (r) { return str(r.bank) === str(o.bank); }); });
+    var more = (count != null ? count : top.length) - shown.length - extra.length;
+    return qcSec(
+      title || "Banks under alerts",
+      (count != null ? "<b>" + esc(String(count)) + "</b>" : "") + '<small class="qc-aside">share of deposits</small>',
+      '<ol class="qc-banks">' + shown.map(function (r) { return qcBankRow(r, isMine(r)); }).join("") + extra.map(function (r) { return qcBankRow(r, true); }).join("") + "</ol>" +
+        (more > 0 ? '<p class="qc-more-n">+' + esc(plural(more, "more bank", "more banks")) + " under alerts</p>" : ""),
+    );
+  }
+  /** Capital One's sandbox branches and ATMs under alerts, or "0 of 220". */
+  function qcCapOneHtml(c1) {
+    c1 = qcObj(c1);
+    if (!c1) return "";
+    var checked = num(c1.locationsChecked);
+    var hit = num(c1.underAlert);
+    if (hit == null) hit = qcArr(c1.locations).length;
+    var locs = qcArr(c1.locations, 10).filter(qcObj);
+    var line = (checked != null ? "<b>" + esc(hit + " of " + checked) + "</b> Capital One locations under alerts" : "<b>" + esc(String(hit)) + "</b> Capital One locations under alerts");
+    return qcSec(
+      "Capital One",
+      qcTag("Sandbox", "sbx"),
+      '<p class="qc-line qc-c1' + (hit ? " hit" : "") + '">' + icon(hit ? "warn" : "check") + "<span>" + line + "</span></p>" +
+        (locs.length
+          ? '<ul class="qc-locs">' + locs.map(function (l) {
+            var kind = /atm/i.test(str(l.kind)) ? "ATM" : "Branch";
+            var where = [qcTitle(l.city), str(l.state).toUpperCase().slice(0, 2)].filter(Boolean).join(", ");
+            var types = qcArr(l.alertTypes, 3).map(str).filter(Boolean).join(", ");
+            return "<li><b>" + esc(kind + " · " + qcTitle(l.name)) + "</b><span>" + esc([where, types].filter(Boolean).join(" · ")) + "</span></li>";
+          }).join("") + "</ul>"
+          : "") +
+        '<p class="qc-note">' + esc(str(c1.note).trim().slice(0, 160) || "Capital One's Nessie sandbox branches and ATMs") + "</p>",
+      "qc-capone",
+    );
+  }
+  function qcKv(rows) {
+    rows = rows.filter(function (r) { return r[1]; });
+    return rows.length ? '<dl class="qc-kv">' + rows.map(function (r) { return "<div><dt>" + esc(r[0]) + "</dt><dd>" + esc(r[1]) + "</dd></div>"; }).join("") + "</dl>" : "";
+  }
+  function qcStressHtml(p) {
+    p = qcObj(p);
+    if (!p) return "";
+    var n = num(p.customers);
+    var liveN = num(p.liveCustomersUnderAlert);
+    var live = [liveN != null ? plural(Math.round(liveN), "customer", "customers") : "", qcUsd(p.liveLoansUnderAlert) ? qcUsd(p.liveLoansUnderAlert) + " in loans" : ""].filter(Boolean).join(", ");
+    return qcSec(
+      "Customer stress test" + (str(p.storm) ? " · " + qcTitle(p.storm) : ""),
+      p.synthetic === false ? "" : qcTag("SYNTHETIC", "syn"),
+      qcKv([
+        ["Customers", n != null ? String(Math.round(n)) : ""],
+        ["Exposure", qcUsd(p.exposureAtDefault)],
+        ["Expected loss", qcUsd(p.baselineExpectedLoss)],
+        ["Added by the storm", qcUsd(p.incrementalExpectedLoss)],
+        ["Under live alerts", live],
+      ]) + (str(p.note).trim() ? '<p class="qc-note">' + esc(str(p.note).trim().slice(0, 200)) + "</p>" : ""),
+    );
+  }
+  function qcFloodMapHtml(p) {
+    p = qcObj(p);
+    if (!p) return "";
+    var km = num(p.floodedKm2);
+    var cov = num(p.coveragePct);
+    var hrs = num(p.hoursAfterLandfall);
+    var c1 = typeof p.capitalOneLocationsExposed === "string" ? p.capitalOneLocationsExposed.trim().slice(0, 20) : num(p.capitalOneLocationsExposed);
+    return qcSec(
+      "Satellite flood map" + (str(p.storm) ? " · " + qcTitle(p.storm) : ""),
+      "",
+      qcKv([
+        ["Flooded", km != null ? km + " km²" : ""],
+        ["Radar coverage", cov != null ? Math.round(cov) + "%" : ""],
+        ["First image", hrs != null ? Math.round(hrs) + " h after landfall" : qcWhen(p.firstImagePublished)],
+        ["Capital One (sandbox)", c1 != null && c1 !== "" ? String(c1) + " nearby" : ""],
+      ]),
+    );
+  }
+  /** How the stock moved after past hurricanes: one diverging bar per storm. */
+  function qcHistoryHtml(p) {
+    p = qcObj(p);
+    if (!p) return "";
+    var storms = qcArr(p.storms, 24).filter(qcObj).map(function (s) { return { name: str(s.storm).slice(0, 24), year: num(s.year), x: num(s.excessPct) }; }).filter(function (s) { return s.x != null; });
+    var mean = num(p.meanExcessPct);
+    var bench = str(p.bench).slice(0, 10) || "its benchmark";
+    var max = storms.reduce(function (m, s) { return Math.max(m, Math.abs(s.x)); }, 0) || 1;
+    var bars = storms.length
+      ? '<div class="qc-hist" role="img" aria-label="' + esc(storms.map(function (s) { return s.name + " " + qcPct(s.x, true); }).join(", ")) + '">' +
+        storms.map(function (s) {
+          var h = Math.max(3, Math.round((Math.abs(s.x) / max) * 100));
+          return '<span class="qc-hb ' + (s.x < 0 ? "neg" : "pos") + '" title="' + esc(s.name + (s.year ? " " + s.year : "") + ": " + qcPct(s.x, true) + " vs " + bench) + '"><i style="height:' + h + '%"></i></span>';
+        }).join("") + "</div>" +
+        (storms[0].year && storms[storms.length - 1].year ? '<div class="qc-years"><span>' + esc(storms[0].name + " " + storms[0].year) + "</span><span>" + esc(storms[storms.length - 1].name + " " + storms[storms.length - 1].year) + "</span></div>" : "")
+      : "";
+    var n = storms.length;
+    var said = [mean != null ? "Averaged <b>" + esc(qcPct(mean, true)) + "</b> vs " + esc(bench) + (n ? " over " + esc(plural(n, "storm", "storms")) : "") : "", str(p.underperformed) ? "underperformed in " + esc(str(p.underperformed).slice(0, 20)) : ""].filter(Boolean).join(" · ");
+    return qcSec("After past hurricanes", str(p.window) ? '<small class="qc-aside">' + esc(str(p.window).slice(0, 40)) + "</small>" : "", (said ? '<p class="qc-line"><span>' + said + "</span></p>" : "") + bars);
+  }
+  function qcParkingHtml(p) {
+    p = qcObj(p);
+    if (!p) return "";
+    var verdict = str(p.verdict).trim().slice(0, 200);
+    var caveats = qcArr(p.caveats, 3).map(str).filter(Boolean);
+    if (!verdict && !caveats.length) return "";
+    return qcSec("Parking lots from above", "", (verdict ? '<p class="qc-line"><span>' + esc(verdict) + "</span></p>" : "") + (caveats.length ? '<ul class="qc-caveats">' + caveats.map(function (c) { return "<li>" + esc(c.slice(0, 200)) + "</li>"; }).join("") + "</ul>" : ""));
+  }
+  function qcFoot(rc, e) {
+    if (!rc) return '<div class="c-foot"><span>Quantcomm</span><span>' + esc(clock(ts(e.at) + (e.ms || 0))) + "</span></div>";
+    var tx = rc.tx ? (rc.url ? '<a href="' + esc(rc.url) + '" target="_blank" rel="noopener noreferrer">tx ' + esc(rc.tx) + icon("external") + "</a>" : '<span class="mono">tx ' + esc(rc.tx) + "</span>") : "";
+    return '<div class="c-foot"><span class="qc-paid">' + esc("Paid " + (rc.amount || "")) + (tx ? " · " + tx : "") + "</span><span>" + esc(clock(ts(e.at) + (e.ms || 0))) + "</span></div>";
+  }
+  function qcAsOf(d) {
+    var when = qcWhen(d.asOf);
+    var age = num(d.ageHours);
+    return when ? "as of " + when : age != null ? Math.round(age) + " h old" : "";
+  }
+  /** The flood research card (§17.4) for /quantcomm/alerts and /companies/:ticker/flood. */
+  function qcFloodCard(c, e) {
+    var d = c.d;
+    var info = svcInfo(QC_ID);
+    var rc = parseReceipt(c.h.tail);
+    var body = "";
+    var title;
+    var sub;
+    var note = str(d.note).replace(/\s+/g, " ").trim().slice(0, 320);
+    if (c.q.op === "alerts") {
+      title = "Flood alerts and banks";
+      sub = ["Quantcomm", qcAsOf(d)];
+      body = qcAlertsHtml(d) + qcBanksHtml(d.banksUnderAlerts) + qcCapOneHtml(d.capitalOne);
+    } else {
+      var p = qcObj(d.panels) || {};
+      var tk = str(d.ticker).toUpperCase().slice(0, 10) || c.q.ticker;
+      title = "Flood research · " + tk;
+      sub = [str(d.name).slice(0, 60), "Quantcomm", qcAsOf(d)];
+      var am = qcObj(p.alerts_map);
+      var ae = qcObj(p.alert_exposure);
+      if (!note && am) note = str(am.note).trim().slice(0, 320);
+      body =
+        qcCapOneHtml(p.branch_map) +
+        (ae ? qcBanksHtml({ top: ae.top, count: ae.banksUnderAlerts }, ae.company, "Banks under alerts") : "") +
+        (am ? qcAlertsHtml(am) + (am.banksUnderAlerts ? qcBanksHtml(am.banksUnderAlerts) : "") : "") +
+        qcStressHtml(p.customer_stress) + qcFloodMapHtml(p.flood_map) + qcHistoryHtml(p.storm_history) + qcParkingHtml(p.parking_lot);
+    }
+    if (!body) return "";
+    var src = str(d.source).trim().slice(0, 140);
+    return (
+      '<div class="card qc qc-flood"><div class="card-pad">' +
+      '<div class="c-row">' + tileHtml(info, "t32") + '<div class="c-who"><div class="c-title">' + esc(title) + '</div><div class="c-k">' + esc(sub.filter(Boolean).join(" · ")) + "</div></div></div>" +
+      (note ? '<p class="qc-stale">' + icon("clock") + "<span>" + esc(note) + "</span></p>" : "") +
+      body + (src ? '<p class="qc-src">' + esc(src) + "</p>" : "") +
+      "</div>" + qcFoot(rc, e) + "</div>"
+    );
+  }
+  /**
+   * The forecast range: the bridge's { horizonDays, fromDate, fromPrice, returnPct, lowPct, highPct }
+   * (percent), tolerant of { low, high } / { min, max } / { range: [a, b] } too.
+   */
+  function qcForecast(f) {
+    if (typeof f === "string") return { range: f.slice(0, 60), horizon: "" };
+    f = qcObj(f);
+    if (!f) return null;
+    var lo = f.lowPct != null ? f.lowPct : f.low != null ? f.low : f.min != null ? f.min : f.p10 != null ? f.p10 : f.lower != null ? f.lower : Array.isArray(f.range) ? f.range[0] : null;
+    var hi = f.highPct != null ? f.highPct : f.high != null ? f.high : f.max != null ? f.max : f.p90 != null ? f.p90 : f.upper != null ? f.upper : Array.isArray(f.range) ? f.range[1] : null;
+    var unit = str(f.unit).trim();
+    var fmt = function (v) {
+      if (typeof v === "string" && /[%$]/.test(v)) return v.trim().replace(/^-/, "−");
+      var n = num(v);
+      return n == null ? "" : unit === "$" ? (n < 0 ? "−$" : "$") + Math.abs(n).toFixed(2) : qcPct(n, true);
+    };
+    var a = fmt(lo);
+    var b = fmt(hi);
+    if (!a || !b) return null;
+    var days = num(f.horizonDays != null ? f.horizonDays : f.days);
+    var hz = str(f.horizon || f.window || (days != null ? plural(Math.round(days), "day", "days") : "")).trim().slice(0, 30);
+    var mid = f.returnPct != null ? fmt(f.returnPct) : "";
+    return { range: (mid ? mid + " (" + a + " to " + b + ")" : a + " to " + b), horizon: hz };
+  }
+  var QC_VIEW = { positive: "Positive", neutral: "Neutral", negative: "Negative" };
+  /** Quantcomm's AI analyst view (§17.4): Quantcomm's words and Quantcomm's call, calmly, with its disclaimer. */
+  function qcViewCard(a, c, e) {
+    var d = c.d;
+    var v = str(d.view).toLowerCase();
+    if (!QC_VIEW[v] && !str(d.headline)) return "";
+    var tk = str(d.ticker).toUpperCase().slice(0, 10) || c.q.ticker;
+    var rc = parseReceipt(c.h.tail);
+    var key = a.name + ":" + e.id;
+    var open = !!ui.openQc[key];
+    var conf = num(d.confidence);
+    conf = conf == null ? null : Math.max(0, Math.min(100, Math.round(conf)));
+    var fc = qcForecast(d.forecast);
+    var pick = qcObj(d.pick);
+    var pAct = pick ? str(pick.action).toLowerCase().replace(/[^a-z ]/g, "").slice(0, 16) : "";
+    var pConf = pick ? num(pick.confidence) : null;
+    var note = str(d.note).trim().slice(0, 160) || (d.stale === true ? "Quantcomm's data changed since this view was generated." : "");
+    var when = qcWhen(String(d.generatedAt || "").slice(0, 10));
+    var model = str(d.model).replace(/[^\w .:/-]/g, "").slice(0, 24);
+    var rows = [
+      ["Expected move", cap(str(d.expectedMove).slice(0, 24))],
+      ["Confidence", conf != null ? String(conf) : "", conf != null ? '<span class="qc-conf" aria-hidden="true"><i style="width:' + conf + '%"></i></span>' : ""],
+      [fc ? "Forecast" + (fc.horizon ? " · " + fc.horizon : "") : "", fc ? fc.range : ""],
+    ].filter(function (r) { return r[0] && r[1]; });
+    var evidence = qcArr(d.evidence, 8).map(str).filter(Boolean);
+    var gaps = qcArr(d.dataGaps, 6).map(str).filter(Boolean);
+    var reasoning = str(d.reasoning).trim().slice(0, 1200);
+    var more = reasoning || evidence.length || gaps.length;
+    return (
+      '<div class="card qc qc-view"><div class="card-pad">' +
+      '<div class="c-row">' + tileHtml(svcInfo(QC_ID), "t32") + '<div class="c-who"><div class="c-title">' + esc("Quantcomm's view on " + tk) + '</div><div class="c-k"' + (model ? ' title="' + esc("Generated by Quantcomm's AI analyst (" + model + ")" + (qcWhen(d.generatedAt) ? ", " + qcWhen(d.generatedAt) : "")) + '"' : "") + ">" + esc([str(d.name).slice(0, 60), "AI analyst", when].filter(Boolean).join(" · ")) + "</div></div>" +
+      (QC_VIEW[v] ? '<span class="pill qc-vchip ' + v + '">' + QC_VIEW[v] + "</span>" : "") + "</div>" +
+      (note ? '<p class="qc-stale">' + icon("clock") + "<span>" + esc(note) + "</span></p>" : "") +
+      (str(d.headline).trim() ? '<p class="qc-headline">' + esc(str(d.headline).trim().slice(0, 200)) + "</p>" : "") +
+      (rows.length ? '<dl class="qc-kv qc-vkv">' + rows.map(function (r) { return "<div><dt>" + esc(r[0]) + "</dt><dd>" + esc(r[1]) + (r[2] || "") + "</dd></div>"; }).join("") + "</dl>" : "") +
+      (pAct
+        ? '<div class="qc-pick"><div class="qc-pick-top"><span class="qc-pick-k">Quantcomm\'s call</span><span class="qc-call">' + esc(cap(pAct)) + "</span>" + (pConf != null ? '<span class="qc-pick-c">confidence ' + esc(String(Math.round(pConf))) + "</span>" : "") + "</div>" +
+          (str(pick.reason).trim() ? '<p class="qc-pick-r">' + esc(str(pick.reason).trim().slice(0, 300)) + "</p>" : "") + "</div>"
+        : "") +
+      (more ? '<button type="button" class="qc-more" data-action="qc-more" data-key="' + esc(key) + '" aria-expanded="' + open + '">' + icon("chev") + "Reasoning and evidence</button>" : "") +
+      (more && open
+        ? '<div class="qc-why">' + (reasoning ? "<p>" + esc(reasoning) + "</p>" : "") +
+          (evidence.length ? "<small>Evidence</small><ul>" + evidence.map(function (x) { return "<li>" + esc(x.slice(0, 200)) + "</li>"; }).join("") + "</ul>" : "") +
+          (gaps.length ? "<small>What it couldn't see</small><ul>" + gaps.map(function (x) { return "<li>" + esc(x.slice(0, 200)) + "</li>"; }).join("") + "</ul>" : "") + "</div>"
+        : "") +
+      '<p class="qc-disc">' + icon("info") + "<span>" + esc(QC_DISCLAIMER) + "</span></p>" +
+      "</div>" + qcFoot(rc, e) + "</div>"
+    );
+  }
+  /** Cards for one Quantcomm answer, or null when this entry isn't one. Failures are steps only. */
+  function qcCards(a, e, key) {
+    var c = qcCall(e);
+    if (!c) return null;
+    if (c.h.status < 200 || c.h.status >= 300) return [];
+    var html = c.q.op === "view" ? qcViewCard(a, c, e) : c.q.op === "alerts" || c.q.op === "flood" ? qcFloodCard(c, e) : "";
+    // An answer we can't draw still gets its receipt card (below), like any other paid call.
+    return html ? [{ key: key("qc"), html: html }] : null;
+  }
+  /**
+   * Steps on the Quantcomm bridge: "Checked live flood alerts · Quantcomm · $0.05", "Read Quantcomm's
+   * view on COF · $0.10". Its refusals come before the paywall, so they read as calm one-liners that
+   * say nothing was charged. Returns false for results that aren't HTTP answers (a block, an approval,
+   * "not connected"), so the generic wording takes over.
+   */
+  function qcStep(s, q, r, e) {
+    var t = q.ticker || "that company";
+    s.icon = "wave";
+    if (q.op === "alerts") {
+      s.label = "Checked live flood alerts · Quantcomm";
+      s.live = "Checking live flood alerts on Quantcomm";
+    } else if (q.op === "flood") {
+      s.label = "Checked " + t + "'s flood exposure · Quantcomm";
+      s.live = "Checking " + t + "'s flood exposure on Quantcomm";
+    } else if (q.op === "view") {
+      s.label = "Read Quantcomm's view on " + t;
+      s.live = "Reading Quantcomm's view on " + t;
+    } else {
+      s.label = "Looked up what Quantcomm covers";
+      s.live = "Looking up what Quantcomm covers";
+    }
+    if (r == null) return true;
+    var c = qcCall(e);
+    if (!c) return false;
+    var d = c.d;
+    if (c.h.status < 200 || c.h.status >= 300) {
+      var code = str(d.error);
+      s.st = "soft";
+      var said = firstLine(str(d.message)).replace(/\s*\([^)]*\)/g, "").replace(/\.$/, "").trim();
+      if (code === "quantcomm_unavailable" || (!code && c.h.status === 503)) s.label = !said || /isn't running/.test(said) || said.length > 110 ? "Quantcomm isn't running; nothing was charged" : said;
+      else if (code === "ticker_not_covered") {
+        s.label = "Quantcomm doesn't cover " + t + "; nothing was charged";
+        var cov = qcArr(d.covered || d.tickers, 40).map(function (x) { return str(qcObj(x) ? x.ticker : x).toUpperCase().replace(/[^A-Z0-9.-]/g, "").slice(0, 8); }).filter(Boolean);
+        s.detail = cov.length ? "It covers " + cov.slice(0, 8).join(", ") + (cov.length > 8 ? " and " + (cov.length - 8) + " more" : "") : "";
+      } else if (code === "no_analyst_view") s.label = "Quantcomm has no analyst view of " + t + "; nothing was charged";
+      else if (code === "quantcomm_changed") s.label = "Quantcomm's data changed; nothing was charged";
+      else {
+        s.label = "Quantcomm returned " + c.h.status;
+        s.detail = firstLine(str(d.message)) || code;
+        s.st = "err";
+      }
+      return true;
+    }
+    var rc = parseReceipt(c.h.tail);
+    if (rc && rc.amount) s.label += " · " + rc.amount;
+    var parts = [];
+    if (q.op === "alerts") {
+      var tot = num((qcObj(d.alerts) || {}).total);
+      var nb = num((qcObj(d.banksUnderAlerts) || {}).count);
+      var c1 = qcObj(d.capitalOne);
+      parts = [tot != null ? plural(tot, "alert", "alerts") : "", nb != null ? plural(nb, "bank", "banks") + " under alerts" : "", c1 && num(c1.locationsChecked) != null ? "Capital One " + (num(c1.underAlert) || 0) + " of " + num(c1.locationsChecked) : ""];
+    } else if (q.op === "flood") {
+      var p = qcObj(d.panels) || {};
+      var bm = qcObj(p.branch_map);
+      var sh = qcObj(p.storm_history);
+      var own = qcArr((qcObj(p.alert_exposure) || {}).company, 1).filter(qcObj)[0];
+      parts = [
+        bm && num(bm.locationsChecked) != null ? "Capital One " + (num(bm.underAlert) || 0) + " of " + num(bm.locationsChecked) + " under alerts" : "",
+        own && own.shareOfDeposits != null ? qcBank(own.bank) + " " + qcPct(own.shareOfDeposits) + " of deposits under alerts" : "",
+        sh && str(sh.underperformed) ? "underperformed after " + str(sh.underperformed).slice(0, 12) + " storms" : "",
+      ];
+    } else if (q.op === "view") {
+      var vv = QC_VIEW[str(d.view).toLowerCase()];
+      var pk = qcObj(d.pick);
+      parts = [vv || "", num(d.confidence) != null ? "confidence " + Math.round(num(d.confidence)) : "", pk && str(pk.action) ? "Quantcomm's call: " + str(pk.action).toLowerCase().slice(0, 16) : ""];
+    } else {
+      var cos = qcArr(d.companies, 500);
+      parts = [cos.length ? plural(cos.length, "company", "companies") : ""];
+    }
+    s.detail = parts.filter(Boolean).join(" · ");
+    return true;
+  }
+
   // ================================================================ tool result parsing (apps/mcp/src/server.ts, format.ts)
   var REASONS = {
     not_allowlisted: "Not an approved recipient",
@@ -1428,6 +1900,11 @@
             s.detail = "You approved · " + shopName(so.b.handle, confirmationOf(so.d).store) + " · simulated order";
             break;
           }
+          var qa = qcCall(e);
+          if (qa && qcStep(s, qa.q, r, e)) {
+            if (s.st === "ok") s.detail = "You approved" + (s.detail ? " · " + s.detail : "");
+            break;
+          }
           var said = /^Owner connected/.test(r) ? storeInText(r) : null;
           s.detail = said ? "You connected " + said.name : rc2 ? rc2.verb + " " + rc2.amount + " " + rc2.prep + " " + rc2.party : /^Owner connected (.+?)\./.test(r) ? "You connected " + r.match(/^Owner connected (.+?)\./)[1] : /denied/.test(r) ? "You declined" : /expired/.test(r) ? "Expired" : /^Waiting/.test(r) ? "Still waiting for you" : first;
           if (/^Waiting/.test(r)) s.st = "wait";
@@ -1456,6 +1933,8 @@
     s.live = svc ? "Using " + svc.name : (method === "POST" ? "Sending a request to " : "Opening ") + where;
     var sb = bridgeOf(url);
     if (sb && shopStep(s, sb, r, e)) return;
+    var qq = qcOf(url);
+    if (qq && qcStep(s, qq, r, e)) return;
     if (r == null) return;
     var rc = parseReceipt(r);
     if (rc && rc.prep === "to") {
@@ -1745,6 +2224,9 @@
     // Shopify bridge responses get their own cards; a paid checkout's order card carries the receipt.
     var sc = shopCards(a, e, key);
     if (sc) return sc;
+    // Quantcomm research cards carry their own receipt line (§17.4).
+    var qcs = qcCards(a, e, key);
+    if (qcs) return qcs;
     if (e.name === "fetch_url" || e.name === "check_approval") {
       rc = parseReceipt(r);
       if (rc && rc.verb === "Sent") out.push({ key: key("rcpt"), html: receiptCard(rc, e) });
@@ -1967,7 +2449,7 @@
     var open = !!ui.openStep[e.id];
     var info = stepOf(a, e);
     var st = info.st;
-    var stIcon = st === "run" ? '<span class="spin"></span>' : st === "ok" ? icon("check") : st === "err" ? icon("x") : icon("clock");
+    var stIcon = st === "run" ? '<span class="spin"></span>' : st === "ok" ? icon("check") : st === "err" ? icon("x") : st === "soft" ? icon("info") : icon("clock");
     var label = st === "run" || (st === "wait" && e.result == null) ? info.live : info.label;
     var ms = e.ms != null ? (e.ms / 1000).toFixed(1) + "s" : e.result == null && live ? '<span data-since="' + ts(e.at) + '"></span>' : "";
     var args = e.args;
@@ -2398,11 +2880,29 @@
   }
 
   // ================================================================ header, banners, empty states
+  /**
+   * The agent's Capital One allowance account (§16.5), from `wallet.bank` (the chat server copies
+   * /v1/me's `bank`): { provider, account, last4 }, last4 alphanumeric, up to 8. Null without one.
+   */
+  function bankOf(a) {
+    var b = a && a.wallet && a.wallet.bank;
+    if (!b || typeof b !== "object") return null;
+    var last4 = str(b.last4).replace(/[^0-9A-Za-z]/g, "").slice(-8);
+    if (!last4) return null;
+    return { provider: str(b.provider).replace(/\s+/g, " ").trim().slice(0, 30) || "Capital One", account: str(b.account).replace(/\s+/g, " ").trim().slice(0, 60), last4: last4 };
+  }
+  function bankTagHtml(a) {
+    var b = bankOf(a);
+    if (!b) return "";
+    var tip = b.provider + " allowance account" + (b.account ? " “" + b.account + "”" : "") + " ••" + b.last4 + " (Nessie sandbox). Every payment shows on its statement.";
+    return '<span class="hbank" title="' + esc(tip) + '">' + icon("bank") + '<span class="hbank-name">' + esc(b.provider) + " </span>••" + esc(b.last4) + "</span>";
+  }
   function subtitleHtml(a) {
     var w = a.wallet || {};
     var s = a.status || {};
     var up = ui.balUp[a.name] && ui.balUp[a.name] > Date.now();
-    var bal = w.balance != null ? '<span class="hb' + (up ? " up" : "") + '">' + esc(money(w.balance)) + "</span> · " : "";
+    var bank = bankTagHtml(a);
+    var bal = w.balance != null ? '<span class="hb' + (up ? " up" : "") + '">' + esc(money(w.balance)) + "</span> · " + (bank ? bank + " · " : "") : bank ? bank + " · " : "";
     if (w.frozen) return bal + '<span class="frz">frozen by wallet policy</span>';
     if (s.state === "waiting_approval" || activeApprovalId(a)) return bal + '<span class="wait">waiting for you</span>';
     if (s.state === "retrying") return bal + '<span class="wait">model busy, retrying…</span>';
@@ -2530,7 +3030,8 @@
     return (
       close +
       '<div class="info-hero">' + avatarHtml(a.name, 72) + "<h2>" + esc(a.name) + '</h2><div class="role">' + esc(kindLabel(a.name)) + "</div>" + pill + "</div>" +
-      '<div class="info-sec"><div class="stats"><div class="stat big"><div class="k">Balance</div><div class="bal-row"><div class="v">' + esc(money(w.balance)) + "</div>" + addMoneyBtn(a.name, "pill-btn") + '</div></div><div class="stat"><div class="k">Spent today</div><div class="v">' + esc(money(w.spentToday)) + '</div></div><div class="stat"><div class="k">Earned today</div><div class="v in">' + esc(money(w.earnedToday)) + "</div></div></div></div>" +
+      '<div class="info-sec"><div class="stats"><div class="stat big"><div class="k">Balance</div><div class="bal-row"><div class="v">' + esc(money(w.balance)) + "</div>" + addMoneyBtn(a.name, "pill-btn") + "</div>" +
+      (bankOf(a) ? '<div class="bank-line">' + icon("bank") + "<span>Funded from " + esc(bankOf(a).provider) + " ••" + esc(bankOf(a).last4) + " · Nessie sandbox</span>" + (DASH ? '<button class="bank-view" data-action="bank">View</button>' : "") + "</div>" : "") + '</div><div class="stat"><div class="k">Spent today</div><div class="v">' + esc(money(w.spentToday)) + '</div></div><div class="stat"><div class="k">Earned today</div><div class="v in">' + esc(money(w.earnedToday)) + "</div></div></div></div>" +
       '<div class="info-sec"><h3>Connected services</h3>' + tiles + "</div>" +
       '<div class="info-sec"><h3>Limits</h3>' +
       kv("Max per payment", esc(money(lim.maxPerTx))) +
@@ -2561,6 +3062,7 @@
     } else if (group) {
       c.push({ label: "Introduce yourselves", text: "Introduce yourselves in one line each: what you do, and how much money is in your wallet." });
     } else if (names[0] === "researcher") {
+      c.push({ label: "Banks under flood alerts", text: "Are any banks exposed to the coastal flooding right now? What about Capital One?" });
       c.push({ label: "Weather, headlines & ACME stock", text: "What's the weather in Paris today, the top 3 headlines, and the ACME stock price?" });
     } else if (names[0] === "shopper") {
       c.push({ label: "Order a pizza", text: "Order me a large mushroom pizza, delivered to Hackathon Hall table 7." });
@@ -2856,11 +3358,12 @@
 
   // ---------------------------------------------------------------- owner sheets (dashboard embed)
   function ownerTitle(s) {
-    return s.which === "add-money" ? "Add money to " + s.agent : "New agent";
+    return s.which === "add-money" ? "Add money to " + s.agent : s.which === "bank" ? "Capital One" : "New agent";
   }
   function openOwnerSheet(which, agent) {
     if (which === "add-money" && !(typeof agent === "string" && AGENT_NAME_RE.test(agent))) return;
-    var q = which === "add-money" ? "?sheet=add-money&agent=" + encodeURIComponent(agent) : "?sheet=new-agent";
+    // §16.5: the bank sheet (checking and every allowance account) embeds like the other owner sheets.
+    var q = which === "add-money" ? "?sheet=add-money&agent=" + encodeURIComponent(agent) : which === "bank" ? "?sheet=bank" : "?sheet=new-agent";
     var s = {
       kind: "owner",
       which: which,
@@ -2885,7 +3388,9 @@
     var title = ownerTitle(s);
     var why = s.which === "add-money"
       ? "Money comes from your wallet, so you add it on the dashboard. It didn't answer here."
-      : "New agents get their key in your wallet, so you create them on the dashboard. It didn't answer here.";
+      : s.which === "bank"
+        ? "Your Capital One accounts are yours only, so they open on the dashboard. It didn't answer here."
+        : "New agents get their key in your wallet, so you create them on the dashboard. It didn't answer here.";
     return (
       '<div class="os-head"><span class="os-logo">' + icon("shieldCheck") + "</span>" +
       '<span class="os-t"><b>' + esc(title) + "</b><span>Allowance wallet · only you can do this</span></span>" +
@@ -2929,7 +3434,9 @@
       var who = str(d.name);
       var amt = num(d.amount);
       closeSheet();
-      toast(amt != null && amt > 0 && AGENT_NAME_RE.test(who) ? "Added " + money(amt) + " to " + who + "." : "Money added.");
+      // With a bank behind the wallet (§16.5) the dollars moved from checking to the agent's account.
+      var banked = AGENT_NAME_RE.test(who) && bankOf(state.agents[who]);
+      toast(amt != null && amt > 0 && AGENT_NAME_RE.test(who) ? (banked ? "Moved " + money(amt) + " from Checking to " + who + "'s allowance account." : "Added " + money(amt) + " to " + who + ".") : "Money added.");
     }
   }
   /** The owner just created an agent: select it as soon as the chat server hosts it. */
@@ -3218,6 +3725,8 @@
       openGroupSheet("");
     } else if (act === "add-money") {
       openOwnerSheet("add-money", t.getAttribute("data-agent"));
+    } else if (act === "bank") {
+      openOwnerSheet("bank");
     } else if (act === "group-edit") {
       openGroupSheet(t.getAttribute("data-group"));
     } else if (act === "group-delete") {
@@ -3274,6 +3783,12 @@
     } else if (act === "sim") {
       var sk = t.getAttribute("data-key");
       ui.openSim[sk] = !ui.openSim[sk];
+      ui.holdScroll = true;
+      ui.stickPausedUntil = Date.now() + 400;
+      render();
+    } else if (act === "qc-more") {
+      var qk = t.getAttribute("data-key");
+      ui.openQc[qk] = !ui.openQc[qk];
       ui.holdScroll = true;
       ui.stickPausedUntil = Date.now() + 400;
       render();

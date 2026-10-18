@@ -19,6 +19,9 @@ import type {
   Address,
   AgentPublic,
   Approval,
+  BankStatementEntry,
+  BankStatementResponse,
+  BankSummary,
   ConnectedService,
   ConnectionStatus,
   CreateAgentRequest,
@@ -28,6 +31,7 @@ import type {
   Hex,
   Policy,
   Receipt,
+  ReceiptBank,
   ServiceGrant,
   ServiceManifest,
   ShopifyStore,
@@ -50,7 +54,43 @@ export interface MockOptions {
   chainMode?: SummaryResponse["chainMode"];
   /** Simulated latency of a Shopify store preview (the bridge asks Shopify), so the sheet's spinner shows. */
   previewLatencyMs?: number;
+  /**
+   * Capital One behind the wallet (§16, Nessie sandbox). "off" (the default here; the page defaults
+   * to "on" via `mockBankMode`) is a wallet without a Nessie key. "low" leaves $12.40 in checking
+   * (top-ups over that answer 409), "down" is Nessie not answering (502s, stale balances),
+   * "unlinked" has a key but no customer yet.
+   */
+  bank?: MockBankMode;
+  /** Queue delay before a receipt posts to Capital One (or fails). */
+  bankDelayMs?: number;
+  /** How long a posted entry stays "pending" at Nessie before it reads "executed". */
+  bankExecuteMs?: number;
+  /** The Nth settled spend fails to post ("Not on statement · Retry"); 0 for never. Default 2. */
+  bankFailNth?: number;
 }
+
+export type MockBankMode = "on" | "off" | "low" | "down" | "unlinked";
+
+/** `?mock=1` has a linked Capital One by default; `&bank=off|low|down|unlinked` shows the other states. */
+export function mockBankMode(search: string = typeof location !== "undefined" ? location.search : ""): MockBankMode {
+  const v = new URLSearchParams(search).get("bank");
+  return v === "off" || v === "0" || v === "low" || v === "down" || v === "unlinked" ? (v === "0" ? "off" : v) : "on";
+}
+
+/** Fixed account numbers for the demo agents, so screenshots and the chat agree. */
+export const MOCK_BANK_LAST4: Record<string, string> = {
+  checking: "1234",
+  "claude-desktop": "2041",
+  researcher: "3307",
+  shopper: "5678",
+  "naive-worker": "6112",
+  "worker-1": "7190",
+  "worker-2": "7254",
+  "worker-3": "7388",
+  "worker-4": "7425",
+  translator: "8016",
+};
+export const MOCK_OPENING_BALANCE = "5000.00";
 
 export interface MockAdapter extends WalletAdapter {
   /** Advance the script by one step without waiting for the timer. Returns the emitted events. */
@@ -556,6 +596,145 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
     return r;
   }
 
+  // ---------------------------------------------------------------------------- Capital One (§16)
+  // The owner's checking and one allowance account per agent, at "Nessie". Owner top-ups move
+  // dollars first (synchronously, with the wallet's 409/502); every other receipt that reaches the
+  // bank is queued, then posts (bank.posted) or, for the Nth spend, fails (bank.failed) until retried.
+  type MockAccount = { id: string; nickname: string; last4: string; cents: number; entries: BankStatementEntry[]; agentId?: string; agentName?: string };
+  const bankMode: MockBankMode = opts.bank ?? "off";
+  const bankDelay = opts.bankDelayMs ?? 2500;
+  const bankExecute = opts.bankExecuteMs ?? 15_000;
+  const bankFailNth = opts.bankFailNth ?? 2;
+  const bankStarted = iso();
+  let bankLinked = bankMode === "on" || bankMode === "low" || bankMode === "down";
+  let checking: MockAccount | null = null;
+  const accounts = new Map<string, MockAccount>();
+  let nessieSeq = 0;
+  let spendsPosted = 0;
+  const oid = () => `6712${(0xa3f0 + ++nessieSeq).toString(16)}${String(nessieSeq).padStart(16, "0")}`.slice(0, 24);
+  const ymd = () => {
+    const d = new Date(now());
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const last4For = (name: string) => MOCK_BANK_LAST4[name] ?? String(1000 + (hashOf(name) % 9000));
+  const accountView = (a: MockAccount) => ({ id: a.id, nickname: a.nickname, last4: a.last4, balance: fromCents(a.cents) });
+
+  function openChecking(openingCents: number) {
+    checking = { id: oid(), nickname: "Allowance owner checking", last4: MOCK_BANK_LAST4.checking, cents: openingCents, entries: [] };
+  }
+  function accountOf(agent: AgentPublic): MockAccount {
+    let a = accounts.get(agent.id);
+    if (!a) {
+      a = { id: oid(), nickname: `Allowance · ${agent.name}`, last4: last4For(agent.name), cents: 0, entries: [], agentId: agent.id, agentName: agent.name };
+      accounts.set(agent.id, a);
+    }
+    return a;
+  }
+  function addEntry(a: MockAccount, entry: Omit<BankStatementEntry, "id" | "date">, settleLater: boolean): BankStatementEntry {
+    const e: BankStatementEntry = { id: oid(), date: ymd(), ...entry };
+    a.entries.unshift(e);
+    if (settleLater) later(bankExecute, () => (e.status = "executed"));
+    return e;
+  }
+  /** Checking → the agent's account. Returns the transfer id. */
+  function bankTransfer(agent: AgentPublic, cents: number, status: string, receiptId?: string): string {
+    const a = accountOf(agent);
+    const description = `Allowance top-up · ${agent.name}`;
+    checking!.cents -= cents;
+    a.cents += cents;
+    const out = addEntry(checking!, { kind: "transfer_out", amount: fromCents(cents), description, status, ...(receiptId ? { receiptId } : {}) }, status === "pending");
+    const inn: BankStatementEntry = { ...out, kind: "transfer_in" };
+    a.entries.unshift(inn);
+    if (status === "pending") later(bankExecute, () => (inn.status = "executed"));
+    return out.id;
+  }
+  /** The queue (§16.3): one receipt's Nessie call, a little later. */
+  function postReceipt(r: Receipt, agent: AgentPublic) {
+    if (!bankLinked || !checking) return;
+    const a = accountOf(agent);
+    const cents = toCents(r.amount);
+    if (cents < 1) return; // under a cent: skipped
+    r.bank = { status: "queued", account: `••${a.last4}` };
+    if (bankMode === "down") return; // Nessie isn't answering: it stays queued
+    const fails = r.kind === "spend" && bankFailNth > 0 && ++spendsPosted === bankFailNth;
+    later(fails ? Math.round(bankDelay * 1.6) : bankDelay, () => {
+      if (fails) {
+        failPosting(r, agent, "Nessie answered 500 five times over two minutes");
+        return;
+      }
+      applyPosting(r, agent);
+    });
+  }
+  const bankKind = (r: Receipt) => (r.kind === "topup" ? "topup" : r.kind === "earn" ? "deposit" : "purchase");
+  /** "$0.05 at Acme Weather" / "$0.50 from Bounty: …" / "$10.00 top-up", as the wallet's messages say it. */
+  const bankWhat = (r: Receipt) => (r.kind === "topup" ? `${money(r.amount)} top-up` : r.kind === "earn" ? `${money(r.amount)} from ${r.description}` : `${money(r.amount)} at ${r.counterparty.name ?? r.description}`);
+  function failPosting(r: Receipt, agent: AgentPublic, error: string) {
+    const a = accountOf(agent);
+    r.bank = { status: "failed", account: `••${a.last4}`, error };
+    emit("bank.failed", agent, {
+      receipt: { ...r },
+      reason: "bank_failed",
+      data: { receiptId: r.id, kind: bankKind(r), error },
+      message: `Couldn't post ${agent.name}'s ${bankWhat(r)} to Capital One: ${error}`,
+    });
+  }
+  function applyPosting(r: Receipt, agent: AgentPublic) {
+    const a = accountOf(agent);
+    const cents = toCents(r.amount);
+    let ref: string;
+    if (r.kind === "topup") {
+      if (checking!.cents < cents) return failPosting(r, agent, "Checking didn't have enough for this transfer");
+      ref = bankTransfer(agent, cents, "pending", r.id);
+    } else if (r.kind === "earn") {
+      a.cents += cents;
+      ref = addEntry(a, { kind: "deposit", amount: r.amount, description: `Earned · ${r.description}`, status: "pending", receiptId: r.id }, true).id;
+    } else {
+      const merchant = r.kind === "transfer" ? `Transfer to ${r.counterparty.address.slice(0, 4)}…${r.counterparty.address.slice(-2)}` : (r.counterparty.name ?? r.description);
+      a.cents -= cents;
+      ref = addEntry(a, { kind: "purchase", amount: r.amount, description: `${r.description} · paid in USDC`, merchant, status: "pending", receiptId: r.id }, true).id;
+    }
+    r.bank = { status: "posted", ref, account: `••${a.last4}`, postedAt: iso() };
+    emit("bank.posted", agent, {
+      receipt: { ...r },
+      data: { receiptId: r.id, ref, kind: bankKind(r), account: `••${a.last4}` },
+      message: `${bankWhat(r)} posted to ${agent.name}'s Capital One account ••${a.last4}.`,
+    });
+  }
+  function bankQueue() {
+    let pending = 0;
+    let failed = 0;
+    for (const r of receipts) {
+      if (r.bank?.status === "queued") pending++;
+      else if (r.bank?.status === "failed") failed++;
+    }
+    return { pending, failed };
+  }
+  function bankSummary(): BankSummary {
+    const base = { provider: "Capital One" as const, sandbox: "Nessie" as const, updatedAt: bankMode === "down" ? bankStarted : iso() };
+    if (bankMode === "off") return { ...base, enabled: false, linked: false, accounts: [], queue: { pending: 0, failed: 0 } };
+    return {
+      ...base,
+      enabled: true,
+      linked: bankLinked,
+      ...(checking ? { checking: accountView(checking) } : {}),
+      accounts: [...accounts.values()].map((a) => ({ ...accountView(a), agentId: a.agentId!, agentName: a.agentName! })),
+      queue: bankQueue(),
+      ...(bankMode === "down" ? { error: "Couldn't reach Capital One (Nessie sandbox); balances are the last known ones." } : {}),
+    };
+  }
+  function linkNow() {
+    if (checking) return;
+    openChecking(toCents(MOCK_OPENING_BALANCE));
+    bankLinked = true;
+    for (const agent of agents) accountOf(agent);
+  }
+  if (bankLinked) {
+    // Startup: the demo agents' $20 each came from checking (queued at startup, long since executed).
+    const seeded = agents.reduce((t, a) => t + toCents(a.balance), 0);
+    openChecking(bankMode === "low" ? seeded + 1240 : toCents(MOCK_OPENING_BALANCE));
+    for (const agent of agents) bankTransfer(agent, toCents(agent.balance), "executed");
+  }
+
   function settle(r: Receipt, agent: AgentPublic) {
     later(settleDelay, () => {
       r.status = "settled";
@@ -563,6 +742,7 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
       r.explorerUrl = `http://localhost:4030/tx/${r.txHash}`;
       r.settledAt = iso();
       agent.balance = fromCents(toCents(agent.balance) - toCents(r.amount));
+      postReceipt(r, agent);
       emit("payment.settled", agent, { receipt: { ...r } });
     });
   }
@@ -597,6 +777,7 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
     });
     agent.balance = addDollars(agent.balance, bounty.amount);
     agent.earnedToday = addDollars(agent.earnedToday, bounty.amount);
+    postReceipt(r, agent);
     return [emit("earning.received", agent, { receipt: { ...r } })];
   }
 
@@ -712,7 +893,8 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
     return out;
   }
 
-  function doTopup(agent: AgentPublic, amount: string, description = "Top-up"): Receipt {
+  /** `sync`: the owner's top-up, which the bank confirms first (§16.3); else queued like a payment. */
+  function doTopup(agent: AgentPublic, amount: string, description = "Top-up", sync = false): Receipt {
     const tx = hex(32);
     const r = makeReceipt(agent, {
       kind: "topup",
@@ -725,7 +907,14 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
       settledAt: iso(),
     });
     agent.balance = addDollars(agent.balance, amount);
-    emit("topup", agent, { receipt: { ...r } });
+    let message = "";
+    if (bankLinked && checking && sync) {
+      // §16.3: the owner's top-up is posted before it's credited, and emits only `topup`.
+      const a = accountOf(agent);
+      r.bank = { status: "posted", ref: bankTransfer(agent, toCents(amount), "pending", r.id), account: `••${a.last4}`, postedAt: iso() };
+      message = `Moved ${money(amount)} from Capital One Checking ••${checking.last4} to ${agent.name}'s allowance account.`;
+    } else postReceipt(r, agent);
+    emit("topup", agent, { receipt: { ...r }, ...(message ? { message } : {}) });
     return r;
   }
 
@@ -872,6 +1061,7 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
     pendingApprovals: approvals.filter((a) => a.status === "pending").map((a) => ({ ...a })),
     chainMode,
     telegramConnected: false,
+    ...(bankMode === "off" ? {} : { bank: checking ? { linked: bankLinked, checkingLast4: checking.last4, checkingBalance: fromCents(checking.cents) } : { linked: false } }),
   });
 
   return {
@@ -990,7 +1180,14 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
         if (chainMode !== "mock") throw new HttpError("Top-ups are only available in mock mode; fund the address on Base Sepolia instead.", 501, "not_supported");
         const ok = /^\d+(\.\d{1,2})?$/.test(String(amount)) && toCents(amount) > 0 && toCents(amount) <= toCents(MAX_TOPUP);
         if (!ok) throw new HttpError(`\`amount\` must be a dollar string between $0.01 and $${MAX_TOPUP}`, 400, "invalid_request");
-        return { ...doTopup(agent, fromCents(toCents(amount))) };
+        // §16.3: the bank confirms first; if it can't, nothing is credited.
+        if (bankLinked && checking) {
+          if (bankMode === "down") throw new HttpError("Capital One didn't confirm the transfer, so nothing was added.", 502, "bank_unavailable");
+          if (checking.cents < toCents(amount)) {
+            throw new HttpError(`Your Capital One checking has ${money(fromCents(checking.cents))}, not enough to add ${money(fromCents(toCents(amount)))}.`, 409, "bank_insufficient_funds");
+          }
+        }
+        return { ...doTopup(agent, fromCents(toCents(amount)), "Top-up", true) };
       }),
     createAgent: (req) => delay(() => doCreateAgent(req)),
     previewShopifyStore: (url) =>
@@ -1028,6 +1225,39 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
           emitConnected(agent, svc);
         }
         return { service: directoryView(m), agents: targets.map(copyAgent) };
+      }),
+    getBank: () => delay(bankSummary),
+    getBankStatement: (agentId, limit = 50) =>
+      delay((): BankStatementResponse => {
+        if (bankMode === "off") throw new HttpError("No bank is connected to this wallet.", 409, "bank_not_enabled");
+        if (!bankLinked || !checking) throw new HttpError("Capital One isn't linked yet.", 409, "bank_not_linked");
+        if (bankMode === "down") throw new HttpError("Capital One didn't answer, so the statement isn't available right now.", 502, "bank_unavailable");
+        if (!agentId) return { account: accountView(checking), entries: checking.entries.slice(0, limit).map((e) => ({ ...e })) };
+        const agent = byId(agentId);
+        if (!agent) throw new HttpError(`No agent ${agentId}`, 404, "agent_not_found");
+        const a = accounts.get(agentId);
+        if (!a) throw new HttpError(`${agent.name} has no Capital One account yet; it opens the first time money moves.`, 404, "bank_account_not_found");
+        return { account: { ...accountView(a), agentId, agentName: agent.name }, entries: a.entries.slice(0, limit).map((e) => ({ ...e })) };
+      }),
+    retryBank: (receiptId) =>
+      delay(() => {
+        if (bankMode === "off") throw new HttpError("No bank is connected to this wallet.", 409, "bank_not_enabled");
+        let queued = 0;
+        for (const r of receipts) {
+          if (r.bank?.status !== "failed" || (receiptId && r.id !== receiptId)) continue;
+          const agent = byId(r.agentId);
+          if (!agent) continue;
+          queued++;
+          r.bank = { status: "queued", account: r.bank.account } satisfies ReceiptBank;
+          if (bankMode !== "down") later(bankDelay, () => applyPosting(r, agent));
+        }
+        return { queued };
+      }),
+    linkBank: () =>
+      delay(() => {
+        if (bankMode === "off") throw new HttpError("Set NESSIE_API_KEY to link Capital One.", 409, "bank_not_enabled");
+        linkNow();
+        return bankSummary();
       }),
     subscribe(onEvent, onStatus) {
       listeners.add(onEvent);

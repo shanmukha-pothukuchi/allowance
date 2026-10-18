@@ -634,18 +634,19 @@ html.embed.embed-sheet-doc #root {
   border: 1px solid var(--border);
   background: var(--surface-2);
 }
-.receipt-row {
+/* scoped: the Receipts panel's own .receipt-row is a grid (app.css) */
+.receipt-card .receipt-row {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
   gap: 4px 12px;
 }
-.receipt-row strong {
+.receipt-card .receipt-row strong {
   font-size: 1.15rem;
   font-variant-numeric: tabular-nums;
 }
-.receipt-row.muted {
+.receipt-card .receipt-row.muted {
   font-size: 0.88rem;
 }
 .receipt-ids code,

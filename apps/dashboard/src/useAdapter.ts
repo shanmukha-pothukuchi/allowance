@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { mockRequested, type WalletAdapter } from "./api/adapter";
 import { createHttpAdapter, walletServiceReachable } from "./api/httpAdapter";
-import { createMockAdapter, mockChainMode, type MockAdapter } from "./api/mockAdapter";
+import { createMockAdapter, mockBankMode, mockChainMode, type MockAdapter } from "./api/mockAdapter";
 
 export function useStandaloneAdapter(): { adapter: WalletAdapter | null; offline: boolean } {
   const [adapter, setAdapter] = useState<WalletAdapter | null>(null);
@@ -14,7 +14,7 @@ export function useStandaloneAdapter(): { adapter: WalletAdapter | null; offline
     let cancelled = false;
     let made: WalletAdapter | null = null;
     (async () => {
-      if (mockRequested()) made = createMockAdapter({ chainMode: mockChainMode() });
+      if (mockRequested()) made = createMockAdapter({ chainMode: mockChainMode(), bank: mockBankMode() });
       else {
         while (!(await walletServiceReachable())) {
           if (cancelled) return;

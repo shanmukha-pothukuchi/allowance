@@ -2,10 +2,12 @@
  * Pure state + reducer for the dashboard. The hook feeds it the initial fetches and
  * then every SSE event; components only read from it. Unit-tested in state.test.ts.
  */
+import { bankFromEvent, foldBankEvents, isBankEvent, patchReceiptBank } from "./bank";
 import { isServiceApproval, serviceIdOfEvent, serviceOfEvent } from "./format";
 import type {
   AgentPublic,
   Approval,
+  BankSummary,
   ConnectedService,
   ConnectionStatus,
   DirectoryService,
@@ -24,6 +26,8 @@ export interface Totals {
   earnedToday: string;
   chainMode: SummaryResponse["chainMode"] | "unknown";
   telegramConnected: boolean;
+  /** Owner's Capital One checking (§16.4), from the summary. null: no bank (no Nessie key). */
+  bank: SummaryResponse["bank"] | null;
 }
 
 export interface DashboardState {
@@ -49,11 +53,13 @@ export interface DashboardState {
   directoryError?: string;
   /** Usage docs fetched on demand, by service id. */
   serviceDocs: Record<string, string>;
+  /** `GET /v1/bank` (§16.4): checking and every agent's allowance account. Loaded only when the summary has `bank`. */
+  bank: BankSummary | null;
 }
 
 export const initialState: DashboardState = {
   agents: [],
-  totals: { totalBalance: "0.00", spentToday: "0.00", earnedToday: "0.00", chainMode: "unknown", telegramConnected: false },
+  totals: { totalBalance: "0.00", spentToday: "0.00", earnedToday: "0.00", chainMode: "unknown", telegramConnected: false, bank: null },
   events: [],
   receipts: [],
   approvals: [],
@@ -67,6 +73,7 @@ export const initialState: DashboardState = {
   directory: [],
   directoryStatus: "idle",
   serviceDocs: {},
+  bank: null,
 };
 
 export type Action =
@@ -87,6 +94,9 @@ export type Action =
   | { type: "directoryError"; message: string }
   | { type: "directoryLoading" }
   | { type: "serviceDocs"; id: string; docs: string }
+  | { type: "bank"; bank: BankSummary | null }
+  /** `POST /v1/bank/retry` answered: that receipt (or every "Not on statement" one) is queued again. */
+  | { type: "bankRetried"; receiptId?: string }
   | { type: "error"; message?: string };
 
 const MONEY_EVENTS: ReadonlySet<EventType> = new Set<EventType>([
@@ -122,6 +132,7 @@ function totalsFrom(summary: SummaryResponse): Totals {
     earnedToday: summary.earnedToday,
     chainMode: summary.chainMode,
     telegramConnected: summary.telegramConnected,
+    bank: summary.bank ?? null,
   };
 }
 
@@ -229,8 +240,21 @@ export function connectionFromEvent(e: WalletEvent): ConnectedService | undefine
   } as ConnectedService;
 }
 
+/**
+ * `bank.posted` / `bank.failed` (§16.3) are not feed rows: they update the marker of the receipt
+ * they carry, in the receipts list and on every feed row showing that receipt.
+ */
+function applyBankEvent(state: DashboardState, e: WalletEvent): DashboardState {
+  const b = bankFromEvent(e);
+  if (!b) return state;
+  const known = state.receipts.find((r) => r.id === b.receiptId);
+  const receipts = e.receipt ? upsertReceipt(state.receipts, { ...e.receipt, bank: b.bank }) : known ? upsertReceipt(state.receipts, { ...known, bank: b.bank }) : state.receipts;
+  return { ...state, receipts, events: patchReceiptBank(state.events, b.receiptId, b.bank) };
+}
+
 /** Apply one wallet event to the state. Idempotent on event id. */
 export function applyEvent(state: DashboardState, e: WalletEvent): DashboardState {
+  if (isBankEvent(e.type)) return applyBankEvent(state, e);
   if (state.events.some((x) => x.id === e.id)) return state;
   let next: DashboardState = { ...state, events: collapseFeed([e, ...state.events]).slice(0, MAX_FEED) };
 
@@ -310,7 +334,7 @@ export function reducer(state: DashboardState, action: Action): DashboardState {
         totals: totalsFrom(action.summary),
         approvals: sortNewest(action.approvals.filter((a) => a.status === "pending")),
         receipts: sortNewest(action.receipts).slice(0, MAX_RECEIPTS),
-        events: collapseFeed(sortNewestEvents(action.events)).slice(0, MAX_FEED),
+        events: collapseFeed(foldBankEvents(sortNewestEvents(action.events), action.receipts)).slice(0, MAX_FEED),
         lastError: undefined,
       };
     case "summary":
@@ -347,6 +371,23 @@ export function reducer(state: DashboardState, action: Action): DashboardState {
       return { ...state, directoryStatus: state.directory.length ? "ready" : "error", directoryError: action.message };
     case "serviceDocs":
       return { ...state, serviceDocs: { ...state.serviceDocs, [action.id]: action.docs } };
+    case "bank":
+      return { ...state, bank: action.bank };
+    case "bankRetried": {
+      let events = state.events;
+      let moved = 0;
+      const receipts = state.receipts.map((r) => {
+        if (r.bank?.status !== "failed" || (action.receiptId && r.id !== action.receiptId)) return r;
+        moved++;
+        const bank = { status: "queued" as const, account: r.bank.account };
+        events = patchReceiptBank(events, r.id, bank);
+        return { ...r, bank };
+      });
+      const q = state.bank?.queue;
+      const n = action.receiptId ? Math.min(moved, q?.failed ?? 0) : (q?.failed ?? 0);
+      const bank = state.bank && q ? { ...state.bank, queue: { pending: q.pending + n, failed: q.failed - n } } : state.bank;
+      return { ...state, receipts, events, bank };
+    }
     case "error":
       return { ...state, lastError: action.message };
   }

@@ -51,6 +51,7 @@ import type {
   Policy,
   PolicyBlockReason,
   Receipt,
+  ReceiptBank,
   ServiceGrant,
   ServiceManifest,
   ServiceRequest,
@@ -78,6 +79,8 @@ import { DirectoryRequestError, DirectoryUnavailableError, httpDirectoryClient }
 import type { DirectoryClient } from "./directory-client.js";
 import { ShopifyBridgeError, ShopifyBridgeUnavailableError, httpShopifyBridgeClient } from "./shopify-bridge-client.js";
 import type { ShopifyBridgeClient } from "./shopify-bridge-client.js";
+import { BankError, createBank } from "./bank.js";
+import type { Bank, BankOptions } from "./bank.js";
 // Relative import on purpose (like the agents' seeds): the proposal an agent makes is built exactly
 // like the manifest the directory will list once the owner approves.
 import { parseShopifyCap, shopifyCapTexts, shopifyManifest, shopifyServiceId, storefrontHost } from "../../directory/src/shopify.js";
@@ -103,6 +106,8 @@ export interface AppDeps {
   directory?: DirectoryClient;
   /** Shopify bridge discovery (§15.1). Defaults to HTTP against `config.shopifyBridgeUrl`. */
   shopifyBridge?: ShopifyBridgeClient;
+  /** Capital One / Nessie tuning (§16): fetch, timeouts, retry delays. Enabled only by `config.nessie.apiKey`. */
+  bank?: BankOptions;
 }
 
 export type VerifyChallenge = (
@@ -189,6 +194,8 @@ export interface WalletApp {
   telegramConnected: () => boolean;
   /** Mock mode: mint unapplied seed balances (retries while the facilitator comes up). */
   seedBalances: (opts?: { retryMs?: number }) => Promise<void>;
+  /** Capital One (Nessie sandbox, §16). `bank.start()` links it and starts its queue (index.ts does). */
+  bank: Bank;
   /** Stop timers and SSE clients. */
   close: () => void;
 }
@@ -227,11 +234,19 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
   // ---------------------------------------------------------------------------
 
   const accountOf = (a: StoredAgent) => privateKeyToAccount(a.privateKey);
+  /** Everything that must never leave the process: agent keys and the Nessie key. */
+  const secrets = () => (config.nessie?.apiKey ? [...store.secrets(), config.nessie.apiKey] : store.secrets());
+  function scrub(text: string): string {
+    for (const s of secrets()) text = text.split(s).join("[redacted]").split(s.replace(/^0x/, "")).join("[redacted]");
+    return text;
+  }
 
   function emit(type: EventType, partial: Omit<WalletEvent, "id" | "type" | "at">): WalletEvent {
     // JSON round trip first: an event often holds one object twice (approval.service and
     // data.service), and redact() would turn the second into "[circular]". Events are JSON anyway.
-    const event: WalletEvent = redact(JSON.parse(JSON.stringify({ id: newId("evt"), type, at: nowIso(), ...partial })) as WalletEvent);
+    let json = JSON.stringify({ id: newId("evt"), type, at: nowIso(), ...partial });
+    if (containsSecret(json, secrets())) json = scrub(json);
+    const event: WalletEvent = redact(JSON.parse(json) as WalletEvent);
     store.state.events.push(event);
     if (store.state.events.length > MAX_EVENTS) store.state.events.splice(0, store.state.events.length - MAX_EVENTS);
     store.save();
@@ -244,6 +259,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
   const directory: DirectoryClient = deps.directory ?? httpDirectoryClient(config.directoryUrl, { ownerApiKey: config.ownerApiKey });
   const shopifyBridge: ShopifyBridgeClient = deps.shopifyBridge ?? httpShopifyBridgeClient(config.shopifyBridgeUrl);
   const lookupTx: LookupTx = deps.lookupTx ?? (config.chainMode === "mock" ? liveLookupTx(config.facilitatorUrl) : async () => "unavailable");
+  const bank: Bank = createBank(config, store, emit, deps.bank);
   let seeded = config.chainMode !== "mock";
   /** Approvals being settled right now. Claimed synchronously so two concurrent approve calls
    *  (double-tap, Telegram + dashboard, retries) can never settle the same approval twice. */
@@ -540,6 +556,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
         receipt.txHash = txHash;
         receipt.explorerUrl = explorerUrl;
         receipt.settledAt = nowIso();
+        bank.mirror(receipt);
         store.save();
         emit("approval.approved", {
           agentId: agent.id,
@@ -835,7 +852,11 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     return (await res.json()) as { txHash: Hex; balance: string };
   }
 
-  function recordTopup(agent: StoredAgent, dollars: string, txHash: Hex, description: string): Receipt {
+  /**
+   * `bankEntry`: the owner's top-up already moved the dollars at Capital One (§16.3). Without it
+   * (starting balances, seeds) the bank transfer is queued: startup never waits on the bank.
+   */
+  function recordTopup(agent: StoredAgent, dollars: string, txHash: Hex, description: string, bankEntry?: ReceiptBank): Receipt {
     const amount = toBaseUnits(dollars);
     const receipt = newReceipt({
       kind: "topup",
@@ -849,15 +870,23 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
       txHash,
       explorerUrl: explorerTxUrl(txHash, config.chainMode, config.facilitatorUrl),
       settledAt: nowIso(),
+      ...(bankEntry ? { bank: bankEntry } : {}),
     });
+    if (!bankEntry) bank.mirror(receipt);
     store.save();
     emit("topup", {
       agentId: agent.id,
       agentName: agent.name,
-      message: `Added ${formatUsd(amount)} to ${agent.name}.`,
+      message: bankEntry
+        ? `Moved ${formatUsd(amount)} from Capital One Checking ${bankCheckingMask()} to ${agent.name}'s allowance account.`
+        : `Added ${formatUsd(amount)} to ${agent.name}.`,
       receipt,
     });
     return receipt;
+  }
+
+  function bankCheckingMask(): string {
+    return bank.state.checkingLast4 ? `••${bank.state.checkingLast4}` : "";
   }
 
   async function seedBalances(opts: { retryMs?: number } = {}): Promise<void> {
@@ -907,11 +936,9 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     const original = res.json.bind(res);
     res.json = ((body: unknown) => {
       let text = JSON.stringify(redact(body));
-      if (text && containsSecret(text, store.secrets())) {
-        console.error(`${LOG} SECURITY: a private key almost left the service; scrubbed`);
-        for (const s of store.secrets()) {
-          text = text.split(s).join("[redacted]").split(s.replace(/^0x/, "")).join("[redacted]");
-        }
+      if (text && containsSecret(text, secrets())) {
+        console.error(`${LOG} SECURITY: a secret almost left the service; scrubbed`);
+        text = scrub(text);
       }
       res.type("application/json");
       return res.send(text);
@@ -976,8 +1003,31 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
       pendingApprovals: store.state.approvals.filter((a) => a.status === "pending"),
       chainMode: config.chainMode,
       telegramConnected,
+      ...(bank.enabled ? { bank: bank.cached() } : {}),
     };
     res.json(body);
+  });
+
+  // ---- Capital One (Nessie sandbox, §16.4) ---------------------------------
+
+  router.get("/bank", ownerAuth, async (_req, res) => {
+    res.json(await bank.summary());
+  });
+
+  router.get("/bank/statement", ownerAuth, async (req, res) => {
+    const agentId = typeof req.query.agentId === "string" && req.query.agentId ? req.query.agentId : undefined;
+    const limit = Number(req.query.limit ?? 50) || 50;
+    res.json(await bank.statement(agentId, limit));
+  });
+
+  router.post("/bank/link", ownerAuth, async (_req, res) => {
+    res.json(await bank.link());
+  });
+
+  router.post("/bank/retry", ownerAuth, (req, res) => {
+    const receiptId = req.body?.receiptId;
+    if (receiptId !== undefined && typeof receiptId !== "string") throw new HttpError(400, "invalid_request", "`receiptId` must be a receipt id");
+    res.json({ queued: bank.retry(receiptId) });
   });
 
   // ---- agent endpoints -----------------------------------------------------
@@ -995,6 +1045,8 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
         remainingToday: toDollars(remaining < 0n ? 0n : remaining),
       },
     };
+    const agentBank = bank.agentBank(agent.id);
+    if (agentBank) body.bank = agentBank;
     res.json(body);
   });
 
@@ -1149,6 +1201,11 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
       receipt.txHash = settle.transaction as Hex;
       receipt.explorerUrl = explorerTxUrl(settle.transaction, config.chainMode, config.facilitatorUrl);
       receipt.settledAt = nowIso();
+      // On the Capital One statement the merchant is the connected service ("Quantcomm Flood
+      // Research", "Allbirds") when the payment went to one, else the counterparty's name.
+      const paidUrl = store.state.pendingPayments[receipt.paymentId!]?.request?.url;
+      const service = paidUrl ? findService(paidUrl, agent.services) : undefined;
+      bank.mirror(receipt, service ? { name: service.name, category: service.category } : undefined);
       store.save();
       emit("payment.settled", {
         agentId: agent.id,
@@ -1242,6 +1299,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
       receipt.txHash = txHash;
       receipt.explorerUrl = explorerUrl;
       receipt.settledAt = nowIso();
+      bank.mirror(receipt);
       store.save();
       emit("transfer.sent", {
         agentId: agent.id,
@@ -1381,6 +1439,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
       explorerUrl: explorerTxUrl(body.txHash, config.chainMode, config.facilitatorUrl),
       settledAt: nowIso(),
     });
+    bank.mirror(receipt);
     store.save();
     recordingTx.delete(hashKey);
     emit("earning.received", {
@@ -1669,6 +1728,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     for (const manifest of manifests) {
       if (manifest.kind !== "directory") connectService(stored, toGrant({ ...manifest, source: "directory" }), "owner");
     }
+    bank.openAccount(stored); // queued; its Capital One allowance account (§16.2)
     if (config.chainMode === "mock" && stored.seedBalance && !stored.seedApplied) {
       try {
         const { txHash } = await mint(stored, stored.seedBalance);
@@ -1759,14 +1819,30 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     } catch {
       throw new HttpError(400, "invalid_request", `\`amount\` must be a dollar string between $0.01 and $${MAX_TOPUP}`);
     }
+    // Capital One first (§16.3): the bank must confirm the transfer before any USDC is credited.
+    // The ledger is checked before the bank so a down facilitator never strands bank dollars.
+    let bankEntry: ReceiptBank | undefined;
+    if (bank.enabled) {
+      if (!(await facilitatorUp())) throw new HttpError(503, "ledger_unavailable", `The ledger at ${config.facilitatorUrl} is not reachable; nothing was moved.`);
+      bankEntry = await bank.topup(agent, dollars);
+    }
     let txHash: Hex;
     try {
       ({ txHash } = await mint(agent, dollars));
     } catch (err) {
+      if (bankEntry) bank.refund(agent, dollars, bankEntry.ref);
       throw new HttpError(503, "ledger_unavailable", (err as Error).message);
     }
-    res.json({ receipt: recordTopup(agent, dollars, txHash, "Top-up") });
+    res.json({ receipt: recordTopup(agent, dollars, txHash, "Top-up", bankEntry) });
   });
+
+  async function facilitatorUp(): Promise<boolean> {
+    try {
+      return (await fetch(`${config.facilitatorUrl.replace(/\/+$/, "")}/health`, { signal: AbortSignal.timeout(3000) })).ok;
+    } catch {
+      return false;
+    }
+  }
 
   router.get("/approvals", ownerAuth, (req, res) => {
     expireApprovals();
@@ -1858,6 +1934,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     store.state.pendingPayments = {};
     store.state.serviceRequests = {};
     store.save();
+    bank.clearQueue(); // its jobs point at receipts that are gone; the Nessie objects stay linked
     console.log(`${LOG} reset: receipts, approvals and events cleared`);
     res.json({ ok: true });
   });
@@ -1871,6 +1948,10 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     if (err instanceof HttpError) {
       res.status(err.status).json({ error: err.code, message: err.message, details: err.details });
+      return;
+    }
+    if (err instanceof BankError) {
+      res.status(err.status).json({ error: err.code, message: err.message });
       return;
     }
     const e = err as { status?: number; type?: string; message?: string };
@@ -1892,8 +1973,10 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     bus,
     telegramConnected: () => telegramConnected,
     seedBalances,
+    bank,
     close: () => {
       clearInterval(expiryTimer);
+      bank.close();
       for (const res of sseClients) res.end();
       sseClients.clear();
     },

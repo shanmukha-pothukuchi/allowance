@@ -1,3 +1,4 @@
+import { checkingLine, masked } from "../bank";
 import { money } from "../format";
 import { navigate, type Route } from "../route";
 import type { DashboardState } from "../state";
@@ -9,6 +10,8 @@ interface Props {
   theme: "dark" | "light";
   onToggleTheme(): void;
   onToggleDetails(): void;
+  /** Opens the Capital One sheet (§16.5). */
+  onOpenBank?(): void;
 }
 
 const STATUS_LABEL: Record<DashboardState["connection"], string> = {
@@ -19,8 +22,10 @@ const STATUS_LABEL: Record<DashboardState["connection"], string> = {
   demo: "demo data",
 };
 
-export function TopBar({ state, route, theme, onToggleTheme, onToggleDetails }: Props) {
+export function TopBar({ state, route, theme, onToggleTheme, onToggleDetails, onOpenBank }: Props) {
   const frozen = state.agents.filter((a) => a.frozen);
+  // §16.5: the owner's checking, only once the bank is linked. Without a Nessie key, nothing.
+  const bank = state.totals.bank?.linked ? state.totals.bank : null;
   const pending = state.approvals.length;
   return (
     <header className="topbar">
@@ -53,6 +58,22 @@ export function TopBar({ state, route, theme, onToggleTheme, onToggleDetails }: 
             <span className="stat-label">Earned today</span>
             <span className="stat-value earned">+{money(state.totals.earnedToday)}</span>
           </div>
+          {bank && (
+            <button
+              type="button"
+              className="stat bank-stat"
+              onClick={onOpenBank}
+              title={`${checkingLine(bank)}. Capital One's Nessie sandbox: sandbox money, not real dollars.`}
+              aria-label={`${checkingLine(bank)}, Nessie sandbox. Open the bank.`}
+            >
+              <span className="stat-label">
+                <span className="bank-stat-name">Capital One </span>
+                <span className="bank-stat-kind">Checking </span>
+                {masked(bank.checkingLast4)}
+              </span>
+              <span className="stat-value">{bank.checkingBalance !== undefined ? money(bank.checkingBalance) : "—"}</span>
+            </button>
+          )}
         </div>
 
         <div className="topbar-actions">

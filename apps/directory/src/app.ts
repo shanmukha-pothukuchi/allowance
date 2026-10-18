@@ -10,8 +10,8 @@ import { buildCatalog, searchCatalog, withoutDocs } from "./catalog.js";
 import { DirectoryExtras } from "./extra.js";
 import { asShopifyStore, parseShopifyCap, shopifyManifest, shopifyServiceId, storefrontHost, SHOPIFY_DEFAULT_MAX_PRICE } from "./shopify.js";
 
-/** merchantUrl/directoryUrl build the catalog. dataDir persists added stores (memory only without it). */
-export type DirectoryConfig = Pick<AppConfig, "merchantUrl" | "directoryUrl"> & Partial<Pick<AppConfig, "dataDir" | "shopifyBridgeUrl" | "ownerApiKey">>;
+/** merchantUrl/directoryUrl/quantcommBridgeUrl build the catalog. dataDir persists added stores (memory only without it). */
+export type DirectoryConfig = Pick<AppConfig, "merchantUrl" | "directoryUrl"> & Partial<Pick<AppConfig, "dataDir" | "shopifyBridgeUrl" | "quantcommBridgeUrl" | "ownerApiKey">>;
 
 export interface DirectoryDeps {
   /** fetch used to call the Shopify bridge (tests). */
@@ -39,7 +39,7 @@ class HttpError extends Error {
 }
 
 export function createDirectoryApp(config: DirectoryConfig, deps: DirectoryDeps = {}): DirectoryApp {
-  const catalog = buildCatalog({ merchantUrl: config.merchantUrl, directoryUrl: config.directoryUrl });
+  const catalog = buildCatalog({ merchantUrl: config.merchantUrl, directoryUrl: config.directoryUrl, quantcommBridgeUrl: config.quantcommBridgeUrl });
   const builtIn = new Set(catalog.map((s) => s.id));
   const bridgeUrl = (config.shopifyBridgeUrl || DEFAULT_BRIDGE_URL).replace(/\/+$/, "");
   const doFetch = deps.fetch ?? fetch;

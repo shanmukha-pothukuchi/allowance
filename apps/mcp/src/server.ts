@@ -536,10 +536,13 @@ export function createServer(opts: CreateServerOptions): McpServer {
         const me = await wallet.me();
         const a = me.agent;
         const l = me.limits;
+        // Capital One (§16): only once the wallet reports the agent's allowance account.
+        const bank = me.bank && typeof me.bank.last4 === "string" && /^[0-9A-Za-z]{1,8}$/.test(me.bank.last4) ? me.bank : undefined;
         const lines = [
           `Wallet for agent "${a.name}" (${a.id})`,
           `Address: ${a.address}`,
           `Balance: ${usd(a.balance)}`,
+          ...(bank ? [`Funded from your owner's Capital One account ••${bank.last4} (Nessie sandbox).`] : []),
           `Spent today: ${usd(a.spentToday)}   Earned today: ${usd(a.earnedToday)}`,
           `Limits: max ${usd(l.maxPerTx)} per payment · daily cap ${usd(l.dailyCap)} (remaining today ${usd(l.remainingToday)}) · payments over ${usd(l.approvalThreshold)} need owner approval`,
           a.policy.allowlist
@@ -554,7 +557,7 @@ export function createServer(opts: CreateServerOptions): McpServer {
             : []),
           a.frozen ? `FROZEN: this agent cannot spend${a.frozenReason ? ` — ${a.frozenReason.replace(/\.$/, "")}` : ""}. The owner must unfreeze it.` : "Status: active",
         ];
-        return text(lines.join("\n"), { agent: a, limits: l });
+        return text(lines.join("\n"), { agent: a, limits: l, ...(bank ? { bank } : {}) });
       }),
   );
 

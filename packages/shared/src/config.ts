@@ -76,6 +76,12 @@ export interface AppConfig {
   shopifyBridgeUrl: string;
   /** Shopify Storefront API version; optional public UCP agent profile for stores without a public storefront API. */
   shopify: { apiVersion: string; ucpAgentProfileUrl?: string };
+  /** Capital One Nessie sandbox (§16). Enabled only when apiKey is set; only wallet-service reads it. */
+  nessie: { apiKey?: string; baseUrl: string; openingBalance: string };
+  /** Quantcomm bridge (apps/quantcomm-bridge, §17) and the Quantcomm app it reads from. */
+  quantcommBridgePort: number;
+  quantcommBridgeUrl: string;
+  quantcommUrl: string;
   /** Agent chat server (apps/agent-chat). Binds to localhost by default: whoever can reach it can instruct agents. */
   agentChatPort: number;
   agentChatHost: string;
@@ -140,6 +146,14 @@ export function loadConfig(): AppConfig {
       apiVersion: env.SHOPIFY_API_VERSION || "2026-10",
       ucpAgentProfileUrl: env.UCP_AGENT_PROFILE_URL || undefined,
     },
+    nessie: {
+      apiKey: env.NESSIE_API_KEY || undefined,
+      baseUrl: (env.NESSIE_BASE_URL || "https://api.nessieisreal.com").replace(/\/+$/, ""),
+      openingBalance: env.NESSIE_OPENING_BALANCE || "5000.00",
+    },
+    quantcommBridgePort: Number(env.QUANTCOMM_BRIDGE_PORT ?? 4080),
+    quantcommBridgeUrl: env.QUANTCOMM_BRIDGE_URL ?? `http://localhost:${Number(env.QUANTCOMM_BRIDGE_PORT ?? 4080)}`,
+    quantcommUrl: (env.QUANTCOMM_URL || "http://127.0.0.1:8000").replace(/\/+$/, ""),
     directoryPort: Number(env.DIRECTORY_PORT ?? 4060),
     directoryUrl: env.DIRECTORY_URL ?? `http://localhost:${Number(env.DIRECTORY_PORT ?? 4060)}`,
     agentChatPort: Number(env.AGENT_CHAT_PORT ?? 4050),

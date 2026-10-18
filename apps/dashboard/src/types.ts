@@ -5,6 +5,10 @@
  */
 export type {
   AgentPublic,
+  BankAccountView,
+  BankStatementEntry,
+  BankStatementResponse,
+  BankSummary,
   CreateAgentRequest,
   CreateAgentResponse,
   Approval,
@@ -13,6 +17,7 @@ export type {
   EventType,
   Policy,
   Receipt,
+  ReceiptBank,
   ReceiptKind,
   ReceiptStatus,
   ServiceCategory,
@@ -60,4 +65,7 @@ export const EVENT_TYPES = [
   "service.requested",
   "service.connected",
   "service.disconnected",
+  // Capital One (Nessie sandbox) mirror of a receipt (§16.3): they update a receipt's marker in place.
+  "bank.posted",
+  "bank.failed",
 ] as const;

@@ -15,6 +15,7 @@ import type { AppConfig, Policy, ShopifyStore, WalletEvent, X402PaymentRequired 
 import { createApp } from "./app.js";
 import type { WalletApp } from "./app.js";
 import { createDirectoryApp } from "../../directory/src/app.js";
+import { buildCatalog } from "../../directory/src/catalog.js";
 import { ALLBIRDS_STORE, EURO_STORE, PRIVATE_STORE, SOCKS_STORE, startStubBridge } from "../../directory/src/test-bridge.js";
 import type { StubBridge } from "../../directory/src/test-bridge.js";
 
@@ -125,6 +126,11 @@ beforeAll(async () => {
     shopifyBridgePort: 0,
     shopifyBridgeUrl: bridge.url,
     shopify: { apiVersion: "2026-10" },
+    // No Nessie key: the bank stays off and nothing here talks to Capital One.
+    nessie: { baseUrl: "https://api.nessieisreal.com", openingBalance: "5000.00" },
+    quantcommBridgePort: 0,
+    quantcommBridgeUrl: "http://127.0.0.1:1",
+    quantcommUrl: "http://127.0.0.1:1",
     ownerApiKey: KEY,
   };
   wallet = createApp(baseConfig, { verifyChallenge: async () => ({ ok: true }) });
@@ -182,7 +188,8 @@ describe("owner: preview and add a Shopify store (§15.3)", () => {
     const buyer = await createAgent("shop-buyer", { maxPerTx: "50.00", dailyCap: "200.00", approvalThreshold: "40.00" });
     const other = await createAgent("shop-other", { maxPerTx: "50.00", dailyCap: "200.00", approvalThreshold: "40.00" });
     // Fill the wallet's 30 s listing cache before the store exists.
-    expect((await agentCall("GET", "/v1/directory", buyer.token)).body.services).toHaveLength(6);
+    const catalogSize = buildCatalog({ merchantUrl: MERCHANT, directoryUrl: directoryBase }).length;
+    expect((await agentCall("GET", "/v1/directory", buyer.token)).body.services).toHaveLength(catalogSize);
 
     const before = bridge.calls.length;
     expect(await call("POST", "/v1/directory/shopify", { body: { url: "allbirds.com", connectTo: ["agt_nobody"] } })).toMatchObject({ status: 404 });

@@ -120,6 +120,17 @@ describe("formatEvent", () => {
     expect(formatEvent(event("policy.updated"))).toBeNull();
   });
 
+  it("Capital One statement events: posted is quiet, failed is one short line", () => {
+    const posted = receipt({ bank: { status: "posted", ref: "6532a1", account: "••5678" }, counterparty: { address: "0x1", name: "Acme Weather" } });
+    expect(formatEvent(event("bank.posted", { agentName: "researcher", receipt: posted }))).toBeNull();
+    const failed = receipt({ bank: { status: "failed", account: "••5678", error: "Nessie POST /accounts/x/purchases answered 500" }, counterparty: { address: "0x1", name: "Acme <Weather>" } });
+    const m = formatEvent(event("bank.failed", { agentName: "researcher", message: "long message", receipt: failed }))!;
+    expect(m.text).toBe("⚠️ Couldn't put researcher's <b>$0.05</b> (Acme &lt;Weather&gt;) on the Capital One statement. Retry it on the dashboard.");
+    expect(m.text.split("\n")).toHaveLength(1);
+    expect(m.keyboard).toBeUndefined();
+    expect(formatEvent(event("bank.failed", { agentName: "shopper", receipt: receipt({ kind: "topup", amount: "20.00" }) }))!.text).toBe("⚠️ Couldn't move <b>$20.00</b> from Capital One to shopper. Retry it on the dashboard.");
+  });
+
   it("escapes HTML and never leaks a private key field", () => {
     const m = formatEvent(event("payment.blocked", { message: "Blocked: <b>x</b> & y", data: { frozen: false, privateKey: PK } }))!;
     expect(m.text).toContain("&lt;b&gt;x&lt;/b&gt; &amp; y");

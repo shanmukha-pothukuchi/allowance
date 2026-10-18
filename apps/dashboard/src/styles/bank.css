@@ -1,0 +1,538 @@
+/* Capital One behind Allowance (§16.5, Nessie sandbox): top bar checking, agent rows, receipt
+   markers, statements and the bank sheet. Nothing here renders without a linked bank. */
+
+/* ---------- the bank's tile: a building on a calm navy tint (no borrowed logo) ---------- */
+.bank-tile {
+  --tile: #3b6fb6;
+  --size: 44px;
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: var(--size);
+  height: var(--size);
+  border-radius: 28%;
+  background: color-mix(in srgb, var(--tile) 16%, var(--surface));
+  color: color-mix(in srgb, var(--tile) 80%, var(--text));
+}
+.bank-tile svg {
+  width: 56%;
+  height: 56%;
+}
+.bank-tile-sm {
+  --size: 26px;
+}
+.bank-tile-lg {
+  --size: 68px;
+}
+
+/* ---------- top bar: checking, set apart from the allowance totals by a hairline ---------- */
+.bank-stat {
+  position: relative;
+  padding: 2px 0 2px 22px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 10px;
+}
+.bank-stat::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 1px;
+  background: var(--border-strong);
+}
+.bank-stat .stat-value {
+  transition: color 160ms;
+}
+.bank-stat:hover .stat-value {
+  color: var(--accent);
+}
+.bank-stat .stat-label {
+  font-variant-numeric: tabular-nums;
+}
+/* The bar is tight: the label shortens as the screen narrows ("Capital One Checking ••1234" →
+   "Capital One ••1234" → "Checking ••1234"); the title always has the full line. */
+@media (max-width: 1700px) {
+  .totals:has(.bank-stat) {
+    gap: 26px;
+  }
+  .bank-stat-kind {
+    display: none;
+  }
+}
+@media (max-width: 1440px) {
+  .totals:has(.bank-stat) {
+    gap: 18px;
+  }
+  .bank-stat {
+    padding-left: 16px;
+  }
+  .bank-stat-name {
+    display: none;
+  }
+  .bank-stat-kind {
+    display: inline;
+  }
+  .bank-stat .stat-value {
+    font-size: 1.25rem;
+  }
+}
+@media (max-width: 1320px) {
+  .totals:has(.bank-stat) {
+    gap: 14px;
+  }
+}
+/* below this the four numbers don't fit on one line: checking becomes one quiet line under the
+   other three, which keep their one row (a grid never wraps them; phones wrap as before) */
+@media (max-width: 1180px) {
+  .bank-stat {
+    grid-column: 1 / -1;
+    flex-basis: 100%;
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: center;
+    gap: 8px;
+    padding: 0;
+  }
+  .bank-stat::before {
+    display: none;
+  }
+  .bank-stat-name,
+  .bank-stat-kind {
+    display: inline;
+  }
+  .bank-stat .stat-value {
+    font-size: 1rem;
+  }
+}
+@media (max-width: 1180px) and (min-width: 481px) {
+  .totals:has(.bank-stat) {
+    display: grid;
+    grid-template-columns: repeat(3, auto);
+    justify-content: center;
+    align-items: end;
+    gap: 2px 22px;
+  }
+}
+
+/* ---------- receipt marker ---------- */
+.bank-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: 0.76rem;
+  font-weight: 550;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.bank-mark svg {
+  flex: none;
+}
+.bank-mark > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bank-mark-posted {
+  color: var(--in);
+}
+.bank-mark-queued svg {
+  animation: bankTick 1.6s ease-in-out infinite;
+}
+.bank-mark-failed {
+  color: var(--warn);
+}
+.bank-mark-stopped {
+  color: var(--muted);
+}
+.bank-retry {
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.bank-retry:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.bank-retry:disabled {
+  color: var(--muted);
+  cursor: wait;
+  text-decoration: none;
+}
+.receipt-bank {
+  display: flex;
+  min-width: 0;
+}
+
+/* ---------- agent card: its allowance account ---------- */
+.agent-bank {
+  container-type: inline-size;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 4px 8px 4px 0;
+  margin: -4px 0;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.agent-bank:hover {
+  background: var(--surface-3);
+}
+.agent-bank-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.agent-bank-bal {
+  font-size: 0.9rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.agent-bank-chev {
+  flex: none;
+  color: var(--muted);
+}
+/* a narrow card keeps the account number and drops the bank's name (it's in the title) */
+@container (max-width: 285px) {
+  .agent-bank-brand {
+    display: none;
+  }
+}
+
+/* ---------- add money: where the dollars come from ---------- */
+.bank-source {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.bank-source-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.bank-source-text strong {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.bank-source-text .muted {
+  font-size: 0.82rem;
+}
+.bank-short {
+  font-size: 0.88rem;
+  color: var(--warn);
+  font-weight: 600;
+}
+.bank-after {
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- account cards (bank sheet, agent sheet) ---------- */
+.bank-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.bank-card-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+.bank-card-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.bank-card-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bank-card-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.bank-card-nick,
+.bank-card-sub {
+  font-size: 0.82rem;
+}
+.bank-card-balance {
+  font-size: 2.1rem;
+  line-height: 1.1;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.bank-card-amt {
+  font-size: 1.35rem;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.sandbox-tag {
+  font-size: 0.68rem;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-2);
+}
+
+/* every agent's account */
+.bank-accounts {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.bank-accounts > li + li {
+  border-top: 1px solid var(--border);
+}
+.bank-acct {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border: 0;
+  background: var(--surface-2);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+button.bank-acct {
+  cursor: pointer;
+}
+button.bank-acct:hover {
+  background: var(--surface-3);
+}
+.bank-acct-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.bank-acct-name {
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bank-acct-sub {
+  font-size: 0.8rem;
+}
+.bank-acct-bal {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.bank-acct-chev {
+  flex: none;
+  color: var(--muted);
+}
+
+/* recent activity / receipts with their marker */
+.bank-activity {
+  display: flex;
+  flex-direction: column;
+}
+.bank-act-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+.bank-act-row + .bank-act-row {
+  border-top: 1px solid var(--border);
+}
+.bank-act-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bank-act-what {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bank-act-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  font-size: 0.8rem;
+  min-width: 0;
+}
+.bank-act-amt {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.bank-queue {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--warn);
+  font-weight: 600;
+}
+.bank-note {
+  font-size: 0.85rem;
+}
+.bank-foot {
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+.osheet-banner.bank-error {
+  font-weight: 550;
+}
+
+/* ---------- a statement, as Nessie reports it ---------- */
+.stmt-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.stmt-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  background: var(--surface-2);
+}
+.stmt-row + .stmt-row,
+.stmt-more {
+  border-top: 1px solid var(--border);
+}
+.stmt-more {
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  background: var(--surface-2);
+}
+.stmt-ic {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 750;
+  background: var(--surface-3);
+  color: var(--text-2);
+}
+.stmt-ic.stmt-in {
+  background: var(--in-dim);
+  color: var(--in);
+}
+.stmt-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.stmt-what {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stmt-sub {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.stmt-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+.stmt-amt {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.stmt-status {
+  font-size: 0.7rem;
+  font-weight: 650;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-2);
+}
+.stmt-status.stmt-done {
+  background: var(--in-dim);
+  color: var(--in);
+}
+.stmt-status.stmt-pending {
+  background: var(--warn-dim);
+  color: var(--warn);
+}
+.stmt-status.stmt-void {
+  background: var(--danger-dim);
+  color: var(--danger);
+}
+
+@media (max-width: 480px) {
+  .bank-card-balance {
+    font-size: 1.7rem;
+  }
+  .bank-card-amt {
+    font-size: 1.1rem;
+  }
+  .stmt-row {
+    gap: 10px;
+    padding: 8px 10px;
+  }
+}
+
+@keyframes bankTick {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bank-mark-queued svg {
+    animation: none;
+  }
+}

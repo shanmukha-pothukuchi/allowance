@@ -275,6 +275,23 @@ export function createBridgeApp(config: BridgeConfig, deps: BridgeDeps = {}): Br
     paywall = paymentMiddleware(buildRoutes(), newResourceServer(), undefined, undefined, true);
   }
   rebuildPaywall();
+  // The paywall's lazy retry awaits the failed startup sync first, so the first checkout after a late
+  // facilitator start would answer 500 once; instead, watch the facilitator and rebuild when it answers.
+  void (async () => {
+    for (let attempt = 0; attempt < 300; attempt++) {
+      try {
+        await facilitatorClient.getSupported();
+        if (attempt > 0) {
+          rebuildPaywall();
+          log(`facilitator ${config.x402FacilitatorUrl} is up; paywall synced`);
+        }
+        return;
+      } catch {
+        if (attempt === 0) warn(`facilitator ${config.x402FacilitatorUrl} isn't answering yet; checkouts wait for it`);
+      }
+      await new Promise((r) => setTimeout(r, 2000).unref());
+    }
+  })();
 
   // ---- helpers --------------------------------------------------------------------------------------
 

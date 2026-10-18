@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createMockAdapter } from "./mockAdapter";
+import { HttpError } from "./adapter";
+import { createMockAdapter, MOCK_BANK_LAST4, mockBankMode } from "./mockAdapter";
 import type { Approval, WalletEvent } from "../types";
 
 describe("mockAdapter", () => {
@@ -530,6 +531,152 @@ describe("mockAdapter", () => {
       expect(listed).toMatchObject({ source: "directory", maxPrice: "20.00", shopify: { storefrontUrl: "https://junipergoods.com" } });
       const shopper = (await flush(m.getAgents())).find((a) => a.name === "shopper")!;
       expect(shopper.services.find((s) => s.id === "shopify-juniper-goods")).toMatchObject({ connectedBy: "approval", source: "directory", shopify: { domain: "juniper-goods.myshopify.com" } });
+      m.stop();
+    });
+  });
+
+  describe("Capital One (§16, Nessie sandbox)", () => {
+    const run = async <T,>(p: Promise<T>) => {
+      await vi.advanceTimersByTimeAsync(1);
+      return p;
+    };
+    /** The error a mock call rejects with (caught at once, so it's never an unhandled rejection). */
+    const failure = (p: Promise<unknown>) => run(p.then(() => new Error("expected a rejection"), (e: unknown) => e));
+
+    it("is off unless asked for: no bank in the summary, /v1/bank says not enabled", async () => {
+      const m = createMockAdapter({ seed: 1, latencyMs: 0 });
+      expect((await run(m.getSummary())).bank).toBeUndefined();
+      expect(await run(m.getBank())).toMatchObject({ enabled: false, linked: false, accounts: [] });
+      expect(await failure(m.getBankStatement())).toMatchObject({ status: 409, code: "bank_not_enabled" });
+      m.stop();
+    });
+
+    it("the page asks for it by default; ?bank= picks the other states", () => {
+      expect(mockBankMode("?mock=1")).toBe("on");
+      expect(mockBankMode("?mock=1&bank=off")).toBe("off");
+      expect(mockBankMode("?bank=0")).toBe("off");
+      expect(mockBankMode("?bank=low")).toBe("low");
+      expect(mockBankMode("?bank=down")).toBe("down");
+      expect(mockBankMode("?bank=unlinked")).toBe("unlinked");
+      expect(mockBankMode("?bank=bogus")).toBe("on");
+    });
+
+    it("links at startup: checking funded the eight $20 allowance accounts", async () => {
+      const m = createMockAdapter({ seed: 1, latencyMs: 0, bank: "on" });
+      expect((await run(m.getSummary())).bank).toEqual({ linked: true, checkingLast4: "1234", checkingBalance: "4840.00" });
+      const b = await run(m.getBank());
+      expect(b).toMatchObject({ enabled: true, linked: true, provider: "Capital One", sandbox: "Nessie", queue: { pending: 0, failed: 0 } });
+      expect(b.checking).toMatchObject({ nickname: "Allowance owner checking", last4: "1234", balance: "4840.00" });
+      expect(b.accounts).toHaveLength(8);
+      const shopper = b.accounts.find((a) => a.agentName === "shopper")!;
+      expect(shopper).toMatchObject({ last4: MOCK_BANK_LAST4.shopper, nickname: "Allowance · shopper", balance: "20.00" });
+      const st = await run(m.getBankStatement(shopper.agentId));
+      expect(st.entries).toEqual([expect.objectContaining({ kind: "transfer_in", amount: "20.00", description: "Allowance top-up · shopper", status: "executed" })]);
+      const chk = await run(m.getBankStatement());
+      expect(chk.entries).toHaveLength(8);
+      expect(chk.entries.every((e) => e.kind === "transfer_out")).toBe(true);
+      m.stop();
+    });
+
+    it("posts settled payments and earnings later (bank.posted); the second payment fails until retried", async () => {
+      const m = createMockAdapter({ seed: 3, latencyMs: 0, bank: "on", bankDelayMs: 1000, bankExecuteMs: 5000 });
+      const got: WalletEvent[] = [];
+      m.subscribe((e) => got.push(e));
+      for (let i = 0; i < 4; i++) m.tick(); // earn, pay weather, earn, pay news (researcher)
+      await vi.advanceTimersByTimeAsync(900); // both payments settle
+      const settled = got.filter((e) => e.type === "payment.settled");
+      expect(settled.map((e) => e.receipt?.bank?.status)).toEqual(["queued", "queued"]);
+      await vi.advanceTimersByTimeAsync(1100);
+      const posted = got.filter((e) => e.type === "bank.posted");
+      expect(posted.map((e) => e.receipt?.description).sort()).toEqual(["Acme Weather", "Bounty: API reliability check", "Bounty: API reliability check"]);
+      const weather = posted.find((e) => e.receipt?.description === "Acme Weather")!;
+      expect(weather.receipt?.bank).toMatchObject({ status: "posted", account: `••${MOCK_BANK_LAST4.researcher}` });
+      expect(weather.data).toMatchObject({ receiptId: weather.receipt!.id, kind: "purchase", account: `••${MOCK_BANK_LAST4.researcher}` });
+      expect(weather.message).toBe(`$0.05 at Acme Weather posted to researcher's Capital One account ••${MOCK_BANK_LAST4.researcher}.`);
+      await vi.advanceTimersByTimeAsync(1000);
+      const failed = got.find((e) => e.type === "bank.failed")!;
+      expect(failed).toMatchObject({ reason: "bank_failed", agentName: "researcher" });
+      expect(failed.receipt?.bank?.status).toBe("failed");
+      expect(failed.data).toMatchObject({ receiptId: failed.receipt!.id, kind: "purchase" });
+
+      const researcher = (await run(m.getSummary())).agents.find((a) => a.name === "researcher")!;
+      let st = await run(m.getBankStatement(researcher.id));
+      expect(st.entries[0]).toMatchObject({ kind: "purchase", merchant: "Acme Weather", amount: "0.05", description: "Acme Weather · paid in USDC", status: "pending" });
+      expect(st.account.balance).toBe("19.95");
+      expect((await run(m.getBank())).queue).toEqual({ pending: 0, failed: 1 });
+
+      expect(await run(m.retryBank(failed.receipt!.id))).toEqual({ queued: 1 });
+      expect((await run(m.getReceipts())).find((r) => r.id === failed.receipt!.id)?.bank?.status).toBe("queued");
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(got.filter((e) => e.type === "bank.posted").some((e) => e.receipt?.id === failed.receipt!.id)).toBe(true);
+      await vi.advanceTimersByTimeAsync(5000);
+      st = await run(m.getBankStatement(researcher.id));
+      expect(st.entries.map((e) => e.status)).toContain("executed");
+      expect(st.account.balance).toBe("19.85");
+      m.stop();
+    });
+
+    it("never posts a blocked payment", async () => {
+      const m = createMockAdapter({ seed: 3, latencyMs: 0, bank: "on", bankDelayMs: 10 });
+      for (let i = 0; i < 8; i++) m.tick();
+      await vi.advanceTimersByTimeAsync(5000);
+      const blocked = (await run(m.getReceipts())).find((r) => r.status === "blocked")!;
+      expect(blocked.bank).toBeUndefined();
+      m.stop();
+    });
+
+    it("an owner top-up moves dollars from checking first: posted at once, one topup event, no bank.posted", async () => {
+      const m = createMockAdapter({ seed: 1, latencyMs: 0, bank: "on" });
+      const got: WalletEvent[] = [];
+      m.subscribe((e) => got.push(e));
+      const shopper = (await run(m.getSummary())).agents.find((a) => a.name === "shopper")!;
+      const r = await run(m.topup(shopper.id, "20.00"));
+      expect(r.bank).toMatchObject({ status: "posted", account: `••${MOCK_BANK_LAST4.shopper}` });
+      expect(r.bank?.ref).toBeTruthy();
+      expect(got.map((e) => e.type)).toEqual(["topup"]);
+      expect(got[0].message).toBe(`Moved $20.00 from Capital One Checking ••1234 to shopper's allowance account.`);
+      expect((await run(m.getSummary())).bank?.checkingBalance).toBe("4820.00");
+      const st = await run(m.getBankStatement(shopper.id));
+      expect(st.entries[0]).toMatchObject({ kind: "transfer_in", amount: "20.00", receiptId: r.id });
+      expect(st.account.balance).toBe("40.00");
+      m.stop();
+    });
+
+    it("low checking: a top-up it can't cover answers 409 and credits nothing; a small one works", async () => {
+      const m = createMockAdapter({ seed: 1, latencyMs: 0, bank: "low" });
+      const s = await run(m.getSummary());
+      expect(s.bank?.checkingBalance).toBe("12.40");
+      const shopper = s.agents.find((a) => a.name === "shopper")!;
+      const err = await failure(m.topup(shopper.id, "20.00"));
+      expect(err).toBeInstanceOf(HttpError);
+      expect(err).toMatchObject({ status: 409, code: "bank_insufficient_funds", message: "Your Capital One checking has $12.40, not enough to add $20.00." });
+      expect((await run(m.getSummary())).agents.find((a) => a.name === "shopper")!.balance).toBe("20.00");
+      await run(m.topup(shopper.id, "5.00"));
+      expect((await run(m.getSummary())).bank?.checkingBalance).toBe("7.40");
+      m.stop();
+    });
+
+    it("bank down: top-ups answer 502, balances are the last known with an error, postings wait", async () => {
+      const m = createMockAdapter({ seed: 3, latencyMs: 0, bank: "down", bankDelayMs: 10 });
+      const s = await run(m.getSummary());
+      const shopper = s.agents.find((a) => a.name === "shopper")!;
+      expect(await failure(m.topup(shopper.id, "5.00"))).toMatchObject({ status: 502, code: "bank_unavailable", message: "Capital One didn't confirm the transfer, so nothing was added." });
+      for (let i = 0; i < 2; i++) m.tick();
+      await vi.advanceTimersByTimeAsync(5000);
+      const b = await run(m.getBank());
+      expect(b.error).toMatch(/Couldn't reach Capital One/);
+      expect(b.queue.pending).toBe(2);
+      expect(await failure(m.getBankStatement(shopper.id))).toMatchObject({ status: 502, code: "bank_unavailable" });
+      m.stop();
+    });
+
+    it("enabled but not linked until the owner links it", async () => {
+      const m = createMockAdapter({ seed: 1, latencyMs: 0, bank: "unlinked" });
+      expect((await run(m.getSummary())).bank).toEqual({ linked: false });
+      expect(await run(m.getBank())).toMatchObject({ enabled: true, linked: false, accounts: [] });
+      const linked = await run(m.linkBank());
+      expect(linked).toMatchObject({ linked: true, checking: { last4: "1234", balance: "5000.00" } });
+      expect(linked.accounts).toHaveLength(8);
       m.stop();
     });
   });

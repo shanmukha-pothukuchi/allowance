@@ -114,6 +114,14 @@ export function formatEvent(e: WalletEvent): TelegramMessage | null {
       return { text: `💰 ${agent} earned <b>${esc(money(r?.amount))}</b> from ${esc(counterpartyLabel(r))}${receiptLink(r)}` };
     case "topup":
       return { text: `➕ Added <b>${esc(money(r?.amount))}</b> to ${agent}${receiptLink(r)}` };
+    case "bank.posted":
+      // The Capital One statement mirror (§16) is bookkeeping: quiet when it works.
+      return null;
+    case "bank.failed": {
+      // One short line; the reason and the Retry button live on the dashboard.
+      if (r?.kind === "topup") return { text: `⚠️ Couldn't move <b>${esc(money(r.amount))}</b> from Capital One to ${agent}. Retry it on the dashboard.` };
+      return { text: `⚠️ Couldn't put ${agent}'s <b>${esc(money(r?.amount))}</b> (${esc(counterpartyLabel(r))}) on the Capital One statement. Retry it on the dashboard.` };
+    }
     case "approval.approved":
     case "approval.denied":
       // Handled by editing the original approval message (see notifier.ts); nothing new is sent.

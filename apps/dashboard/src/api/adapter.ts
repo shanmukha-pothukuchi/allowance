@@ -9,6 +9,8 @@ import type {
   AddShopifyStoreRequest,
   AgentPublic,
   Approval,
+  BankStatementResponse,
+  BankSummary,
   ConnectionStatus,
   CreateAgentRequest,
   CreateAgentResponse,
@@ -58,6 +60,17 @@ export interface WalletAdapter {
   previewShopifyStore(url: string): Promise<ShopifyStore>;
   /** `POST /v1/directory/shopify` (§15.3): add the store to the directory, optionally connecting agents. */
   addShopifyStore(req: AddShopifyStoreRequest): Promise<{ service: DirectoryService; agents?: AgentPublic[] }>;
+  /**
+   * Capital One (Nessie sandbox, §16.4). Called only when the summary carries `bank`, so a wallet
+   * without a Nessie key is never asked.
+   */
+  getBank(): Promise<BankSummary>;
+  /** One agent's allowance account statement (`agentId`), or checking's (none). Newest first. */
+  getBankStatement(agentId?: string, limit?: number): Promise<BankStatementResponse>;
+  /** `POST /v1/bank/retry { receiptId? }`: re-queue that receipt, or every entry that didn't reach the statement. */
+  retryBank(receiptId?: string): Promise<{ queued: number }>;
+  /** `POST /v1/bank/link` (idempotent): create the owner and checking at Nessie. */
+  linkBank(): Promise<BankSummary>;
   /** Live events. Returns an unsubscribe function. `onStatus` reports stream health. */
   subscribe(onEvent: (e: WalletEvent) => void, onStatus?: (s: ConnectionStatus) => void): () => void;
 }
