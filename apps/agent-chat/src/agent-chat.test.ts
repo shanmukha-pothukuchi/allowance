@@ -632,3 +632,102 @@ describe("chat server", () => {
     expect(groupMembers("nope", ["worker-1"])).toEqual([]);
   });
 });
+
+describe("scheduled messages (§20.3)", () => {
+  const SCHED = "st_" + "5a".repeat(24);
+
+  it("accepts source scheduler only with the token, logs a scheduled entry (API and SSE) and marks it for the model", async () => {
+    let token: string | undefined;
+    const chat = createChatApp({
+      walletServiceUrl: wallet.url,
+      llm: { baseUrl: llm.url, apiKey: "k", model: "qwen3", backoffMs: 5 },
+      roster: [{ name: "researcher", role: "r", token: wallet.token }],
+      walletPollMs: 60_000,
+      approvalWaitMs: 2000,
+      schedulerToken: () => token,
+    });
+    await chat.ready;
+    const server: Server = await new Promise((r) => {
+      const s = chat.app.listen(0, "127.0.0.1", () => r(s));
+    });
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
+      fetch(`${base}${path}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+    const fire = { text: "Check COF and tell your owner.", source: "scheduler", scheduleId: "sch_0123abcd", setBy: "agent", label: "Price watch you set", context: "COF is $212.40 (≥ $210) · paper trading, replay date 2025-11-03." };
+    const idle = async () => {
+      for (let i = 0; i < 100 && chat.agents.get("researcher")!.busy; i++) await new Promise((r) => setTimeout(r, 25));
+    };
+    const ctrl = new AbortController();
+    try {
+      // no token file yet: refused, even with a header
+      expect((await post("/api/agents/researcher/messages", fire, { "x-scheduler-token": SCHED })).status).toBe(403);
+      token = SCHED;
+      // no token / wrong token: 403, before the agent lookup (an unknown agent is 403 too, not 404)
+      const forged = await post("/api/agents/researcher/messages", fire);
+      expect(forged.status).toBe(403);
+      expect(await forged.json()).toEqual({ error: "forbidden", message: "Only the scheduler can send scheduled messages" });
+      expect((await post("/api/agents/researcher/messages", fire, { "x-scheduler-token": "st_wrong" })).status).toBe(403);
+      expect((await post("/api/agents/nobody/messages", fire)).status).toBe(403);
+      expect((await post("/api/agents/nobody/messages", fire, { "x-scheduler-token": SCHED })).status).toBe(404);
+      expect((await post("/api/agents/researcher/messages", { ...fire, scheduleId: "x" }, { "x-scheduler-token": SCHED })).status).toBe(400);
+      expect(chat.agents.get("researcher")!.log).toEqual([]);
+
+      const frames: string[] = [];
+      void fetch(`${base}/api/events`, { signal: ctrl.signal }).then(async (r) => {
+        const reader = r.body!.getReader();
+        const dec = new TextDecoder();
+        for (;;) {
+          const { value, done } = await reader.read().catch(() => ({ value: undefined, done: true }));
+          if (done) break;
+          frames.push(dec.decode(value));
+        }
+      });
+      await new Promise((r) => setTimeout(r, 100));
+
+      llm.script = () => ({ ...reply("COF is above $210 now; I told you."), delayMs: 150 });
+      const ok = await post("/api/agents/researcher/messages", fire, { "x-scheduler-token": SCHED });
+      expect(ok.status).toBe(202);
+      expect(((await ok.json()) as { runId: string }).runId).toMatch(/^run_/);
+      // busy: the scheduler gets 409 and retries
+      expect((await post("/api/agents/researcher/messages", fire, { "x-scheduler-token": SCHED })).status).toBe(409);
+      await idle();
+
+      const detail = (await (await fetch(`${base}/api/agents/researcher`)).json()) as { log: LogEntry[]; lastMessage: unknown };
+      expect(detail.log.map((e) => e.kind)).toEqual(["scheduled", "assistant"]);
+      expect(detail.log[0]).toEqual({
+        kind: "scheduled",
+        id: expect.stringMatching(/^msg_/),
+        text: "Check COF and tell your owner.",
+        at: expect.any(String),
+        source: "scheduler",
+        scheduleId: "sch_0123abcd",
+        setBy: "agent",
+        label: "Price watch you set",
+        context: "COF is $212.40 (≥ $210) · paper trading, replay date 2025-11-03.",
+      });
+      expect(detail.lastMessage).toMatchObject({ kind: "assistant" });
+      for (let i = 0; i < 40 && !frames.join("").includes('"kind":"scheduled"'); i++) await new Promise((r) => setTimeout(r, 25));
+      const logFrame = frames.join("").split("event: log\ndata: ").map((f) => f.split("\n")[0]).find((f) => f.includes('"kind":"scheduled"'))!;
+      expect(JSON.parse(logFrame)).toMatchObject({ type: "log", agent: "researcher", entry: { kind: "scheduled", scheduleId: "sch_0123abcd", setBy: "agent", source: "scheduler" } });
+
+      // what the model saw: the system-prompt line, and the message marked as scheduled
+      const sent = llm.requests.at(-1)!;
+      expect((sent.messages[0] as { content: string }).content).toContain("Messages that start with [Scheduled message …] were not typed by your owner");
+      expect(lastUser(sent).content).toBe("[Scheduled message · Price watch you set · sch_0123abcd]\nCheck COF and tell your owner.\nCOF is $212.40 (≥ $210) · paper trading, replay date 2025-11-03.");
+
+      // an owner rule; and a normal message that merely carries the header stays a user message
+      llm.script = () => reply("Sold.");
+      expect((await post("/api/agents/researcher/messages", { text: "Sell COF.", source: "scheduler", scheduleId: "sch_rule1", setBy: "owner", label: "Rule: stop loss\non COF", context: "COF <b>down</b> 9%" }, { "x-scheduler-token": SCHED })).status).toBe(202);
+      await idle();
+      expect((await post("/api/agents/researcher/messages", { text: "hello", scheduleId: "sch_x" }, { "x-scheduler-token": SCHED })).status).toBe(202);
+      await idle();
+      const log = chat.agents.get("researcher")!.log;
+      expect(log.find((e) => e.kind === "scheduled" && e.scheduleId === "sch_rule1")).toMatchObject({ setBy: "owner", label: "Rule: stop loss on COF", context: "COF b down /b 9%" }); // one plain line each
+      expect(log.filter((e) => e.kind === "user")).toEqual([{ kind: "user", id: expect.any(String), text: "hello", at: expect.any(String) }]);
+    } finally {
+      ctrl.abort();
+      await chat.close();
+      await new Promise((r) => server.close(() => r(null)));
+    }
+  });
+});

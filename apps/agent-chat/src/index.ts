@@ -8,11 +8,11 @@
 import { resolve } from "node:path";
 import { loadConfig } from "@allowance/shared";
 import { DEFAULT_BLOCKED_URLS } from "@allowance/mcp/server";
-import { createChatApp } from "./app.js";
+import { createChatApp, readSchedulerToken } from "./app.js";
 import { loadRoster } from "./roster.js";
 
-export { createChatApp, lastMessageOf, type AgentSummary, type ServiceChip, type LastMessage } from "./app.js";
-export { ChatAgent, systemPrompt, servicesBlock } from "./agent.js";
+export { createChatApp, lastMessageOf, readSchedulerToken, type AgentSummary, type ServiceChip, type LastMessage } from "./app.js";
+export { ChatAgent, systemPrompt, servicesBlock, scheduledContent, type LogEntry, type ScheduledMeta } from "./agent.js";
 export { chatCompletion, LlmError } from "./llm.js";
 export { loadRoster, groupMembers } from "./roster.js";
 
@@ -37,6 +37,8 @@ if (isMain) {
     groupsFile: resolve(config.dataDir, "agent-chat", "groups.json"),
     tokensFile: resolve(config.dataDir, "agent-tokens.json"),
     corsOrigins: [`http://localhost:${config.dashboardPort}`, `http://127.0.0.1:${config.dashboardPort}`],
+    // The scheduler (§20.3) creates this file on its first start; read per scheduled message.
+    schedulerToken: () => readSchedulerToken(config.dataDir),
     blockedUrls: [...DEFAULT_BLOCKED_URLS, config.agentChatUrl, `http://localhost:${config.dashboardPort}`, `${config.shopifyBridgeUrl}/stores`],
     links: {
       dashboard: `http://localhost:${config.dashboardPort}`,
