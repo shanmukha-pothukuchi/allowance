@@ -14,7 +14,8 @@ import { createFacilitatorApp } from "../../mock-facilitator/src/app.js";
 import { createComputerUseApp, type ComputerUseApp } from "./app.js";
 import { loadComputerUseConfig, type ComputerUseConfig } from "./config.js";
 import { DesktopError, looksLikeCardNumber, parseAction } from "./desktop.js";
-import { ACTION_PRICES, MAX_PRICE, PRICING, READ_PRICES, timePrice } from "./prices.js";
+import { buildCatalog } from "../../directory/src/catalog.js";
+import { ACTION_KINDS, ACTION_PRICES, MAX_PRICE, PER_MINUTE, PRICING, READ_PRICES, timePrice } from "./prices.js";
 import { FakeDesktopDriver, ManualClock, TINY_PNG } from "./test-desktop.js";
 
 function listen(server: Server): Promise<string> {
@@ -59,6 +60,18 @@ describe("action rules", () => {
     expect(MAX_PRICE).toBe("0.10");
     expect(PRICING).toBe("$0.02 per minute · $0.005 per action · reads from $0.002");
     for (const p of [...Object.values(ACTION_PRICES), ...Object.values(READ_PRICES)]) expect(Number(p)).toBeLessThan(Number(timePrice(1)));
+  });
+
+  it("the directory entry quotes the paywall's prices", () => {
+    const c = buildCatalog({ merchantUrl: "http://m.test", directoryUrl: "http://d.test", computerUseUrl: "http://127.0.0.1:4490" }).find((s) => s.id === "computer-use")!;
+    expect(c.baseUrl).toBe("http://127.0.0.1:4490/computer");
+    expect(c.maxPrice).toBe(MAX_PRICE);
+    expect(c.pricing).toBe(`$${PER_MINUTE} per minute · $${ACTION_PRICES.click} per action`);
+    const byPrice = new Map<string, string[]>();
+    for (const k of ACTION_KINDS) byPrice.set(ACTION_PRICES[k], [...(byPrice.get(ACTION_PRICES[k]) ?? []), k]);
+    expect(c.docs).toContain(`  Actions   ${[...byPrice].map(([p, ks]) => `$${p} ${ks.join(", ")}`).join(" · ")}`);
+    expect(c.docs).toContain(`  Reads     $${READ_PRICES.snapshot} text snapshot · $${READ_PRICES.screenshot} screenshot`);
+    expect(c.docs).toContain(`$${PER_MINUTE} per minute, 1–5 minutes per payment (up to $${MAX_PRICE})`);
   });
 
   it("config: COMPUTER_USE_* variables with defaults", () => {

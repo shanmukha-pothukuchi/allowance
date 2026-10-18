@@ -12,7 +12,7 @@ if (isMain) {
   const config = loadConfig();
   // Adding/removing stores is an owner power: never leave it open (setup normally creates the key).
   if (!config.ownerApiKey) config.ownerApiKey = ensureOwnerKey(config.dataDir);
-  const app = createDirectoryApp(config);
+  const app = createDirectoryApp({ ...config, computerUseUrl: process.env.COMPUTER_USE_URL?.trim() || undefined });
   const server = app.listen(config.directoryPort, () => {
     const added = app.locals.extras.list().length;
     console.log(

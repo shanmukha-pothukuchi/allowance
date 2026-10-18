@@ -33,7 +33,7 @@ async function get(path: string) {
 describe("buildCatalog", () => {
   const catalog = buildCatalog({ merchantUrl: MERCHANT, directoryUrl: DIRECTORY });
 
-  it("has exactly the six §13.1 entries and Quantcomm (§17.2)", () => {
+  it("has exactly the six §13.1 entries, Quantcomm (§17.2) and the Computer (§19.5)", () => {
     expect(catalog.map((s) => [s.id, s.name, s.kind, s.baseUrl, s.maxPrice])).toEqual([
       ["directory", "Service Directory", "directory", DIRECTORY, "0.00"],
       ["acme-weather", "Acme Weather", "x402", `${MERCHANT}/api/weather`, "0.05"],
@@ -42,8 +42,11 @@ describe("buildCatalog", () => {
       ["acme-pizza", "Acme Pizza", "x402", `${MERCHANT}/pizza`, "18.50"],
       ["acme-bounties", "Acme Bounties", "agent-work", MERCHANT, "0.00"],
       ["quantcomm", "Quantcomm Flood Research", "x402", "http://localhost:4080/quantcomm", "0.10"],
+      ["computer-use", "Computer", "x402", "http://localhost:4090/computer", "0.10"],
     ]);
-    expect(buildCatalog({ merchantUrl: MERCHANT, directoryUrl: DIRECTORY, quantcommBridgeUrl: "http://127.0.0.1:4480/" }).at(-1)!.baseUrl).toBe("http://127.0.0.1:4480/quantcomm");
+    const custom = buildCatalog({ merchantUrl: MERCHANT, directoryUrl: DIRECTORY, quantcommBridgeUrl: "http://127.0.0.1:4480/", computerUseUrl: "http://127.0.0.1:4490/" });
+    expect(custom.find((s) => s.id === "quantcomm")!.baseUrl).toBe("http://127.0.0.1:4480/quantcomm");
+    expect(custom.find((s) => s.id === "computer-use")!.baseUrl).toBe("http://127.0.0.1:4490/computer");
   });
 
   it("icons, colors and every field are filled in", () => {
@@ -55,6 +58,7 @@ describe("buildCatalog", () => {
       "acme-pizza": ["🍕", "#E5523A"],
       "acme-bounties": ["💼", "#9B5BFA"],
       quantcomm: ["🌊", "#1D4ED8"],
+      "computer-use": ["🖥️", "#64748B"],
     });
     for (const s of catalog) {
       for (const k of ["name", "provider", "summary", "description", "pricing", "docs"] as const) expect(s[k].length, `${s.id}.${k}`).toBeGreaterThan(3);
@@ -68,7 +72,7 @@ describe("buildCatalog", () => {
 
   it("docs say how to call each service, with the real URL and price", () => {
     const byId = Object.fromEntries(catalog.map((s) => [s.id, s])) as Record<string, ServiceManifest>;
-    for (const id of ["acme-weather", "acme-news", "acme-stocks", "acme-pizza", "quantcomm"]) {
+    for (const id of ["acme-weather", "acme-news", "acme-stocks", "acme-pizza", "quantcomm", "computer-use"]) {
       expect(byId[id].docs).toContain("fetch_url");
       expect(byId[id].docs).toContain(byId[id].baseUrl);
       expect(byId[id].docs).toContain(`$${byId[id].maxPrice}`);
@@ -104,6 +108,36 @@ describe("buildCatalog", () => {
     for (const code of ["quantcomm_unavailable", "ticker_not_covered", "no_analyst_view", "quantcomm_changed"]) expect(q.docs).toContain(code);
   });
 
+  it("Computer: the §19.5 entry; docs explain the queue, the lease, the actions and the text snapshot, and the safety rule", () => {
+    const c = catalog.find((s) => s.id === "computer-use")!;
+    expect(c).toMatchObject({
+      name: "Computer",
+      provider: "Allowance",
+      category: "tools",
+      kind: "x402",
+      baseUrl: "http://localhost:4090/computer",
+      pricing: "$0.02 per minute · $0.005 per action",
+      maxPrice: "0.10",
+      source: "directory",
+    });
+    for (const s of [
+      `fetch_url { "url": "${c.baseUrl}/sessions", "method": "POST"`,
+      `${c.baseUrl}/sessions/<id>/time?token=<token>&minutes=1`,
+      `${c.baseUrl}/sessions/<id>/snapshot?token=<token>`,
+      `${c.baseUrl}/sessions/<id>/actions/<kind>?token=<token>`,
+      `${c.baseUrl}/sessions/<id>/end?token=<token>`,
+      "queued",
+      "lease.secondsLeft",
+      "[n] in front of each link, button and field",
+      "$0.02 per minute",
+      "$0.005 navigate, click, type, select",
+      "$0.002 text snapshot",
+    ]) {
+      expect(c.docs).toContain(s);
+    }
+    expect(c.docs).toContain("Never type card numbers or passwords into the computer; pay with your wallet tools instead.");
+  });
+
   it("search matches name, summary, description, provider and category; all terms must match", () => {
     expect(searchCatalog(catalog, { q: "pizza" }).map((s) => s.id)).toEqual(["acme-pizza"]);
     expect(searchCatalog(catalog, { q: "FOOD" }).map((s) => s.id)).toEqual(["acme-pizza"]);
@@ -114,19 +148,20 @@ describe("buildCatalog", () => {
     expect(searchCatalog(catalog, { q: "flood" }).map((s) => s.id)).toEqual(["quantcomm"]);
     expect(searchCatalog(catalog, { q: "capital one" }).map((s) => s.id)).toEqual(["quantcomm"]);
     expect(searchCatalog(catalog, { q: "work" }).map((s) => s.id)).toContain("acme-bounties");
-    expect(searchCatalog(catalog, {}).length).toBe(7);
+    expect(searchCatalog(catalog, { q: "browser" }).map((s) => s.id)).toEqual(["computer-use"]);
+    expect(searchCatalog(catalog, {}).length).toBe(8);
   });
 });
 
 describe("directory HTTP", () => {
   it("GET /health", async () => {
-    expect((await get("/health")).body).toEqual({ ok: true, services: 7 });
+    expect((await get("/health")).body).toEqual({ ok: true, services: 8 });
   });
 
-  it("GET /services lists all seven without docs; trailing slashes in MERCHANT_URL are trimmed", async () => {
+  it("GET /services lists all eight without docs; trailing slashes in MERCHANT_URL are trimmed", async () => {
     const { status, body } = await get("/services");
     expect(status).toBe(200);
-    expect(body.services).toHaveLength(7);
+    expect(body.services).toHaveLength(8);
     for (const s of body.services) expect(s).not.toHaveProperty("docs");
     expect(body.services.find((s: ServiceManifest) => s.id === "acme-pizza").baseUrl).toBe(`${MERCHANT}/pizza`);
   });

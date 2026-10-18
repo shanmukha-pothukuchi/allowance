@@ -16,6 +16,7 @@ import {
   type X402PaymentRequired,
   type X402SettleResponse,
 } from "@allowance/shared";
+import { registerComputerTools } from "./computer.js";
 import { formatBody, receiptLine, receiptListLine, serviceLine, shopifyPayLine, shopifyTag, shortAddress, storefrontHost, txRef, usd, type ShopRef } from "./format.js";
 import { WalletApiError, WalletClient, WalletUnreachableError, type FetchLike } from "./wallet-client.js";
 
@@ -30,6 +31,8 @@ export interface CreateServerOptions {
   log?: (msg: string) => void;
   /** URL prefixes fetch_url refuses (in addition to walletServiceUrl). Defaults to DEFAULT_BLOCKED_URLS. */
   blockedUrls?: string[];
+  /** Add the computer_* tools (computer.ts, §19.6) for vision-capable clients. Default off. */
+  computerTools?: boolean;
 }
 
 type HttpMethod = "GET" | "POST";
@@ -1115,6 +1118,8 @@ export function createServer(opts: CreateServerOptions): McpServer {
         return serviceWaitOutcome(r.approvalId, wait, r.service, "request");
       }),
   );
+
+  if (opts.computerTools) registerComputerTools(server, { wallet, fetch: doFetch, log, approvalWaitMs }); // §19.6
 
   return server;
 }
