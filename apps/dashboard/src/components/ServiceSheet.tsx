@@ -2,12 +2,13 @@
 import { useEffect, useRef } from "react";
 import { relativeTime } from "../format";
 import { CATEGORIES, connectedByLabel, priceCapLabel, requestsFor, type CatalogEntry } from "../services";
-import { capLabel, modeExplain, modeLabel, shopifyRefOf } from "../shopify";
+import { capLabel, HOW_IT_PAYS, pricingWithoutCap, shopifyRefOf } from "../shopify";
 import { serviceKey, type DashboardState } from "../state";
 import type { WalletActions } from "../useWallet";
 import { ApprovalCard } from "./ApprovalCard";
 import { AgentAvatar, ServiceTile } from "./Avatar";
-import { Close, ExternalLink, ShoppingBag, Warn } from "./Icons";
+import { Close, CreditCard, ShoppingBag, Warn } from "./Icons";
+import { StorefrontLink } from "./ShopifyParts";
 import { Switch } from "./Switch";
 
 interface Props {
@@ -55,9 +56,10 @@ export function ServiceSheet({ entry, state, actions, now, onClose }: Props) {
                   <span>
                     <ShoppingBag width={15} height={15} /> Shopify store
                   </span>
-                  <span>· {modeLabel(shop.mode)}</span>
+                  <span>
+                    · <StorefrontLink shop={shop} className="shop-link shop-link-quiet" />
+                  </span>
                 </p>
-                <p className="muted sheet-shop-domain">{shop.domain}</p>
               </>
             ) : (
               <p className="muted">
@@ -89,32 +91,31 @@ export function ServiceSheet({ entry, state, actions, now, onClose }: Props) {
           <p className="sheet-desc">{s.description || s.summary}</p>
 
           {shop && (
-            <div className={`shop-mode shop-mode-block shop-mode-${shop.mode}`}>
-              <span className={`mode-chip mode-${shop.mode}`}>{modeLabel(shop.mode)}</span>
-              <span className="shop-mode-text">{modeExplain(shop.mode, s.maxPrice)}</span>
-            </div>
+            <p className="shop-note shop-how-block">
+              <CreditCard width={18} height={18} />
+              <span>{HOW_IT_PAYS}</span>
+            </p>
           )}
 
           {shop ? (
             <dl className="sheet-facts">
               <div>
                 <dt>Pricing</dt>
-                <dd>{s.pricing}</dd>
+                <dd>{pricingWithoutCap(s.pricing) || s.pricing}</dd>
               </div>
               <div>
                 <dt>Per-order cap</dt>
-                <dd>{capLabel(shop.mode, s.maxPrice)}</dd>
+                <dd>{capLabel(s.maxPrice)}</dd>
               </div>
               <div className="fact-wide">
                 <dt>Store</dt>
                 <dd>
-                  <a className="shop-link" href={`https://${shop.domain}`} target="_blank" rel="noopener noreferrer">
-                    {shop.domain} <ExternalLink width={14} height={14} />
-                  </a>
+                  <StorefrontLink shop={shop} />
+                  {shop.cardCheckout && <span className="muted shop-card-fact"> · accepts card checkout for agents</span>}
                 </dd>
               </div>
               <div className="fact-wide">
-                <dt>{shop.mode === "handoff" ? "Agents browse under" : "Pays only under"}</dt>
+                <dt>Pays only under</dt>
                 <dd><code>{s.baseUrl}</code></dd>
               </div>
             </dl>

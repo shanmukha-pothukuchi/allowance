@@ -7,10 +7,15 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { ShopifyStore } from "@allowance/shared";
 
+export interface StubStore extends ShopifyStore {
+  /** Password-protected storefront: discovery answers 422 private_catalog. */
+  private?: boolean;
+}
+
 export interface StubBridge {
   url: string;
   /** Stores discovery can find, by handle. */
-  known: Map<string, ShopifyStore>;
+  known: Map<string, StubStore>;
   /** Registered stores (POST /stores), by handle. */
   registered: Map<string, ShopifyStore>;
   calls: { method: string; path: string; ownerKey?: string; body?: unknown }[];
@@ -19,45 +24,69 @@ export interface StubBridge {
   close(): Promise<void>;
 }
 
-export const CRYPTO_STORE: ShopifyStore = {
-  handle: "crypto-app-test",
-  domain: "crypto-app-test.myshopify.com",
-  mode: "agent_checkout",
-  name: "Crypto App Test",
+/** A public store on a custom domain that takes agent card checkout (like the real Allbirds). */
+export const ALLBIRDS_STORE: ShopifyStore = {
+  handle: "weareallbirds",
+  domain: "weareallbirds.myshopify.com",
+  storefrontUrl: "https://www.allbirds.com",
+  cardCheckout: true,
+  name: "Allbirds",
   currency: "USD",
-  productCount: 12,
+  sampleImages: ["https://cdn.shopify.com/s/files/1/runner_480x.png", "https://cdn.shopify.com/s/files/1/loafer_480x.png"],
+  productCount: 692,
 };
 
-export const HANDOFF_STORE: ShopifyStore = {
+/** A public store on its myshopify address that doesn't advertise card checkout for agents. */
+export const SOCKS_STORE: ShopifyStore = {
   handle: "cool-socks",
   domain: "cool-socks.myshopify.com",
-  mode: "handoff",
+  storefrontUrl: "https://cool-socks.myshopify.com",
+  cardCheckout: false,
   name: "Cool Socks",
   currency: "USD",
   productCount: 40,
 };
 
-export const EURO_STORE: ShopifyStore = { handle: "euro-shop", domain: "euro-shop.myshopify.com", mode: "handoff", name: "Euro Shop", currency: "EUR" };
+export const EURO_STORE: ShopifyStore = {
+  handle: "euro-shop",
+  domain: "euro-shop.myshopify.com",
+  storefrontUrl: "https://www.euroshop.example",
+  cardCheckout: true,
+  name: "Euro Shop",
+  currency: "EUR",
+};
+
+/** A fresh dev store with its storefront password on (like crypto-app-test). */
+export const PRIVATE_STORE: StubStore = {
+  handle: "crypto-app-test",
+  domain: "crypto-app-test.myshopify.com",
+  storefrontUrl: "https://crypto-app-test.myshopify.com",
+  cardCheckout: false,
+  name: "crypto-app-test",
+  currency: "USD",
+  private: true,
+};
 
 /** "https://x.myshopify.com/...", "x.myshopify.com" or a storefront alias in `aliases` → handle. */
 function handleOf(raw: string, aliases: Record<string, string>): string | null {
   const s = raw.trim().toLowerCase();
-  let host: string;
+  let url: URL;
   try {
-    host = new URL(/^[a-z]+:\/\//.test(s) ? s : `https://${s}`).hostname;
+    url = new URL(/^[a-z]+:\/\//.test(s) ? s : `https://${s}`);
   } catch {
     return null;
   }
-  if (aliases[host]) return aliases[host];
-  const m = /^([a-z0-9][a-z0-9-]*)\.myshopify\.com$/.exec(host);
+  if (url.hostname === "admin.shopify.com") return null;
+  if (aliases[url.hostname]) return aliases[url.hostname];
+  const m = /^([a-z0-9][a-z0-9-]*)\.myshopify\.com$/.exec(url.hostname);
   return m ? m[1] : null;
 }
 
-export async function startStubBridge(opts: { ownerKey?: string; stores?: ShopifyStore[]; aliases?: Record<string, string> } = {}): Promise<StubBridge> {
-  const aliases = { "shop.crypto.example": "crypto-app-test", ...(opts.aliases ?? {}) };
+export async function startStubBridge(opts: { ownerKey?: string; stores?: StubStore[]; aliases?: Record<string, string> } = {}): Promise<StubBridge> {
+  const aliases = { "allbirds.com": "weareallbirds", "www.allbirds.com": "weareallbirds", "www.euroshop.example": "euro-shop", ...(opts.aliases ?? {}) };
   const stub: StubBridge = {
     url: "",
-    known: new Map((opts.stores ?? [CRYPTO_STORE, HANDOFF_STORE, EURO_STORE]).map((s) => [s.handle, s])),
+    known: new Map((opts.stores ?? [ALLBIRDS_STORE, SOCKS_STORE, EURO_STORE, PRIVATE_STORE]).map((s) => [s.handle, s])),
     registered: new Map(),
     calls: [],
     close: async () => {},
@@ -71,21 +100,30 @@ export async function startStubBridge(opts: { ownerKey?: string; stores?: Shopif
   });
 
   const lookup = (raw: unknown, res: express.Response): ShopifyStore | null => {
+    if (typeof raw === "string" && /admin\.shopify\.com/i.test(raw)) {
+      res.status(400).json({ error: "invalid_store_url", message: "That's a store admin link; paste the shop's own address (like allbirds.com or a product page) instead." });
+      return null;
+    }
     const handle = typeof raw === "string" ? handleOf(raw, aliases) : null;
     if (!handle) {
-      res.status(400).json({ error: "invalid_store_url", message: "That is not a Shopify store link" });
+      res.status(400).json({ error: "invalid_store_url", message: "That isn't a store link. Paste the shop's address, like allbirds.com, one of its product pages, or your-store.myshopify.com." });
       return null;
     }
     const store = stub.known.get(handle);
     if (!store) {
-      res.status(404).json({ error: "store_not_found", message: `No Shopify store at ${handle}.myshopify.com` });
+      res.status(404).json({ error: "store_not_found", message: `There's no Shopify store at ${handle}.myshopify.com.` });
+      return null;
+    }
+    if (store.private) {
+      res.status(422).json({ error: "store_unsupported", reason: "private_catalog", message: "This store's catalog isn't public yet (it's password-protected), so agents can't browse it." });
       return null;
     }
     if (store.currency !== "USD") {
-      res.status(422).json({ error: "store_unsupported", message: `${store.name} prices in ${store.currency}; only USD stores are supported` });
+      res.status(422).json({ error: "store_unsupported", reason: "currency", currency: store.currency, message: `${store.name} doesn't sell to US shoppers in US dollars (it prices in ${store.currency}), so agents can't pay it in USDC.` });
       return null;
     }
-    return store;
+    const { private: _private, ...pub } = store;
+    return pub;
   };
 
   app.get("/stores/discover", (req, res) => {
@@ -98,7 +136,7 @@ export async function startStubBridge(opts: { ownerKey?: string; stores?: Shopif
     const store = lookup(req.body?.url, res);
     if (!store) return;
     const existing = stub.registered.get(store.handle);
-    if (existing) return void res.status(409).json({ error: "store_exists", message: "Already registered", store: existing });
+    if (existing) return void res.status(409).json({ error: "store_exists", message: "Already added", store: existing });
     const added = { ...store, addedAt: new Date().toISOString() };
     stub.registered.set(store.handle, added);
     res.status(201).json({ store: added });

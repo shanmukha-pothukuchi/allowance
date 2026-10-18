@@ -19,7 +19,6 @@ export type {
   ServiceGrant,
   ServiceKind,
   ServiceManifest,
-  ShopifyMode,
   ShopifyStore,
   ShopifyStoreRef,
   SummaryResponse,
@@ -35,7 +34,7 @@ export type ConnectionStatus = "connecting" | "live" | "reconnecting" | "offline
 /** Owner view of a directory entry (§13.2): list entries omit `docs`; `connectedAgents` are agent ids. */
 export type DirectoryService = Omit<ServiceManifest, "docs"> & { docs?: string; connectedAgents?: string[] };
 
-/** `POST /v1/directory/shopify` (§15.3). `maxPrice` only matters for agent checkout; `connectTo` are agent ids. */
+/** `POST /v1/directory/shopify` (§15.3). `maxPrice` is the per-order cap; `connectTo` are agent ids. */
 export interface AddShopifyStoreRequest {
   url: string;
   maxPrice?: string;

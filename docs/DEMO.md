@@ -81,14 +81,15 @@ New broadcast**, "Trip team" with researcher and travel-planner, and send one me
 
 *"Anyone can hire an agent in a minute. The money rules come with it."*
 
-## Optional — A real Shopify order (40 s)
+## Optional — Shop any Shopify store (40 s)
 
-Chat page, **researcher**: *"Buy me one UMD Testudo Sticker from https://crypto-app-test.myshopify.com"*.
-It finds the store isn't connected and asks you to add it (approve). It searches the catalog,
-builds a cart and pays $0.01 in USDC. Open the order card's **View in Shopify admin**: order #10xx,
-paid, tagged `allowance`, with the transaction in the note. For the approval moment, ask the
-**shopper** for the $14.99 Terrapins coffee mug instead (over its $10 threshold). The $4,999 class
-ring is a good "blocked by the cap" example.
+Chat page, **shopper**: *"Find me a pair of wool runners on allbirds.com, size 10, under $120."* It
+sees the store isn't connected and asks you to add it (approve; the card shows allbirds.com and the
+cap). It searches the real catalog (real product photos), builds a real Shopify cart, and pays in
+USDC. Over its $10 threshold, so a second approval appears. Approve. The confirmation card shows the
+store, the item, "Paid with Allowance Card ••1234" and a **Simulated order** badge. Say it: *"The
+catalog, the cart and the payment from the agent's wallet are real. The card that pays the store is
+the part we'd plug into a card issuer and Shopify's agent checkout."*
 
 ## 2:35 — Close (25 s)
 

@@ -17,10 +17,10 @@ export type ShopifyErrorKind =
   | "locked"
   /** No such shop (404 from Shopify). */
   | "not_found"
-  /** Admin credentials rejected (token grant failed, or 401/403 after a fresh token). */
-  | "auth"
   /** GraphQL `errors` (query problems, throttling that did not clear). */
   | "graphql"
+  /** Shopify refused the input (`userErrors`, e.g. a cart it won't create). */
+  | "rejected"
   /** Non-2xx HTTP answer that is none of the above (5xx, 402 frozen shop, HTML error pages). */
   | "http"
   /** Could not reach Shopify (DNS, TLS, timeout). */

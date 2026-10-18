@@ -1,9 +1,9 @@
 /**
  * Client for the Shopify bridge's discovery endpoint (apps/shopify-bridge, docs/ARCHITECTURE.md §15.1).
  * Discovery is free and has no side effects. The bridge's own errors (400 invalid_store_url,
- * 404 store_not_found, 422 store_unsupported, 502 shopify_unavailable / shopify_error when Shopify
- * itself failed) come back as `ShopifyBridgeError`; anything else (down, timeout, other 5xx, a store
- * we cannot read) is `ShopifyBridgeUnavailableError`.
+ * 404 store_not_found, 422 store_unsupported with a `reason`, 502 shopify_unavailable / shopify_error
+ * when Shopify itself failed) come back as `ShopifyBridgeError`; anything else (down, timeout, other
+ * 5xx, a store we cannot read) is `ShopifyBridgeUnavailableError`.
  */
 import type { ShopifyStore } from "@allowance/shared";
 // Relative import on purpose (same as the agents' seeds): one manifest builder for directory and wallet.
@@ -14,6 +14,8 @@ export class ShopifyBridgeError extends Error {
     public status: number,
     public code: string,
     message: string,
+    /** store_unsupported only: "private_catalog" | "currency" | "catalog_unreachable". */
+    public reason?: string,
   ) {
     super(message);
     this.name = "ShopifyBridgeError";
@@ -28,7 +30,7 @@ export class ShopifyBridgeUnavailableError extends Error {
 }
 
 export interface ShopifyBridgeClient {
-  /** Normalize a store link and read its name, currency and mode. Throws ShopifyBridgeError / ShopifyBridgeUnavailableError. */
+  /** Any store link → the store (name, storefront, currency, card checkout, sample images). Throws ShopifyBridgeError / ShopifyBridgeUnavailableError. */
   discover(url: string): Promise<ShopifyStore>;
 }
 
@@ -50,7 +52,7 @@ export function httpShopifyBridgeClient(bridgeUrl: string, opts: { fetch?: typeo
       } catch {
         body = null;
       }
-      const b = (body ?? {}) as { store?: unknown; error?: unknown; message?: unknown };
+      const b = (body ?? {}) as { store?: unknown; error?: unknown; message?: unknown; reason?: unknown };
       if (res.ok) {
         // The contract says "→ ShopifyStore"; accept `{ store }` too.
         const store = asShopifyStore(b.store ?? body);
@@ -61,7 +63,8 @@ export function httpShopifyBridgeClient(bridgeUrl: string, opts: { fetch?: typeo
         const fallback = { 400: "invalid_store_url", 404: "store_not_found", 422: "store_unsupported" }[res.status]!;
         const code = typeof b.error === "string" && /^[a-z_]{1,60}$/.test(b.error) ? b.error : fallback;
         const message = typeof b.message === "string" ? b.message.slice(0, 300) : `The Shopify bridge answered ${res.status}`;
-        throw new ShopifyBridgeError(res.status, code, message);
+        const reason = typeof b.reason === "string" && /^[a-z_]{1,40}$/.test(b.reason) ? b.reason : undefined;
+        throw new ShopifyBridgeError(res.status, code, message, reason);
       }
       // The bridge reached Shopify and Shopify failed (502 shopify_unavailable / shopify_error): say so.
       if (res.status === 502 && typeof b.error === "string" && /^[a-z_]{1,60}$/.test(b.error)) {

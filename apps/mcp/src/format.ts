@@ -91,23 +91,41 @@ export interface ServiceLike {
   summary?: string;
   pricing?: string;
   /** Shopify stores only (ARCHITECTURE §15). */
-  shopify?: { domain: string; mode: string };
+  shopify?: ShopRef;
 }
 
-/** "- 🌤️ Acme Weather (acme-weather): Current weather for any city · $0.05 per call" (+ " · Shopify store x.myshopify.com, agent checkout") */
+/** The parts of a Shopify store ref the texts use. */
+export interface ShopRef {
+  domain: string;
+  storefrontUrl?: string;
+  cardCheckout?: boolean;
+}
+
+/** "- 🌤️ Acme Weather (acme-weather): Current weather for any city · $0.05 per call" (+ " · Shopify store allbirds.com") */
 export function serviceLine(s: ServiceLike): string {
   const summary = (s.summary ?? "").replace(/\s+/g, " ").trim();
   return `- ${s.icon ? `${s.icon} ` : ""}${s.name} (${s.id})${summary ? `: ${summary}` : ""}${s.pricing ? ` · ${s.pricing}` : ""}${s.shopify ? ` · ${shopifyTag(s.shopify)}` : ""}`;
 }
 
-/** "Shopify store crypto-app-test.myshopify.com, agent checkout" / "…, browse only" */
-export function shopifyTag(shop: { domain: string; mode: string }): string {
-  return `Shopify store ${shop.domain}, ${shop.mode === "agent_checkout" ? "agent checkout" : "browse only"}`;
+/** The storefront domain people know: "https://www.allbirds.com" → "allbirds.com" (else the myshopify address). */
+export function storefrontHost(shop: ShopRef): string {
+  try {
+    if (shop.storefrontUrl) return new URL(shop.storefrontUrl).host.replace(/^www\./, "");
+  } catch {
+    /* fall through */
+  }
+  return shop.domain;
 }
 
-/** What the mode means for the agent, one sentence. */
-export function shopifyModeLine(shop: { mode: string }, maxPrice?: string): string {
-  return shop.mode === "agent_checkout"
-    ? `Agent checkout: you pay orders in USDC from your wallet${maxPrice ? ` (up to ${usd(maxPrice)} per order)` : ""} and the store gets a real, paid order.`
-    : "Browse only: you can search and build a cart, but you cannot pay here. Give the user the cart's checkout link to finish at Shopify.";
+/** "Shopify store allbirds.com" */
+export function shopifyTag(shop: ShopRef): string {
+  return `Shopify store ${storefrontHost(shop)}`;
+}
+
+/** How paying works at a store, for the agent, in two short sentences. */
+export function shopifyPayLine(maxPrice?: string): string {
+  return (
+    `You pay orders in USDC from your wallet${maxPrice ? ` (up to ${usd(maxPrice)} per order)` : ""}, and Allowance pays the store with a single-use Allowance card. ` +
+    "Placing the order is simulated for now: tell the user so and share the confirmation's Allowance reference."
+  );
 }

@@ -4,7 +4,7 @@
  */
 import { approvalOutcomeLabel, counterpartyName, isCustomGrant, isServiceApproval, money, relativeTime, shortHex, shortOrigin } from "../format";
 import { priceCapLabel } from "../services";
-import { capLabel, modeExplain, modeLabel, shopifyRefOf } from "../shopify";
+import { capLabel, shopifyRefOf, storefrontHost } from "../shopify";
 import type { Approval } from "../types";
 import { AgentAvatar, ServiceTile } from "./Avatar";
 import { Check, Cross, Info, ShoppingBag, Warn } from "./Icons";
@@ -57,13 +57,9 @@ export function ApprovalCard({ approval: a, now, busy = false, showDetails = fal
             <div className="approval-service-name">
               <span className="svc-name">{service.name}</span>
               <span className="svc-provider shop-domain">
-                <ShoppingBag width={13} height={13} /> Shopify store · {shop.domain}
+                <ShoppingBag width={13} height={13} /> Shopify store · {storefrontHost(shop)}
               </span>
             </div>
-          </div>
-          <div className={`shop-mode shop-mode-${shop.mode}`}>
-            <span className={`mode-chip mode-${shop.mode}`}>{modeLabel(shop.mode)}</span>
-            <span className="shop-mode-text">{modeExplain(shop.mode, service.maxPrice ?? a.amount)}</span>
           </div>
           {service.permissions.length > 0 && (
             <ul className="perm-list" aria-label="What it can do">
@@ -73,7 +69,7 @@ export function ApprovalCard({ approval: a, now, busy = false, showDetails = fal
             </ul>
           )}
           <p className="price-cap">
-            <span className="stat-label">Price cap</span> {capLabel(shop.mode, service.maxPrice ?? a.amount)}
+            <span className="stat-label">Per-order cap</span> {capLabel(service.maxPrice ?? a.amount)}
           </p>
           {proposedStore && pending && (
             <p className="shop-note" role="note">

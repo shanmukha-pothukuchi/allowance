@@ -1,7 +1,8 @@
 /**
- * "Add a Shopify store" (§15.5): paste a link, see what the bridge finds (live, debounced), set a
- * per-order cap, optionally connect agents, add. Owner power: `POST /v1/directory/shopify` via the
- * dashboard proxy (owner key). Dashboard-only (not embedded in the chat).
+ * "Add a Shopify store" (§15.5): paste any store or product link, see what the bridge finds (live,
+ * debounced: name, storefront, product pictures, catalog size, card checkout), set a per-order cap,
+ * optionally connect agents, add. Owner power: `POST /v1/directory/shopify` via the dashboard proxy
+ * (owner key). Dashboard-only (not embedded in the chat). Shopper side only: no store admin.
  */
 import { useEffect, useRef, useState } from "react";
 import { HttpError, type WalletAdapter } from "../api/adapter";
@@ -14,14 +15,15 @@ import {
   checkStoreLink,
   DEFAULT_CAP,
   existingStore,
-  modeExplain,
-  modeLabel,
+  HOW_IT_PAYS,
+  sampleImagesOf,
   storeErrorMessage,
 } from "../shopify";
 import type { AgentPublic, DirectoryService, ShopifyStore } from "../types";
 import { AgentAvatar, ServiceTile } from "./Avatar";
-import { Check, Info } from "./Icons";
+import { Check, CreditCard, Info } from "./Icons";
 import { CUSTOM, Field, SheetShell } from "./SheetParts";
+import { SampleImages, StorefrontLink } from "./ShopifyParts";
 
 const DEBOUNCE_MS = 450;
 
@@ -107,18 +109,16 @@ export function AddShopifySheet({ adapter, offline = false, agents, directory, o
 
   const store = preview.phase === "ok" ? preview.store : undefined;
   const already = store ? existingStore(directory, store) : undefined;
-  const mode = store?.mode;
-  const showCap = mode !== "handoff";
   const cap = capChoice === CUSTOM ? checkCap(capCustom) : checkCap(capChoice);
   const capValue = cap.ok ? cap.amount : undefined;
-  const canAdd = !!adapter && !!store && !already && !busy && (mode === "handoff" || cap.ok);
+  const canAdd = !!adapter && !!store && !already && !busy && cap.ok;
   const pickable = agents;
 
   const toggleAgent = (id: string) => setConnectTo((xs) => (xs.includes(id) ? xs.filter((x) => x !== id) : [...xs, id]));
 
   const add = async () => {
     if (!adapter || !store || preview.phase !== "ok") return;
-    if (mode !== "handoff" && !cap.ok) {
+    if (!cap.ok) {
       capRef.current?.focus();
       return;
     }
@@ -126,7 +126,7 @@ export function AddShopifySheet({ adapter, offline = false, agents, directory, o
     setError(undefined);
     try {
       const ids = connectTo.filter((id) => agents.some((a) => a.id === id));
-      const res = await adapter.addShopifyStore(addStoreBody({ url: preview.url, mode: store.mode, cap: capValue, connectTo: ids }));
+      const res = await adapter.addShopifyStore(addStoreBody({ url: preview.url, cap: capValue, connectTo: ids }));
       onAdded(res.service);
     } catch (err) {
       const e = err as Error;
@@ -140,7 +140,7 @@ export function AddShopifySheet({ adapter, offline = false, agents, directory, o
       <ServiceTile name="Shopify" shopify size="xl" />
       <div className="osheet-titles">
         <h2 className="osheet-name">Add a Shopify store</h2>
-        <p className="muted">Agents can shop there like any other service</p>
+        <p className="muted">Any public store. Your agents shop there for you.</p>
       </div>
     </div>
   );
@@ -165,13 +165,13 @@ export function AddShopifySheet({ adapter, offline = false, agents, directory, o
     <SheetShell embed={false} label="Add a Shopify store" head={head} footer={footer} locked={busy} onClose={onClose}>
       {offline && !adapter && <div className="osheet-banner banner-offline">Can't reach the wallet. Start it with npm run dev. Retrying…</div>}
 
-      <Field label="Store link" htmlFor="shop-link" hint="Paste the store's address: its myshopify.com link or its own domain.">
+      <Field label="Store link" htmlFor="shop-link" hint="Paste the shop's address, or a link to any of its products.">
         <input
           ref={inputRef}
           id="shop-link"
           className={`text-input shop-link-input${preview.phase === "bad" || preview.phase === "error" ? " input-bad" : preview.phase === "ok" ? " input-ok" : ""}`}
           value={link}
-          placeholder="crypto-app-test.myshopify.com"
+          placeholder="allbirds.com"
           autoComplete="off"
           autoCapitalize="none"
           spellCheck={false}
@@ -202,12 +202,18 @@ export function AddShopifySheet({ adapter, offline = false, agents, directory, o
                 <ServiceTile name={store.name} shopify size="lg" />
                 <div className="shop-preview-text">
                   <strong className="shop-preview-name">{store.name}</strong>
-                  <span className="muted">{store.domain}</span>
-                  <span className="muted">{catalogLine(store)}</span>
+                  <span className="muted shop-preview-site">
+                    <StorefrontLink shop={store} />
+                  </span>
+                  {catalogLine(store) && <span className="muted">{catalogLine(store)}</span>}
                 </div>
-                <span className={`mode-chip mode-${store.mode}`}>{modeLabel(store.mode)}</span>
               </div>
-              <p className="shop-mode-text">{modeExplain(store.mode, already ? already.maxPrice : capValue)}</p>
+              <SampleImages images={sampleImagesOf(store)} label={store.name} />
+              {store.cardCheckout && (
+                <p className="shop-card-ok">
+                  <CreditCard width={16} height={16} /> Accepts card checkout for agents
+                </p>
+              )}
               {already && (
                 <div className="shop-exists">
                   <span>
@@ -223,8 +229,7 @@ export function AddShopifySheet({ adapter, offline = false, agents, directory, o
         </div>
       </Field>
 
-      {!already &&
-        (showCap ? (
+      {!already && (
           <Field label="Per-order cap" hint="Orders above this are blocked. Each agent's own limits still apply: bigger orders wait for your approval.">
             <div className="amount-picker">
               <div className="chips amount-chips" role="radiogroup" aria-label="Per-order cap">
@@ -268,12 +273,7 @@ export function AddShopifySheet({ adapter, offline = false, agents, directory, o
               )}
             </div>
           </Field>
-        ) : (
-          <p className="osheet-info">
-            <Info width={20} height={20} />
-            <span>No agent payments here: you pay at Shopify's checkout.</span>
-          </p>
-        ))}
+      )}
 
       {!already && (
         <Field label="Connect to (optional)" hint="You can connect it later from the store's page, and agents can ask you for it.">
@@ -287,7 +287,7 @@ export function AddShopifySheet({ adapter, offline = false, agents, directory, o
                     <AgentAvatar name={a.name} size="sm" />
                     <span className="svc-pick-text">
                       <strong>{a.name}</strong>
-                      <small>{a.frozen ? "frozen" : mode === "handoff" ? "builds carts for you" : `up to ${shortMoney(a.policy.maxPerTx)} per payment`}</small>
+                      <small>{a.frozen ? "frozen" : `up to ${shortMoney(a.policy.maxPerTx)} per payment`}</small>
                     </span>
                     <span className="svc-pick-tick" aria-hidden>
                       <Check width={16} height={16} />
@@ -299,6 +299,13 @@ export function AddShopifySheet({ adapter, offline = false, agents, directory, o
             {pickable.length === 0 && <li className="muted">No agents yet.</li>}
           </ul>
         </Field>
+      )}
+
+      {(!store || !already) && (
+        <p className="osheet-info shop-how">
+          <Info width={20} height={20} />
+          <span>{HOW_IT_PAYS}</span>
+        </p>
       )}
     </SheetShell>
   );

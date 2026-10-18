@@ -1,15 +1,16 @@
 /**
  * Catalog sources for a store, all mapped to the bridge's product shape (docs/ARCHITECTURE.md §15.1):
- * Admin GraphQL (the owner's store, with credentials), the tokenless Storefront API, or UCP
- * `search_catalog` (optional fallback for password-protected stores).
+ * the store's public, tokenless Storefront API (always asked for US prices with
+ * `@inContext(country: US)`), or UCP `search_catalog` (optional fallback for stores whose Storefront
+ * API is not public, only with a configured agent profile). Carts are real Shopify carts
+ * (`cartCreate`), so totals and the checkout link are Shopify's own.
  */
 import { toBaseUnits, toDollars } from "@allowance/shared";
 import { ShopifyError } from "./errors.js";
-import type { AdminClient } from "./admin.js";
 import type { StorefrontClient } from "./storefront.js";
 import type { UcpClient } from "./ucp.js";
 
-export type CatalogSource = "admin" | "storefront" | "ucp";
+export type CatalogSource = "storefront" | "ucp";
 
 export interface BridgeVariant {
   id: string;
@@ -25,6 +26,7 @@ export interface BridgeProduct {
   /** Plain text, ≤ 300 chars. */
   description: string;
   image: string | null;
+  /** The product page on the storefront. */
   url: string;
   priceMin: string;
   priceMax: string;
@@ -43,11 +45,18 @@ export interface VariantDetail {
   currency: string;
   available: boolean;
   image: string | null;
+  url: string;
 }
 
 export interface ShopInfo {
   name: string;
+  /** Currency US shoppers pay in (presentment currency for the US market). */
   currency: string;
+  /** Country the store answered for (`@inContext(country: US)` falls back when it doesn't sell to the US). */
+  country?: string;
+  /** The storefront's primary domain URL, e.g. "https://www.allbirds.com". */
+  storefrontUrl?: string;
+  sampleImages: string[];
   productCount?: number;
 }
 
@@ -60,11 +69,15 @@ export interface Catalog {
   variants(ids: string[]): Promise<Map<string, VariantDetail>>;
 }
 
-/** Variants per product in list results (keeps Storefront tokenless query cost under 1000). */
+/** Variants per product in list results (keeps the tokenless Storefront query cost low). */
 export const LIST_VARIANTS = 10;
 /** Variants for a single product. */
 export const DETAIL_VARIANTS = 50;
 export const DESCRIPTION_MAX = 300;
+export const SAMPLE_IMAGES = 4;
+/** Shopify CDN resizes on request; product cards and previews never need more. */
+const IMAGE = "url(transform: { maxWidth: 640 })";
+const SAMPLE_IMAGE = "url(transform: { maxWidth: 480 })";
 
 // ---- helpers ----------------------------------------------------------------------------------
 
@@ -97,8 +110,11 @@ function cleanTitle(raw: unknown): string {
   return shortText(raw, 200) || "Untitled";
 }
 
-function productUrl(domain: string, handle: string, onlineStoreUrl?: unknown): string {
-  return typeof onlineStoreUrl === "string" && /^https:\/\//.test(onlineStoreUrl) ? onlineStoreUrl : `https://${domain}/products/${encodeURIComponent(handle)}`;
+const httpsUrl = (u: unknown): string | null => (typeof u === "string" && /^https:\/\//.test(u) ? u : null);
+
+/** The product page: Shopify's `onlineStoreUrl` (on the storefront's own domain) or `{storefront}/products/{handle}`. */
+export function productUrl(storefrontUrl: string, handle: string, onlineStoreUrl?: unknown): string {
+  return httpsUrl(onlineStoreUrl) ?? `${storefrontUrl.replace(/\/+$/, "")}/products/${encodeURIComponent(handle)}`;
 }
 
 function minMax(variants: BridgeVariant[], fallbackMin: string, fallbackMax: string): { priceMin: string; priceMax: string } {
@@ -122,109 +138,11 @@ export function searchTerms(q: string | undefined): string {
     .slice(0, 100);
 }
 
-// ---- Admin GraphQL ------------------------------------------------------------------------------
-
-const ADMIN_PRODUCT_FIELDS = `
-  id handle title description onlineStoreUrl status
-  featuredMedia { preview { image { url } } }
-  priceRangeV2 { minVariantPrice { amount currencyCode } maxVariantPrice { amount currencyCode } }
-  variants(first: $variants) { nodes { id title price availableForSale } }`;
-
-interface AdminProduct {
-  id: string;
-  handle: string;
-  title: string;
-  description?: string | null;
-  onlineStoreUrl?: string | null;
-  status?: string;
-  featuredMedia?: { preview?: { image?: { url?: string } | null } | null } | null;
-  priceRangeV2?: { minVariantPrice?: { amount: string; currencyCode: string }; maxVariantPrice?: { amount: string; currencyCode: string } };
-  variants?: { nodes?: { id: string; title: string; price: string; availableForSale: boolean }[] };
-}
-
-export function adminCatalog(admin: AdminClient, domain: string): Catalog {
-  let currency: string | undefined;
-  const shop = async (): Promise<ShopInfo> => {
-    const d = await admin.graphql<{ shop: { name: string; currencyCode: string }; productsCount?: { count?: number } | null }>(
-      `query BridgeShop { shop { name currencyCode myshopifyDomain } productsCount(query: "status:active") { count } }`,
-    );
-    currency = d.shop.currencyCode;
-    const info: ShopInfo = { name: d.shop.name, currency: d.shop.currencyCode };
-    if (typeof d.productsCount?.count === "number") info.productCount = d.productsCount.count;
-    return info;
-  };
-  const shopCurrency = async () => currency ?? (await shop()).currency;
-  const map = (p: AdminProduct, cur: string): BridgeProduct => {
-    const variants = (p.variants?.nodes ?? []).map((v) => ({ id: v.id, title: cleanTitle(v.title), price: money(v.price), available: Boolean(v.availableForSale) }));
-    const fbMin = p.priceRangeV2?.minVariantPrice ? money(p.priceRangeV2.minVariantPrice.amount) : "0.00";
-    const fbMax = p.priceRangeV2?.maxVariantPrice ? money(p.priceRangeV2.maxVariantPrice.amount) : fbMin;
-    return {
-      id: p.id,
-      handle: p.handle,
-      title: cleanTitle(p.title),
-      description: shortText(p.description),
-      image: p.featuredMedia?.preview?.image?.url ?? null,
-      url: productUrl(domain, p.handle, p.onlineStoreUrl),
-      ...(p.priceRangeV2 ? { priceMin: fbMin, priceMax: fbMax } : minMax(variants, fbMin, fbMax)),
-      currency: p.priceRangeV2?.minVariantPrice?.currencyCode ?? cur,
-      available: variants.some((v) => v.available),
-      variants,
-    };
-  };
-  return {
-    source: "admin",
-    shop,
-    async search(q, limit) {
-      const terms = searchTerms(q);
-      const d = await admin.graphql<{ products: { nodes: AdminProduct[] } }>(
-        `query BridgeProducts($first: Int!, $query: String, $variants: Int!) { products(first: $first, query: $query) { nodes { ${ADMIN_PRODUCT_FIELDS} } } }`,
-        { first: limit, query: terms ? `status:active ${terms}` : "status:active", variants: LIST_VARIANTS },
-      );
-      const cur = await shopCurrency();
-      return d.products.nodes.map((p) => map(p, cur));
-    },
-    async product(handle) {
-      if (!PRODUCT_HANDLE_RE.test(handle)) return null;
-      const d = await admin.graphql<{ products: { nodes: AdminProduct[] } }>(
-        `query BridgeProduct($query: String!, $variants: Int!) { products(first: 1, query: $query) { nodes { ${ADMIN_PRODUCT_FIELDS} } } }`,
-        { query: `status:active handle:${handle}`, variants: DETAIL_VARIANTS },
-      );
-      const p = d.products.nodes.find((n) => n.handle === handle);
-      return p ? map(p, await shopCurrency()) : null;
-    },
-    async variants(ids) {
-      const out = new Map<string, VariantDetail>();
-      if (!ids.length) return out;
-      const d = await admin.graphql<{
-        nodes: ({ id: string; title: string; price: string; availableForSale: boolean; product?: { title: string; handle: string; status?: string; featuredMedia?: AdminProduct["featuredMedia"] } } | null)[];
-      }>(
-        `query BridgeVariants($ids: [ID!]!) { nodes(ids: $ids) { ... on ProductVariant { id title price availableForSale product { title handle status featuredMedia { preview { image { url } } } } } } }`,
-        { ids },
-      );
-      const cur = await shopCurrency();
-      for (const v of d.nodes) {
-        if (!v || !v.id || !v.product) continue;
-        out.set(v.id, {
-          id: v.id,
-          title: cleanTitle(v.title),
-          productTitle: cleanTitle(v.product.title),
-          productHandle: v.product.handle,
-          price: money(v.price),
-          currency: cur,
-          available: Boolean(v.availableForSale) && (v.product.status ?? "ACTIVE") === "ACTIVE",
-          image: v.product.featuredMedia?.preview?.image?.url ?? null,
-        });
-      }
-      return out;
-    },
-  };
-}
-
-// ---- Storefront API (tokenless) -----------------------------------------------------------------
+// ---- Storefront API (tokenless, US context) ------------------------------------------------------
 
 const SF_PRODUCT_FIELDS = `
   id handle title description onlineStoreUrl availableForSale
-  featuredImage { url }
+  featuredImage { ${IMAGE} }
   priceRange { minVariantPrice { amount currencyCode } maxVariantPrice { amount currencyCode } }
   variants(first: $variants) { nodes { id title availableForSale price { amount currencyCode } } }`;
 
@@ -240,15 +158,27 @@ interface SfProduct {
   variants?: { nodes?: { id: string; title: string; availableForSale: boolean; price: { amount: string; currencyCode: string } }[] };
 }
 
-export function storefrontCatalog(sf: StorefrontClient): Catalog {
+export function storefrontCatalog(sf: StorefrontClient, storefrontUrl: () => string): Catalog {
   let currency: string | undefined;
   const shop = async (): Promise<ShopInfo> => {
-    const d = await sf.graphql<{ shop: { name: string; paymentSettings?: { currencyCode?: string } }; products?: { nodes?: unknown[]; pageInfo?: { hasNextPage?: boolean } } }>(
-      `query BridgeShop { shop { name paymentSettings { currencyCode } } products(first: 250) { nodes { id } pageInfo { hasNextPage } } }`,
+    const d = await sf.graphql<{
+      shop: { name: string; primaryDomain?: { url?: string } | null; paymentSettings?: { currencyCode?: string } | null };
+      localization?: { country?: { isoCode?: string; currency?: { isoCode?: string } | null } | null } | null;
+      products?: { nodes?: { featuredImage?: { url?: string } | null }[]; pageInfo?: { hasNextPage?: boolean } };
+    }>(
+      `query BridgeShop @inContext(country: US) {
+        shop { name primaryDomain { url } paymentSettings { currencyCode } }
+        localization { country { isoCode currency { isoCode } } }
+        products(first: 12, sortKey: BEST_SELLING) { nodes { featuredImage { ${SAMPLE_IMAGE} } } pageInfo { hasNextPage } }
+      }`,
     );
-    currency = d.shop.paymentSettings?.currencyCode ?? "USD";
-    const info: ShopInfo = { name: d.shop.name, currency };
-    if (Array.isArray(d.products?.nodes)) info.productCount = d.products.nodes.length;
+    currency = d.localization?.country?.currency?.isoCode ?? d.shop.paymentSettings?.currencyCode ?? "USD";
+    const nodes = d.products?.nodes ?? [];
+    const images = [...new Set(nodes.map((p) => httpsUrl(p?.featuredImage?.url)).filter((u): u is string => Boolean(u)))].slice(0, SAMPLE_IMAGES);
+    const info: ShopInfo = { name: d.shop.name, currency, sampleImages: images };
+    if (d.localization?.country?.isoCode) info.country = d.localization.country.isoCode;
+    if (d.shop.primaryDomain?.url) info.storefrontUrl = d.shop.primaryDomain.url;
+    if (d.products?.pageInfo?.hasNextPage === false) info.productCount = nodes.length;
     return info;
   };
   const map = (p: SfProduct): BridgeProduct => {
@@ -260,8 +190,8 @@ export function storefrontCatalog(sf: StorefrontClient): Catalog {
       handle: p.handle,
       title: cleanTitle(p.title),
       description: shortText(p.description),
-      image: p.featuredImage?.url ?? null,
-      url: productUrl(sf.domain, p.handle, p.onlineStoreUrl),
+      image: httpsUrl(p.featuredImage?.url),
+      url: productUrl(storefrontUrl(), p.handle, p.onlineStoreUrl),
       ...(p.priceRange ? { priceMin: fbMin, priceMax: fbMax } : minMax(variants, fbMin, fbMax)),
       currency: p.priceRange?.minVariantPrice?.currencyCode ?? currency ?? "USD",
       available: p.availableForSale ?? variants.some((v) => v.available),
@@ -274,7 +204,7 @@ export function storefrontCatalog(sf: StorefrontClient): Catalog {
     async search(q, limit) {
       const terms = searchTerms(q);
       const d = await sf.graphql<{ products: { nodes: SfProduct[] } }>(
-        `query BridgeProducts($first: Int!, $query: String, $variants: Int!) { products(first: $first, query: $query) { nodes { ${SF_PRODUCT_FIELDS} } } }`,
+        `query BridgeProducts($first: Int!, $query: String, $variants: Int!) @inContext(country: US) { products(first: $first, query: $query) { nodes { ${SF_PRODUCT_FIELDS} } } }`,
         { first: limit, query: terms || null, variants: LIST_VARIANTS },
       );
       return d.products.nodes.map(map);
@@ -282,7 +212,7 @@ export function storefrontCatalog(sf: StorefrontClient): Catalog {
     async product(handle) {
       if (!PRODUCT_HANDLE_RE.test(handle)) return null;
       const d = await sf.graphql<{ product: SfProduct | null }>(
-        `query BridgeProduct($handle: String!, $variants: Int!) { product(handle: $handle) { ${SF_PRODUCT_FIELDS} } }`,
+        `query BridgeProduct($handle: String!, $variants: Int!) @inContext(country: US) { product(handle: $handle) { ${SF_PRODUCT_FIELDS} } }`,
         { handle, variants: DETAIL_VARIANTS },
       );
       return d.product ? map(d.product) : null;
@@ -291,9 +221,16 @@ export function storefrontCatalog(sf: StorefrontClient): Catalog {
       const out = new Map<string, VariantDetail>();
       if (!ids.length) return out;
       const d = await sf.graphql<{
-        nodes: ({ id: string; title: string; availableForSale: boolean; price: { amount: string; currencyCode: string }; image?: { url?: string } | null; product?: { title: string; handle: string; featuredImage?: { url?: string } | null } } | null)[];
+        nodes: ({
+          id: string;
+          title: string;
+          availableForSale: boolean;
+          price: { amount: string; currencyCode: string };
+          image?: { url?: string } | null;
+          product?: { title: string; handle: string; onlineStoreUrl?: string | null; featuredImage?: { url?: string } | null };
+        } | null)[];
       }>(
-        `query BridgeVariants($ids: [ID!]!) { nodes(ids: $ids) { ... on ProductVariant { id title availableForSale price { amount currencyCode } image { url } product { title handle featuredImage { url } } } } }`,
+        `query BridgeVariants($ids: [ID!]!) @inContext(country: US) { nodes(ids: $ids) { ... on ProductVariant { id title availableForSale price { amount currencyCode } image { ${IMAGE} } product { title handle onlineStoreUrl featuredImage { ${IMAGE} } } } } }`,
         { ids },
       );
       for (const v of d.nodes) {
@@ -306,7 +243,8 @@ export function storefrontCatalog(sf: StorefrontClient): Catalog {
           price: money(v.price.amount),
           currency: v.price.currencyCode,
           available: Boolean(v.availableForSale),
-          image: v.image?.url ?? v.product.featuredImage?.url ?? null,
+          image: httpsUrl(v.image?.url) ?? httpsUrl(v.product.featuredImage?.url),
+          url: productUrl(storefrontUrl(), v.product.handle, v.product.onlineStoreUrl),
         });
       }
       return out;
@@ -314,30 +252,119 @@ export function storefrontCatalog(sf: StorefrontClient): Catalog {
   };
 }
 
-/** Storefront `cartCreate` → Shopify's own checkout link (handoff stores). */
-export async function storefrontCheckoutUrl(
+// ---- Storefront carts ---------------------------------------------------------------------------
+
+export interface ShopifyCartLine {
+  variantId: string;
+  quantity: number;
+  unitPrice: string;
+  lineTotal: string;
+  currency: string;
+  title: string;
+  variantTitle: string;
+  image: string | null;
+  url: string;
+}
+
+export interface ShopifyCart {
+  /** Shopify's cart GID. */
+  id: string;
+  /** Shopify's own checkout page for this cart. */
+  checkoutUrl: string;
+  subtotal: string;
+  total: string;
+  currency: string;
+  lines: ShopifyCartLine[];
+  /** Shopify's cart warnings (e.g. a quantity was reduced to what's in stock). */
+  warnings: string[];
+}
+
+interface SfMoney {
+  amount: string;
+  currencyCode: string;
+}
+
+/**
+ * Storefront `cartCreate` for a US buyer: a real Shopify cart, with Shopify's prices, totals and
+ * checkout link. `userErrors` become a `rejected` ShopifyError with Shopify's message.
+ */
+export async function createStorefrontCart(
   sf: StorefrontClient,
+  storefrontUrl: string,
   input: { lines: { variantId: string; quantity: number }[]; email?: string; note?: string },
-): Promise<string> {
-  const d = await sf.graphql<{ cartCreate: { cart: { id: string; checkoutUrl: string } | null; userErrors: { field?: string[]; message: string }[] } }>(
-    `mutation BridgeCartCreate($input: CartInput!) { cartCreate(input: $input) { cart { id checkoutUrl } userErrors { field message } } }`,
+): Promise<ShopifyCart> {
+  const d = await sf.graphql<{
+    cartCreate: {
+      cart: {
+        id: string;
+        checkoutUrl: string;
+        cost: { subtotalAmount: SfMoney; totalAmount: SfMoney };
+        lines: {
+          nodes: {
+            quantity: number;
+            cost: { amountPerQuantity: SfMoney; totalAmount: SfMoney };
+            merchandise: { id?: string; title?: string; image?: { url?: string } | null; product?: { title: string; handle: string; onlineStoreUrl?: string | null; featuredImage?: { url?: string } | null } };
+          }[];
+        };
+      } | null;
+      userErrors: { field?: string[] | null; message: string; code?: string | null }[];
+      warnings?: { code?: string; message: string }[] | null;
+    };
+  }>(
+    `mutation BridgeCartCreate($input: CartInput!) @inContext(country: US) {
+      cartCreate(input: $input) {
+        cart {
+          id checkoutUrl
+          cost { subtotalAmount { amount currencyCode } totalAmount { amount currencyCode } }
+          lines(first: 50) { nodes { quantity cost { amountPerQuantity { amount currencyCode } totalAmount { amount currencyCode } }
+            merchandise { ... on ProductVariant { id title image { ${IMAGE} } product { title handle onlineStoreUrl featuredImage { ${IMAGE} } } } } } }
+        }
+        userErrors { field message code }
+        warnings { code message }
+      }
+    }`,
     {
       input: {
         lines: input.lines.map((l) => ({ merchandiseId: l.variantId, quantity: l.quantity })),
-        ...(input.email ? { buyerIdentity: { email: input.email } } : {}),
+        buyerIdentity: { countryCode: "US", ...(input.email ? { email: input.email } : {}) },
         ...(input.note ? { note: input.note } : {}),
       },
     },
   );
   const errs = d.cartCreate.userErrors ?? [];
-  if (errs.length || !d.cartCreate.cart?.checkoutUrl) throw new ShopifyError("graphql", `cartCreate failed: ${errs.map((e) => e.message).join("; ") || "no cart"}`);
-  return d.cartCreate.cart.checkoutUrl;
+  const cart = d.cartCreate.cart;
+  if (errs.length || !cart?.checkoutUrl) throw new ShopifyError("rejected", `Shopify refused the cart: ${errs.map((e) => e.message).join("; ") || "no cart returned"}`);
+  return {
+    id: cart.id,
+    checkoutUrl: cart.checkoutUrl,
+    subtotal: money(cart.cost.subtotalAmount.amount),
+    total: money(cart.cost.totalAmount.amount),
+    currency: cart.cost.totalAmount.currencyCode,
+    lines: cart.lines.nodes.flatMap((n) => {
+      const m = n.merchandise;
+      if (!m?.id || !m.product) return [];
+      return [
+        {
+          variantId: m.id,
+          quantity: n.quantity,
+          unitPrice: money(n.cost.amountPerQuantity.amount),
+          lineTotal: money(n.cost.totalAmount.amount),
+          currency: n.cost.totalAmount.currencyCode,
+          title: cleanTitle(m.product.title),
+          variantTitle: cleanTitle(m.title),
+          image: httpsUrl(m.image?.url) ?? httpsUrl(m.product.featuredImage?.url),
+          url: productUrl(storefrontUrl, m.product.handle, m.product.onlineStoreUrl),
+        },
+      ];
+    }),
+    warnings: (d.cartCreate.warnings ?? []).map((w) => w.message).filter(Boolean),
+  };
 }
 
-/** Shopify cart permalink (`/cart/<variant>:<qty>,…`): works without any API. */
-export function cartPermalink(domain: string, lines: { variantId: string; quantity: number }[]): string {
+/** Shopify cart permalink (`/cart/<variant>:<qty>,…`): works without any API (UCP-only stores). */
+export function cartPermalink(storefrontUrl: string, lines: { variantId: string; quantity: number }[]): string {
   const parts = lines.map((l) => `${numericId(l.variantId)}:${l.quantity}`);
-  return `https://${domain}/cart/${parts.join(",")}`;
+  return `${storefrontUrl.replace(/\/+$/, "")}/cart/${parts.join(",")}`;
 }
 
 export function numericId(gid: string): string {
@@ -370,7 +397,7 @@ interface UcpProduct {
   variants?: UcpVariant[];
 }
 
-export function ucpCatalog(ucp: UcpClient, fallbackName: string): Catalog {
+export function ucpCatalog(ucp: UcpClient, fallbackName: string, storefrontUrl: () => string): Catalog {
   const mapVariant = (v: UcpVariant): BridgeVariant => {
     const cur = v.price?.currency ?? "USD";
     return {
@@ -381,6 +408,7 @@ export function ucpCatalog(ucp: UcpClient, fallbackName: string): Catalog {
     };
   };
   const handleOf = (p: UcpProduct) => p.handle ?? (p.url ? decodeURIComponent(new URL(p.url).pathname.split("/").filter(Boolean).pop() ?? "") : numericId(p.id));
+  const imageOf = (media: UcpProduct["media"]) => (media ?? []).map((m) => ((m.type ?? "image") === "image" ? httpsUrl(m.url) : null)).find(Boolean) ?? null;
   const map = (p: UcpProduct): BridgeProduct => {
     const variants = (p.variants ?? []).slice(0, DETAIL_VARIANTS).map(mapVariant);
     const cur = p.price_range?.min?.currency ?? p.variants?.[0]?.price?.currency ?? "USD";
@@ -393,8 +421,8 @@ export function ucpCatalog(ucp: UcpClient, fallbackName: string): Catalog {
       handle,
       title: cleanTitle(p.title),
       description: shortText(desc),
-      image: (p.media ?? []).find((m) => (m.type ?? "image") === "image" && typeof m.url === "string")?.url ?? null,
-      url: productUrl(ucp.domain, handle, p.url),
+      image: imageOf(p.media),
+      url: productUrl(storefrontUrl(), handle, p.url),
       ...(p.price_range ? { priceMin: fbMin, priceMax: fbMax } : minMax(variants, fbMin, fbMax)),
       currency: cur,
       available: variants.some((v) => v.available),
@@ -412,9 +440,10 @@ export function ucpCatalog(ucp: UcpClient, fallbackName: string): Catalog {
   return {
     source: "ucp",
     async shop() {
-      const products = await search(undefined, 5);
+      const products = await search(undefined, 8);
       const currency = products[0]?.price_range?.min?.currency ?? products[0]?.variants?.[0]?.price?.currency ?? "USD";
-      return { name: fallbackName, currency };
+      const sampleImages = [...new Set(products.map((p) => imageOf(p.media)).filter((u): u is string => Boolean(u)))].slice(0, SAMPLE_IMAGES);
+      return { name: fallbackName, currency, sampleImages };
     },
     async search(q, limit) {
       return (await search(q, limit)).map((p) => {
@@ -445,7 +474,8 @@ export function ucpCatalog(ucp: UcpClient, fallbackName: string): Catalog {
               price: bv.price,
               currency: v.price?.currency ?? product.currency,
               available: bv.available,
-              image: (v.media ?? []).find((m) => typeof m.url === "string")?.url ?? product.image,
+              image: imageOf(v.media) ?? product.image,
+              url: product.url,
             });
           }
         }

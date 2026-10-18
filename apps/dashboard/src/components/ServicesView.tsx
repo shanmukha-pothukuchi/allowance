@@ -2,7 +2,9 @@
 import { useMemo, useState } from "react";
 import { navigate } from "../route";
 import { buildCatalog, CATEGORIES, filterCatalog, requestsFor, withProposals, type CatalogEntry, type CategoryFilter } from "../services";
-import { modeLabel, shopifyRefOf } from "../shopify";
+import { toCents } from "../format";
+import { shortMoney } from "../sheets";
+import { capLabel, shopifyRefOf, storefrontHost } from "../shopify";
 import type { DashboardState } from "../state";
 import type { WalletActions } from "../useWallet";
 import { AvatarStack, ServiceTile } from "./Avatar";
@@ -77,8 +79,8 @@ export function ServicesView({ state, actions, selectedId, now, onAddShopify }: 
                   </span>
                 </div>
                 <h3 className="svc-name">Add a Shopify store</h3>
-                <p className="svc-provider">Your own store, or any other</p>
-                <p className="svc-summary">Agents search the catalog and build carts. In your own store they can also pay.</p>
+                <p className="svc-provider">Any public Shopify store</p>
+                <p className="svc-summary">Paste a shop's link. Your agents search it, build carts and pay for orders within your limits.</p>
                 <div className="svc-card-foot">
                   <span className="svc-price">Paste a link</span>
                   <span className="muted svc-conn">takes a few seconds</span>
@@ -115,15 +117,14 @@ function ServiceCardView({ entry, waiting, onOpen }: { entry: CatalogEntry; wait
               <ShoppingBag width={12} height={12} /> Shopify
             </span>
           )}
-          {shop && <span className={`mode-chip mode-${shop.mode}`}>{modeLabel(shop.mode)}</span>}
           {entry.builtIn && <span className="badge">Built in</span>}
         </div>
       </div>
       <h3 className="svc-name">{s.name}</h3>
-      <p className="svc-provider">{shop ? shop.domain : entry.custom ? s.provider : `by ${s.provider}`}</p>
+      <p className="svc-provider">{shop ? storefrontHost(shop) : entry.custom ? s.provider : `by ${s.provider}`}</p>
       <p className="svc-summary">{s.summary}</p>
       <div className="svc-card-foot">
-        <span className="svc-price">{s.pricing}</span>
+        <span className="svc-price">{shop ? (toCents(s.maxPrice) > 0 ? `Up to ${shortMoney(s.maxPrice)} per order` : capLabel(s.maxPrice)) : s.pricing}</span>
         {entry.builtIn ? (
           <span className="muted svc-conn">every agent</span>
         ) : entry.proposal && shop ? (

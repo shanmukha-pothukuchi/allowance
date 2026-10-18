@@ -146,18 +146,18 @@ describe("Shopify stores (§15)", () => {
   const juniper = {
     id: "shopify-juniper-goods",
     name: "Juniper Goods",
-    provider: "Shopify",
+    provider: "Shopify store",
     icon: "🛍️",
     color: "#95BF47",
     kind: "x402" as const,
     category: "shopping" as const,
-    summary: "Browse Juniper Goods",
+    summary: "Shop Juniper Goods",
     baseUrl: "http://localhost:4070/shops/juniper-goods",
-    pricing: "Browse only · you pay at Shopify checkout",
-    maxPrice: "0.00",
-    permissions: ["Browse the store's catalog"],
+    pricing: "Store prices · paid with your Allowance card · up to $20.00 per order",
+    maxPrice: "20.00",
+    permissions: ["Browse Juniper Goods's catalog"],
     source: "agent" as const,
-    shopify: { handle: "juniper-goods", domain: "juniper-goods.myshopify.com", mode: "handoff" as const },
+    shopify: { handle: "juniper-goods", domain: "juniper-goods.myshopify.com", storefrontUrl: "https://junipergoods.com", cardCheckout: false },
   };
   const request: Approval = {
     id: "apr_shop",
@@ -179,7 +179,7 @@ describe("Shopify stores (§15)", () => {
     const card = cat.find((e) => e.service.id === "shopify-juniper-goods")!;
     expect(card).toMatchObject({ custom: false, proposal: true, connections: [] });
     expect(card.proposedBy.map((a) => a.name)).toEqual(["shopper"]);
-    expect(card.service).toMatchObject({ category: "shopping", shopify: { domain: "juniper-goods.myshopify.com", mode: "handoff" } });
+    expect(card.service).toMatchObject({ category: "shopping", shopify: { domain: "juniper-goods.myshopify.com", storefrontUrl: "https://junipergoods.com" } });
     expect(filterCatalog(cat, "", "shopping").map((e) => e.service.id)).toEqual(["acme-pizza", "shopify-juniper-goods"]);
     expect(requestsFor([request], "shopify-juniper-goods")).toHaveLength(1);
   });

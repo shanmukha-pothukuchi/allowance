@@ -112,6 +112,21 @@ export function isShopifyGrant(s: { id?: string; shopify?: unknown } | undefined
 }
 
 /**
+ * A store's address as its shoppers know it (§15): the storefront's host (`allbirds.com`), else its
+ * myshopify domain. Never a store admin.
+ */
+function storeAddress(s: { id?: string; shopify?: unknown } | undefined): string {
+  const shop = (s?.shopify ?? {}) as { domain?: string; storefrontUrl?: string };
+  try {
+    const host = shop.storefrontUrl ? new URL(shop.storefrontUrl).hostname.replace(/^www\./, "") : "";
+    if (host && !/(^|\.)shopify\.com$/i.test(host)) return host;
+  } catch {
+    /* not a URL: fall back to the domain */
+  }
+  return shop.domain || (s?.id?.startsWith("shopify-") ? `${s.id.slice(8)}.myshopify.com` : "");
+}
+
+/**
  * An agent-proposed service the agent described itself (§13.2). A Shopify store an agent asked
  * for is not one: the wallet built its manifest from the store (§15.3), so it gets no warning.
  */
@@ -167,11 +182,9 @@ export function describeEvent(e: Pick<WalletEvent, "type" | "message" | "agentNa
   switch (e.type) {
     case "service.requested":
       if (isShopifyGrant(svc)) {
-        const shop = (svc?.shopify ?? {}) as { domain?: string; mode?: string; handle?: string };
-        const domain = shop.domain || (svc?.id?.startsWith("shopify-") ? `${svc.id.slice(8)}.myshopify.com` : "");
-        if (svc?.source === "agent") return `${agent} wants to add the Shopify store ${svcName}${domain ? ` (${domain})` : ""}.`;
-        const browse = shop.mode === "handoff" || /^browse only/i.test(svc?.pricing ?? "");
-        return `${agent} wants to connect ${svcName} (${browse ? "browse only" : toCents(svc?.maxPrice) > 0 ? `up to ${money(svc?.maxPrice)} per order` : "Shopify"}).`;
+        const where = storeAddress(svc);
+        if (svc?.source === "agent") return `${agent} wants to add the Shopify store ${svcName}${where ? ` (${where})` : ""}.`;
+        return `${agent} wants to connect ${svcName} (${toCents(svc?.maxPrice) > 0 ? `up to ${money(svc?.maxPrice)} per order` : where || "Shopify store"}).`;
       }
       return isCustomGrant(svc)
         ? `${agent} wants to connect ${svcName}, a service it proposed${capPhrase(svc?.maxPrice)}.`

@@ -3,7 +3,7 @@ import { createDirectoryApp } from "./app.js";
 
 export { createDirectoryApp, catalogPage, escapeHtml, type DirectoryApp, type DirectoryConfig, type DirectoryDeps } from "./app.js";
 export { buildCatalog, searchCatalog, withoutDocs, type CatalogConfig } from "./catalog.js";
-export { shopifyManifest, shopifyServiceId, parseShopifyCap, asShopifyStore, SHOPIFY_DEFAULT_MAX_PRICE } from "./shopify.js";
+export { shopifyManifest, shopifyServiceId, shopifyCapTexts, storefrontHost, parseShopifyCap, asShopifyStore, SHOPIFY_DEFAULT_MAX_PRICE } from "./shopify.js";
 
 const LOG = "[directory]";
 

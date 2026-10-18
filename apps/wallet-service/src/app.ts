@@ -80,7 +80,7 @@ import { ShopifyBridgeError, ShopifyBridgeUnavailableError, httpShopifyBridgeCli
 import type { ShopifyBridgeClient } from "./shopify-bridge-client.js";
 // Relative import on purpose (like the agents' seeds): the proposal an agent makes is built exactly
 // like the manifest the directory will list once the owner approves.
-import { parseShopifyCap, shopifyManifest, shopifyServiceId } from "../../directory/src/shopify.js";
+import { parseShopifyCap, shopifyCapTexts, shopifyManifest, shopifyServiceId, storefrontHost } from "../../directory/src/shopify.js";
 
 const LOG = "[wallet-service]";
 const APPROVAL_TTL_MS = 10 * 60 * 1000;
@@ -637,7 +637,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     try {
       return await fn();
     } catch (err) {
-      if (err instanceof DirectoryRequestError) throw new HttpError(err.status, err.code, err.message);
+      if (err instanceof DirectoryRequestError) throw new HttpError(err.status, err.code, err.message, err.reason ? { reason: err.reason } : undefined);
       if (err instanceof DirectoryUnavailableError) {
         console.warn(`${LOG} ${err.message}`);
         throw new HttpError(503, "directory_unavailable", "The service directory is not reachable right now; try again shortly.");
@@ -661,7 +661,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     try {
       return await shopifyBridge.discover(url);
     } catch (err) {
-      if (err instanceof ShopifyBridgeError) throw new HttpError(err.status, err.code, err.message);
+      if (err instanceof ShopifyBridgeError) throw new HttpError(err.status, err.code, err.message, err.reason ? { reason: err.reason } : undefined);
       if (err instanceof ShopifyBridgeUnavailableError) {
         console.warn(`${LOG} ${err.message}`);
         throw new HttpError(503, "shopify_bridge_unavailable", "The Shopify bridge is not reachable right now; try again shortly.");
@@ -681,7 +681,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
 
   function storeUrlParam(raw: unknown, field: string): string {
     if (typeof raw !== "string" || !raw.trim() || raw.length > 500) {
-      throw new HttpError(400, "invalid_request", `\`${field}\` must be the store's link, e.g. https://example.myshopify.com`);
+      throw new HttpError(400, "invalid_request", `\`${field}\` must be the store's link, e.g. https://www.allbirds.com or one of its product pages`);
     }
     return raw.trim();
   }
@@ -801,8 +801,8 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
       amount: toDollars(toBaseUnits(grant.maxPrice)),
       description: shop
         ? newStore
-          ? `Add the Shopify store ${grant.name} (${shop.domain})`
-          : `Connect ${grant.name} (${shop.domain})`
+          ? `Add the Shopify store ${grant.name} (${storefrontHost(shop)})`
+          : `Connect ${grant.name} (${storefrontHost(shop)})`
         : grant.source === "agent"
           ? `Connect ${grant.name} (proposed by ${agent.name})`
           : `Connect ${grant.name}`,
@@ -818,7 +818,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     emit("service.requested", {
       agentId: agent.id,
       agentName: agent.name,
-      message: newStore ? `${agent.name} wants to add the Shopify store ${grant.name} (${shop!.domain}).` : `${agent.name} wants to connect ${grant.name}.`,
+      message: newStore ? `${agent.name} wants to add the Shopify store ${grant.name} (${storefrontHost(shop!)}).` : `${agent.name} wants to connect ${grant.name}.`,
       approval,
       data: { approvalId: approval.id, service: grant, custom: grant.source === "agent" && !shop, ...(shop ? { shopify: shop, newStore } : {}) },
     });
@@ -1451,13 +1451,15 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     const manifest = await requireManifest(id);
     // An agent sees its own connection's terms (caps are per connection), not the listing default.
     const mine = agent?.services.find((x) => x.id === id);
+    const recap = (text: string) => (manifest.maxPrice !== mine?.maxPrice ? text.split(`$${manifest.maxPrice}`).join(`$${mine!.maxPrice}`) : text);
     const view = mine
       ? {
           ...manifest,
           maxPrice: mine.maxPrice,
           pricing: mine.pricing,
           permissions: mine.permissions,
-          docs: manifest.maxPrice !== mine.maxPrice ? manifest.docs.split(`$${manifest.maxPrice}`).join(`$${mine.maxPrice}`) : manifest.docs,
+          ...(manifest.shopify ? { summary: recap(manifest.summary), description: recap(manifest.description) } : {}),
+          docs: recap(manifest.docs),
         }
       : manifest;
     res.json(decorate(agent, view));
@@ -1532,7 +1534,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
       service: approval.service!,
       message:
         grant.shopify && grant.source === "agent"
-          ? `Waiting for your owner to approve adding the Shopify store ${grant.name} (${grant.shopify.domain}). Approval id ${approval.id}.`
+          ? `Waiting for your owner to approve adding the Shopify store ${grant.name} (${storefrontHost(grant.shopify)}). Approval id ${approval.id}.`
           : `Waiting for your owner to approve connecting ${grant.name}. Approval id ${approval.id}.`,
     };
     res.status(202).json(out);
@@ -1578,14 +1580,13 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     const agents = [...new Set((body.connectTo as string[] | undefined) ?? [])].map((id) => requireAgentById(id));
     const { service, created } = await addShopifyToDirectory(url, maxPrice);
     // Caps are per connection: the owner's cap for this add applies to the agents connected now, even
-    // when the store was already listed with a different default (browse-only stores stay at $0).
-    const cap = service.shopify?.mode === "handoff" ? "0.00" : (maxPrice ?? service.maxPrice);
-    const capText = cap === service.maxPrice ? undefined : `$${cap}`;
+    // when the store was already listed with a different default.
+    const cap = maxPrice ?? service.maxPrice;
     const grant = toGrant({
       ...service,
       source: "directory",
       maxPrice: cap,
-      ...(capText ? { pricing: `Varies by item · up to ${capText} per order`, permissions: service.permissions.map((p) => p.replace(/\$[0-9,]+\.[0-9]{2}/, capText)) } : {}),
+      ...(cap === service.maxPrice ? {} : shopifyCapTexts(service.name, cap)),
     });
     for (const agent of agents) {
       const existing = agent.services.find((x) => x.id === service.id);
@@ -1915,7 +1916,16 @@ function toGrant(s: ServiceGrant): ServiceGrant {
     maxPrice: s.maxPrice,
     permissions: [...(s.permissions ?? [])],
     source: s.source ?? "directory",
-    ...(s.shopify ? { shopify: { handle: s.shopify.handle, domain: s.shopify.domain, mode: s.shopify.mode } } : {}),
+    ...(s.shopify
+      ? {
+          shopify: {
+            handle: s.shopify.handle,
+            domain: s.shopify.domain,
+            storefrontUrl: typeof s.shopify.storefrontUrl === "string" ? s.shopify.storefrontUrl : `https://${s.shopify.domain}`,
+            cardCheckout: s.shopify.cardCheckout === true,
+          },
+        }
+      : {}),
   };
 }
 

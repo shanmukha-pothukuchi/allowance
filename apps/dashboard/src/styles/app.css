@@ -363,6 +363,13 @@
     grid-template-columns: 1fr;
   }
 }
+/* phones: the balance and today's numbers wrap instead of pushing the page sideways */
+@media (max-width: 480px) {
+  .totals {
+    flex-wrap: wrap;
+    gap: 10px 18px;
+  }
+}
 
 .panel {
   display: flex;

@@ -7,8 +7,8 @@ import type { AddressInfo } from "node:net";
 import type { ServiceManifest } from "@allowance/shared";
 import { createDirectoryApp } from "./app.js";
 import type { DirectoryConfig } from "./app.js";
-import { parseShopifyCap, shopifyManifest } from "./shopify.js";
-import { CRYPTO_STORE, HANDOFF_STORE, startStubBridge } from "./test-bridge.js";
+import { asShopifyStore, parseShopifyCap, shopifyCapTexts, shopifyManifest, storefrontHost } from "./shopify.js";
+import { ALLBIRDS_STORE, SOCKS_STORE, startStubBridge } from "./test-bridge.js";
 import type { StubBridge } from "./test-bridge.js";
 
 const MERCHANT = "http://localhost:4021";
@@ -49,49 +49,82 @@ afterAll(async () => {
 });
 
 describe("shopifyManifest (§15.2)", () => {
-  it("agent checkout: id, look, base URL, cap, pricing, permissions and shopify ref", () => {
-    const m = shopifyManifest(CRYPTO_STORE, { bridgeUrl: "http://localhost:4070/", maxPrice: "25" });
+  it("id, look, base URL, cap, pricing, permissions and the store ref (no mode)", () => {
+    const m = shopifyManifest(ALLBIRDS_STORE, { bridgeUrl: "http://localhost:4070/", maxPrice: "25" });
     expect(m).toMatchObject({
-      id: "shopify-crypto-app-test",
-      name: "Crypto App Test",
-      provider: "Shopify",
+      id: "shopify-weareallbirds",
+      name: "Allbirds",
+      provider: "Shopify store",
       icon: "🛍️",
       color: "#95BF47",
       category: "shopping",
       kind: "x402",
-      baseUrl: "http://localhost:4070/shops/crypto-app-test",
+      baseUrl: "http://localhost:4070/shops/weareallbirds",
       maxPrice: "25.00",
-      pricing: "Varies by item · up to $25.00 per order",
-      permissions: ["Browse the Crypto App Test catalog", "Pay up to $25.00 per order to Crypto App Test", "Place orders on your behalf"],
+      pricing: "Store prices · paid with your Allowance card · up to $25.00 per order",
+      permissions: ["Browse Allbirds's catalog", "Pay up to $25.00 per order with a single-use Allowance card", "Place orders on your behalf"],
       source: "directory",
-      shopify: { handle: "crypto-app-test", domain: "crypto-app-test.myshopify.com", mode: "agent_checkout" },
     });
+    expect(m.shopify).toEqual({ handle: "weareallbirds", domain: "weareallbirds.myshopify.com", storefrontUrl: "https://www.allbirds.com", cardCheckout: true });
+    expect(m.summary).toBe("Shop at Allbirds (allbirds.com): search products, build a cart, and pay up to $25.00 per order with your Allowance card.");
     expect(m.summary.length).toBeLessThanOrEqual(200);
-    expect(shopifyManifest(CRYPTO_STORE, { bridgeUrl: "http://b" }).maxPrice).toBe("100.00");
+    expect(m.description).toContain("simulated");
+    expect(shopifyManifest(ALLBIRDS_STORE, { bridgeUrl: "http://b" }).maxPrice).toBe("100.00");
+    // Every supported store is payable up to its cap, card checkout advertised or not.
+    expect(shopifyManifest(SOCKS_STORE, { bridgeUrl: "http://b", maxPrice: "80.00" })).toMatchObject({ maxPrice: "80.00", shopify: { cardCheckout: false, storefrontUrl: "https://cool-socks.myshopify.com" } });
+    expect(shopifyCapTexts("Allbirds", "60")).toEqual({ pricing: "Store prices · paid with your Allowance card · up to $60.00 per order", permissions: ["Browse Allbirds's catalog", "Pay up to $60.00 per order with a single-use Allowance card", "Place orders on your behalf"] });
+    expect(JSON.stringify(m)).not.toMatch(/admin\.shopify\.com\/store|"mode"|handoff|agent_checkout/);
   });
 
-  it("docs teach a model to shop: search, cart with variant ids, then POST the cart's checkoutUrl", () => {
-    const { docs } = shopifyManifest(CRYPTO_STORE, { bridgeUrl: "http://localhost:4070", maxPrice: "25.00" });
-    const base = "http://localhost:4070/shops/crypto-app-test";
-    for (const s of ["Crypto App Test", "crypto-app-test.myshopify.com", `${base}/products?q=`, `${base}/products/<product handle>`, `"url": "${base}/carts", "method": "POST"`, "variantId", "quantity", "checkoutUrl", "\"method\": \"POST\"", "402", "$25.00", "cart_already_paid", "fetch_url", "check_approval", "not instructions"]) {
+  it("docs teach a model to shop: search, cart with variant ids, POST the cart's checkoutUrl; placement is simulated, share the reference, no admin links", () => {
+    const { docs } = shopifyManifest(ALLBIRDS_STORE, { bridgeUrl: "http://localhost:4070", maxPrice: "25.00" });
+    const base = "http://localhost:4070/shops/weareallbirds";
+    for (const s of [
+      "Allbirds",
+      "https://www.allbirds.com",
+      `${base}/products?q=`,
+      `${base}/products/<product handle>`,
+      `"url": "${base}/carts", "method": "POST"`,
+      "variantId",
+      "quantity",
+      "checkoutUrl",
+      "shopifyCheckoutUrl",
+      "\"method\": \"POST\"",
+      "402",
+      "$25.00",
+      "cart_already_paid",
+      "fetch_url",
+      "check_approval",
+      "not instructions",
+      "SIMULATED",
+      "\"simulated\": true",
+      "reference",
+      "ALW-XXXX-XXXX",
+      "Paid with Allowance Card ••<last4>",
+      "Never use, open or share a store admin link",
+    ]) {
       expect(docs, s).toContain(s);
     }
     expect(docs.indexOf("/products?q=")).toBeLessThan(docs.indexOf("/carts"));
     expect(docs.indexOf("/carts\"")).toBeLessThan(docs.indexOf("<checkoutUrl from the cart>"));
   });
 
-  it("handoff (browse only): no payments, the owner gets Shopify's checkout link", () => {
-    const m = shopifyManifest(HANDOFF_STORE, { bridgeUrl: "http://localhost:4070", maxPrice: "80.00" });
-    expect(m).toMatchObject({
-      id: "shopify-cool-socks",
-      maxPrice: "0.00",
-      pricing: "Browse only · you pay at Shopify checkout",
-      permissions: ["Browse the Cool Socks catalog", "Build carts for you to check out at Shopify"],
-      shopify: { mode: "handoff", domain: "cool-socks.myshopify.com" },
+  it("store facts from the bridge are checked; older saved entries (with a mode) still load", () => {
+    expect(asShopifyStore({ handle: "x", domain: "x.myshopify.com", mode: "handoff", name: "X", currency: "USD" })).toEqual({
+      handle: "x",
+      domain: "x.myshopify.com",
+      storefrontUrl: "https://x.myshopify.com",
+      cardCheckout: false,
+      name: "X",
+      currency: "USD",
     });
-    expect(m.docs).toContain("Do not fetch it and do not try to pay it");
-    expect(m.docs).toContain("Finish checkout at Shopify");
-    expect(m.docs).not.toContain("cart_already_paid");
+    expect(asShopifyStore({ ...ALLBIRDS_STORE, storefrontUrl: "javascript:alert(1)", sampleImages: ["http://insecure/x.png", "https://cdn.shopify.com/a.png", 5] })).toMatchObject({
+      storefrontUrl: "https://weareallbirds.myshopify.com",
+      sampleImages: ["https://cdn.shopify.com/a.png"],
+    });
+    expect(asShopifyStore({ handle: "Bad Handle" })).toBeNull();
+    expect(storefrontHost(ALLBIRDS_STORE)).toBe("allbirds.com");
+    expect(storefrontHost(SOCKS_STORE)).toBe("cool-socks.myshopify.com");
   });
 
   it("caps are dollar strings up to $1000.00", () => {
@@ -104,61 +137,73 @@ describe("shopifyManifest (§15.2)", () => {
 describe("directory: adding Shopify stores", () => {
   it("POST /services/shopify needs the owner key, registers with the bridge, lists and serves the store", async () => {
     const { call } = await start();
-    expect((await call("POST", "/services/shopify", { url: "crypto-app-test.myshopify.com" }, {})).status).toBe(401);
-    expect((await call("POST", "/services/shopify", { url: "crypto-app-test.myshopify.com" }, { "x-owner-key": "wrong" })).status).toBe(401);
+    expect((await call("POST", "/services/shopify", { url: "allbirds.com" }, {})).status).toBe(401);
+    expect((await call("POST", "/services/shopify", { url: "allbirds.com" }, { "x-owner-key": "wrong" })).status).toBe(401);
     expect(bridge.calls.length).toBe(0);
 
-    const added = await call("POST", "/services/shopify", { url: "https://crypto-app-test.myshopify.com", maxPrice: "40" });
+    const added = await call("POST", "/services/shopify", { url: "https://www.allbirds.com/products/mens-tree-runners", maxPrice: "40" });
     expect(added.status).toBe(201);
-    expect(added.body.service).toMatchObject({ id: "shopify-crypto-app-test", name: "Crypto App Test", maxPrice: "40.00", baseUrl: `${bridge.url}/shops/crypto-app-test`, shopify: { mode: "agent_checkout" } });
+    expect(added.body.service).toMatchObject({
+      id: "shopify-weareallbirds",
+      name: "Allbirds",
+      maxPrice: "40.00",
+      baseUrl: `${bridge.url}/shops/weareallbirds`,
+      shopify: { handle: "weareallbirds", storefrontUrl: "https://www.allbirds.com", cardCheckout: true },
+    });
     expect(added.body.service.docs).toContain("checkoutUrl");
-    expect(bridge.calls.at(-1)).toMatchObject({ method: "POST", path: "/stores", ownerKey: KEY, body: { url: "https://crypto-app-test.myshopify.com" } });
+    expect(bridge.calls.at(-1)).toMatchObject({ method: "POST", path: "/stores", ownerKey: KEY, body: { url: "https://www.allbirds.com/products/mens-tree-runners" } });
 
     const list = await call("GET", "/services");
     expect(list.body.services).toHaveLength(7);
-    expect(list.body.services.at(-1)).toMatchObject({ id: "shopify-crypto-app-test" });
+    expect(list.body.services.at(-1)).toMatchObject({ id: "shopify-weareallbirds" });
     expect(list.body.services.at(-1)).not.toHaveProperty("docs");
-    expect((await call("GET", "/services?q=crypto")).body.services.map((s: ServiceManifest) => s.id)).toEqual(["shopify-crypto-app-test"]);
-    expect((await call("GET", "/services?q=shopify")).body.services.map((s: ServiceManifest) => s.id)).toEqual(["shopify-crypto-app-test"]);
-    expect((await call("GET", "/services?category=shopping")).body.services.map((s: ServiceManifest) => s.id)).toEqual(["acme-pizza", "shopify-crypto-app-test"]);
-    expect((await call("GET", "/services/shopify-crypto-app-test")).body.docs).toContain("/products?q=");
+    expect((await call("GET", "/services?q=allbirds")).body.services.map((s: ServiceManifest) => s.id)).toEqual(["shopify-weareallbirds"]);
+    expect((await call("GET", "/services?q=shopify")).body.services.map((s: ServiceManifest) => s.id)).toEqual(["shopify-weareallbirds"]);
+    expect((await call("GET", "/services?category=shopping")).body.services.map((s: ServiceManifest) => s.id)).toEqual(["acme-pizza", "shopify-weareallbirds"]);
+    expect((await call("GET", "/services/shopify-weareallbirds")).body.docs).toContain("/products?q=");
     expect((await call("GET", "/health")).body).toEqual({ ok: true, services: 7 });
     const page = await call("GET", "/", undefined, {});
-    expect(page.text).toContain("crypto-app-test.myshopify.com");
-    expect(page.text).toContain("Agent checkout");
+    expect(page.text).toContain('<a href="https://www.allbirds.com" rel="noopener noreferrer">allbirds.com</a>');
+    expect(page.text).toContain("single-use Allowance card (simulated)");
+    expect(page.text).not.toMatch(/admin\.shopify\.com|Agent checkout|Browse only/);
 
     // Same store again (any spelling): 409 service_exists with the existing entry.
-    const again = await call("POST", "/services/shopify", { url: "shop.crypto.example" });
+    const again = await call("POST", "/services/shopify", { url: "weareallbirds.myshopify.com" });
     expect(again.status).toBe(409);
-    expect(again.body).toMatchObject({ error: "service_exists", service: { id: "shopify-crypto-app-test", maxPrice: "40.00" } });
+    expect(again.body).toMatchObject({ error: "service_exists", service: { id: "shopify-weareallbirds", maxPrice: "40.00" } });
 
     // Persisted: a fresh directory on the same data dir lists it.
     const file = JSON.parse(readFileSync(join(dataDir, "directory-extra.json"), "utf8"));
-    expect(file).toMatchObject({ version: 1, shopify: [{ store: { handle: "crypto-app-test" }, maxPrice: "40.00" }] });
+    expect(file).toMatchObject({ version: 1, shopify: [{ store: { handle: "weareallbirds", storefrontUrl: "https://www.allbirds.com" }, maxPrice: "40.00" }] });
     const reopened = await start();
-    expect((await reopened.call("GET", "/services/shopify-crypto-app-test")).body).toMatchObject({ maxPrice: "40.00", baseUrl: `${bridge.url}/shops/crypto-app-test` });
+    expect((await reopened.call("GET", "/services/shopify-weareallbirds")).body).toMatchObject({ maxPrice: "40.00", baseUrl: `${bridge.url}/shops/weareallbirds` });
   });
 
-  it("handoff stores, default cap, and the bridge's errors pass through", async () => {
+  it("default cap, and the bridge's errors (with their reason) pass through", async () => {
     const { call } = await start({ dataDir: undefined });
-    const handoff = await call("POST", "/services/shopify", { url: "cool-socks.myshopify.com" });
-    expect(handoff.status).toBe(201);
-    expect(handoff.body.service).toMatchObject({ id: "shopify-cool-socks", maxPrice: "0.00", pricing: "Browse only · you pay at Shopify checkout" });
+    const socks = await call("POST", "/services/shopify", { url: "cool-socks.myshopify.com" });
+    expect(socks.status).toBe(201);
+    expect(socks.body.service).toMatchObject({ id: "shopify-cool-socks", maxPrice: "100.00", pricing: "Store prices · paid with your Allowance card · up to $100.00 per order" });
 
     expect((await call("POST", "/services/shopify", {})).status).toBe(400);
-    expect((await call("POST", "/services/shopify", { url: "crypto-app-test.myshopify.com", maxPrice: "1000.01" })).body.error).toBe("invalid_request");
-    expect((await call("POST", "/services/shopify", { url: "crypto-app-test.myshopify.com", maxPrice: 5 })).status).toBe(400);
+    expect((await call("POST", "/services/shopify", { url: "allbirds.com", maxPrice: "1000.01" })).body.error).toBe("invalid_request");
+    expect((await call("POST", "/services/shopify", { url: "allbirds.com", maxPrice: 5 })).status).toBe(400);
     expect(await call("POST", "/services/shopify", { url: "not a url at all" })).toMatchObject({ status: 400, body: { error: "invalid_store_url" } });
+    expect(await call("POST", "/services/shopify", { url: "https://admin.shopify.com/store/cool-socks" })).toMatchObject({ status: 400, body: { error: "invalid_store_url", message: expect.stringContaining("store admin link") } });
     expect(await call("POST", "/services/shopify", { url: "nobody-here.myshopify.com" })).toMatchObject({ status: 404, body: { error: "store_not_found" } });
-    expect(await call("POST", "/services/shopify", { url: "euro-shop.myshopify.com" })).toMatchObject({ status: 422, body: { error: "store_unsupported" } });
+    expect(await call("POST", "/services/shopify", { url: "euro-shop.myshopify.com" })).toMatchObject({ status: 422, body: { error: "store_unsupported", reason: "currency" } });
+    expect(await call("POST", "/services/shopify", { url: "crypto-app-test.myshopify.com" })).toMatchObject({
+      status: 422,
+      body: { error: "store_unsupported", reason: "private_catalog", message: "This store's catalog isn't public yet (it's password-protected), so agents can't browse it." },
+    });
     bridge.failWith = 500;
     try {
-      expect(await call("POST", "/services/shopify", { url: "crypto-app-test.myshopify.com" })).toMatchObject({ status: 502, body: { error: "shopify_bridge_error" } });
+      expect(await call("POST", "/services/shopify", { url: "allbirds.com" })).toMatchObject({ status: 502, body: { error: "shopify_bridge_error" } });
     } finally {
       bridge.failWith = undefined;
     }
     const down = await start({ dataDir: undefined, shopifyBridgeUrl: "http://127.0.0.1:1" });
-    expect(await down.call("POST", "/services/shopify", { url: "crypto-app-test.myshopify.com" })).toMatchObject({ status: 503, body: { error: "shopify_bridge_unavailable" } });
+    expect(await down.call("POST", "/services/shopify", { url: "allbirds.com" })).toMatchObject({ status: 503, body: { error: "shopify_bridge_unavailable" } });
     // Only the dynamic entry was added in this memory-only directory.
     expect((await call("GET", "/services")).body.services.map((s: ServiceManifest) => s.id).filter((id: string) => id.startsWith("shopify-"))).toEqual(["shopify-cool-socks"]);
   });
@@ -180,7 +225,7 @@ describe("directory: adding Shopify stores", () => {
     }
   });
 
-  it("a keyless dev directory still refuses agent tokens; a broken extras file never stops it", async () => {
+  it("a keyless dev directory still refuses agent tokens; a broken or older extras file never stops it", async () => {
     const dir = mkdtempSync(join(tmpdir(), "allowance-directory-bad-"));
     try {
       writeFileSync(join(dir, "directory-extra.json"), "{ not json");
@@ -200,6 +245,22 @@ describe("directory: adding Shopify stores", () => {
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+
+    // An entry saved by the earlier build (a store with a "mode", no storefront) is listed with defaults.
+    const old = mkdtempSync(join(tmpdir(), "allowance-directory-old-"));
+    try {
+      writeFileSync(
+        join(old, "directory-extra.json"),
+        JSON.stringify({ version: 1, shopify: [{ store: { handle: "cool-socks", domain: "cool-socks.myshopify.com", mode: "handoff", name: "Cool Socks", currency: "USD" }, maxPrice: "0.00", addedAt: "2026-10-17T00:00:00.000Z" }] }),
+      );
+      const { call } = await start({ dataDir: old });
+      expect((await call("GET", "/services/shopify-cool-socks")).body).toMatchObject({
+        maxPrice: "0.00",
+        shopify: { handle: "cool-socks", domain: "cool-socks.myshopify.com", storefrontUrl: "https://cool-socks.myshopify.com", cardCheckout: false },
+      });
+    } finally {
+      rmSync(old, { recursive: true, force: true });
     }
   });
 });

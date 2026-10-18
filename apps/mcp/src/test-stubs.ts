@@ -70,11 +70,14 @@ export interface StubApproval {
 }
 
 /** Stores the stub "bridge" can discover (ARCHITECTURE §15.1). None is in the directory until added. */
-export const STUB_SHOPIFY_STORES: ShopifyStore[] = [
-  { handle: "crypto-app-test", domain: "crypto-app-test.myshopify.com", mode: "agent_checkout", name: "Crypto App Test", currency: "USD", productCount: 3 },
-  { handle: "cool-socks", domain: "cool-socks.myshopify.com", mode: "handoff", name: "Cool Socks", currency: "USD", productCount: 40 },
-  { handle: "euro-shop", domain: "euro-shop.myshopify.com", mode: "handoff", name: "Euro Shop", currency: "EUR" },
+export const STUB_SHOPIFY_STORES: (ShopifyStore & { private?: boolean })[] = [
+  { handle: "weareallbirds", domain: "weareallbirds.myshopify.com", storefrontUrl: "https://www.allbirds.com", cardCheckout: true, name: "Allbirds", currency: "USD", productCount: 692 },
+  { handle: "cool-socks", domain: "cool-socks.myshopify.com", storefrontUrl: "https://cool-socks.myshopify.com", cardCheckout: false, name: "Cool Socks", currency: "USD", productCount: 40 },
+  { handle: "euro-shop", domain: "euro-shop.myshopify.com", storefrontUrl: "https://euro-shop.myshopify.com", cardCheckout: true, name: "Euro Shop", currency: "EUR" },
+  { handle: "crypto-app-test", domain: "crypto-app-test.myshopify.com", storefrontUrl: "https://crypto-app-test.myshopify.com", cardCheckout: false, name: "crypto-app-test", currency: "USD", private: true },
 ];
+/** Custom storefront domains the stub "bridge" resolves (as /.well-known/ucp would). */
+const STUB_SHOPIFY_ALIASES: Record<string, string> = { "allbirds.com": "weareallbirds", "www.allbirds.com": "weareallbirds" };
 
 /**
  * The stub directory: the directory itself plus three services on the merchant stub.
@@ -190,7 +193,7 @@ export interface WalletStub {
   agents: Map<string, StubAgent>;
   serviceRequests: ServiceRequest[];
   /** Shopify stores discovery can find (by handle). Defaults to STUB_SHOPIFY_STORES. */
-  shopifyStores: Map<string, ShopifyStore>;
+  shopifyStores: Map<string, ShopifyStore & { private?: boolean }>;
   /** Directory entries added at runtime (Shopify stores), listed after the built-in ones. */
   extraServices: ServiceManifest[];
   /** Add a discoverable Shopify store to the directory (as the owner would), with its cap. */
@@ -493,11 +496,22 @@ export async function startWalletStub(opts: WalletStubOptions = {}): Promise<Wal
           return "";
         }
       })();
-      const handle = /^([a-z0-9][a-z0-9-]*)\.myshopify\.com$/.exec(host)?.[1];
-      if (!handle) return void res.status(400).json({ error: "invalid_store_url", message: "That is not a Shopify store link" });
-      const store = stub.shopifyStores.get(handle);
-      if (!store) return void res.status(404).json({ error: "store_not_found", message: `No Shopify store at ${handle}.myshopify.com` });
-      if (store.currency !== "USD") return void res.status(422).json({ error: "store_unsupported", message: `${store.name} prices in ${store.currency}; only USD stores are supported` });
+      if (host === "admin.shopify.com") {
+        return void res.status(400).json({ error: "invalid_store_url", message: "That's a store admin link; paste the shop's own address (like allbirds.com or a product page) instead." });
+      }
+      const handle = STUB_SHOPIFY_ALIASES[host] ?? /^([a-z0-9][a-z0-9-]*)\.myshopify\.com$/.exec(host)?.[1];
+      if (!handle) {
+        return void res.status(400).json({ error: "invalid_store_url", message: "That isn't a store link. Paste the shop's address, like allbirds.com, one of its product pages, or your-store.myshopify.com." });
+      }
+      const found = stub.shopifyStores.get(handle);
+      if (!found) return void res.status(404).json({ error: "store_not_found", message: `There's no Shopify store at ${handle}.myshopify.com.` });
+      if (found.private) {
+        return void res.status(422).json({ error: "store_unsupported", message: "This store's catalog isn't public yet (it's password-protected), so agents can't browse it.", details: { reason: "private_catalog" } });
+      }
+      if (found.currency !== "USD") {
+        return void res.status(422).json({ error: "store_unsupported", message: `${found.name} doesn't sell to US shoppers in US dollars (it prices in ${found.currency}), so agents can't pay it in USDC.`, details: { reason: "currency" } });
+      }
+      const { private: _private, ...store } = found;
       const cap = body.maxPrice ?? "20.00";
       if (!/^\d+(\.\d{1,2})?$/.test(cap) || Number(cap) > 20) {
         return void res.status(400).json({ error: "invalid_request", message: `maxPrice $${cap} is over this agent's $20.00 per-payment limit` });
@@ -604,51 +618,54 @@ export async function startMerchantStub(): Promise<MerchantStub> {
   paid("/api/expensive", "50000000", "Gold Plated API", () => ({ gold: true }));
   paid("/api/stock", "150000", "Acme Stocks", (req) => ({ symbol: req.query.symbol ?? "ACME", price: 101.5, change: 0.8 }));
 
-  // ---- a tiny Shopify bridge (ARCHITECTURE §15.1) for crypto-app-test: products, carts, paid checkout
-  const sticker = {
+  // ---- a tiny Shopify bridge (ARCHITECTURE §15.1) for Allbirds: products, a cart, paid checkout → simulated confirmation
+  const socks = {
     id: "gid://shopify/Product/1",
-    handle: "agent-sticker",
-    title: "Agent Sticker",
-    description: "A sticker for your laptop.",
-    image: null,
-    url: "https://crypto-app-test.myshopify.com/products/agent-sticker",
+    handle: "anytime-ankle-sock",
+    title: "Anytime Ankle Sock",
+    description: "Soft, breathable socks.",
+    image: "https://cdn.shopify.com/s/files/1/sock_640x.png",
+    url: "https://www.allbirds.com/products/anytime-ankle-sock",
     priceMin: "4.00",
     priceMax: "4.00",
     currency: "USD",
     available: true,
-    variants: [{ id: "gid://shopify/ProductVariant/11", title: "Default Title", price: "4.00", available: true }],
+    variants: [{ id: "gid://shopify/ProductVariant/11", title: "M", price: "4.00", available: true }],
   };
-  const shopInfo = { name: "Crypto App Test", currency: "USD", mode: "agent_checkout" };
-  app.get("/shops/crypto-app-test/products", (_req, res) => {
-    res.json({ store: shopInfo, products: [sticker] });
+  const shopInfo = { name: "Allbirds", storefrontUrl: "https://www.allbirds.com", currency: "USD" };
+  const line = { variantId: socks.variants[0].id, title: socks.title, variantTitle: "M", quantity: 1, unitPrice: "4.00", lineTotal: "4.00", image: socks.image, url: socks.url };
+  app.get("/shops/weareallbirds/products", (_req, res) => {
+    res.json({ store: shopInfo, products: [socks] });
   });
-  app.post("/shops/crypto-app-test/carts", (req, res) => {
+  app.post("/shops/weareallbirds/carts", (req, res) => {
     const lines = (req.body?.lines ?? []) as { variantId: string; quantity: number }[];
-    if (lines.length !== 1 || lines[0].variantId !== sticker.variants[0].id || lines[0].quantity !== 1) {
-      return void res.status(400).json({ error: "invalid_request", message: "This stub sells exactly one Agent Sticker" });
+    if (lines.length !== 1 || lines[0].variantId !== socks.variants[0].id || lines[0].quantity !== 1) {
+      return void res.status(400).json({ error: "invalid_request", message: "This stub sells exactly one pair of socks" });
     }
     res.status(201).json({
       cartId: "cart_1",
-      store: shopInfo,
-      lines: [{ variantId: sticker.variants[0].id, title: sticker.title, variantTitle: "Default Title", quantity: 1, unitPrice: "4.00", lineTotal: "4.00", image: null }],
+      store: { handle: "weareallbirds", domain: "weareallbirds.myshopify.com", cardCheckout: true, ...shopInfo },
+      lines: [line],
       subtotal: "4.00",
-      shipping: "0.00",
       total: "4.00",
       currency: "USD",
       expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
-      mode: "agent_checkout",
-      checkoutUrl: `${stub.url}/shops/crypto-app-test/carts/cart_1/checkout`,
+      checkoutUrl: `${stub.url}/shops/weareallbirds/carts/cart_1/checkout`,
+      shopifyCheckoutUrl: "https://www.allbirds.com/cart/c/c1?key=k1",
+      notes: ["Shipping and taxes are added at checkout"],
     });
   });
-  paid("/shops/crypto-app-test/carts/cart_1/checkout", "4000000", "Crypto App Test order", () => ({
+  paid("/shops/weareallbirds/carts/cart_1/checkout", "4000000", "Allbirds order", () => ({
     status: "placed",
-    orderId: "gid://shopify/Order/1001",
-    orderName: "#1001",
-    adminUrl: "https://admin.shopify.com/store/crypto-app-test/orders/1001",
-    store: "Crypto App Test",
+    simulated: true,
+    reference: "ALW-7K3Q-M9XD",
+    store: { name: "Allbirds", storefrontUrl: "https://www.allbirds.com" },
+    items: [line],
     total: "4.00",
     currency: "USD",
-    items: [{ title: "Agent Sticker", quantity: 1 }],
+    card: { brand: "Allowance Card", last4: "4821" },
+    paidAt: new Date().toISOString(),
+    explanation: "For a real order, Allowance would issue a single-use card for $4.00 and pay Allbirds through Shopify's agent card checkout; card issuing isn't wired yet, so Allbirds did not receive this order.",
   }));
 
   app.get("/free", (_req, res) => {

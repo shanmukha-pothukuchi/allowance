@@ -147,6 +147,8 @@
   function inlineMd(h) {
     h = h.replace(/`([^`\n]+)`/g, "<code>$1</code>");
     h = h.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+    // *italic*, only as a whole word: "2 * 3" and "a*b" stay as typed.
+    h = h.replace(/(^|[\s(])\*([^*\s](?:[^*\n]*[^*\s])?)\*(?=[\s).,;:!?]|$)/g, "$1<em>$2</em>");
     h = h.replace(/(^|[\s(])(https?:\/\/[^\s<)]*[^\s<).,;:!?])/g, function (all, pre, url) {
       // The text is already escaped: end the link at an escaped quote or angle bracket.
       var cut = url.search(/&(?:quot|#39|lt|gt);/);
@@ -244,6 +246,7 @@
     search: "",
     openAct: {},
     openStep: {},
+    openSim: {}, // order confirmation key -> its "Simulated order" explanation is open
     holdScroll: false,
     forceBottom: false,
     stick: true, // thread pinned to the bottom (tracked from the user's own scrolling)
@@ -446,13 +449,14 @@
     var sk = shop ? shops[shop.handle] || {} : {};
     var pricing = str(w.pricing) || l.pricing || base.pricing || "";
     var maxPrice = str(w.maxPrice) || str(l.maxPrice).replace(/^\$/, "").replace(/,/g, "") || sk.maxPrice || capFromPricing(pricing);
+    var name = str(w.name) || l.name || base.name || sk.name || str(hint) || (shop ? prettyId(shop.handle) : prettyId(id)) || "a service";
     return {
       id: id,
-      name: str(w.name) || l.name || base.name || sk.name || str(hint) || (shop ? prettyId(shop.handle) : prettyId(id)) || "a service",
+      name: name,
       icon: glyph(w.icon || l.icon || base.icon, "🧩"),
       color: shop ? SHOP_GREEN : safeColor(w.color, base.color || AV_FALLBACK[hash31(id) % AV_FALLBACK.length]),
-      provider: str(w.provider) || l.provider || base.provider || (shop ? "Shopify" : ""),
-      permissions: perms.length || !shop ? perms.slice(0, 6) : shopPerms(shop.mode, maxPrice),
+      provider: str(w.provider) || l.provider || base.provider || (shop ? "Shopify store" : ""),
+      permissions: perms.length || !shop ? perms.slice(0, 6) : shopPerms(name, maxPrice),
       pricing: pricing,
       maxPrice: maxPrice,
       baseUrl: str(w.baseUrl) || l.baseUrl || "",
@@ -539,20 +543,20 @@
       var rest = m[3];
       var connected = /\[connected\]\s*$/.test(rest) ? true : /\[not connected\]\s*$/.test(rest) ? false : null;
       rest = rest.replace(/\s*·\s*\[(?:not )?connected\]\s*$/, "").replace(/^:\s*/, "");
-      // Shopify stores end with " · Shopify store <domain>, agent checkout|browse only" (apps/mcp format.ts shopifyTag).
+      // Shopify stores end with " · Shopify store <domain>…" (apps/mcp format.ts shopifyTag).
       var shopify = null;
-      var tag = rest.match(/\s*·\s*Shopify store ([a-z0-9][a-z0-9.-]{1,252}), (agent checkout|browse only)\s*$/i);
+      var tag = rest.match(/\s*·\s*Shopify store\b(.*)$/i);
       if (tag) {
         rest = rest.slice(0, tag.index);
-        shopify = shopTag(m[2], tag[1], tag[2]);
+        shopify = shopTag(m[2], tag[1]);
       }
       var parts = rest.split(" · ");
       var pricing = parts.length > 1 ? parts.pop().trim() : "";
-      // Shopify pricing has its own " · " (§15.2): "Varies by item · up to $100.00 per order".
-      var sp = handleOfId(m[2]) ? rest.match(/^(.*?)(?: · |^)((?:Varies by item|Browse only)\b.*)$/) : null;
-      if (sp) {
-        parts = [sp[1]];
-        pricing = sp[2].trim();
+      // Shopify pricing has its own " · " (§15.2): "Store prices · paid with your Allowance card · up to $100.00 per order".
+      if (handleOfId(m[2]) && parts.length) {
+        var sp = rest.match(/^(.*?)(?: · |^)((?:Store prices|Varies by item|Browse only|Up to \$)[\s\S]*)$/i);
+        parts = sp ? [sp[1]] : [rest.split(" · ")[0]];
+        pricing = sp ? sp[2].trim() : rest.split(" · ").slice(1).join(" · ").trim();
       }
       out.push({ id: m[2], name: hn.name.slice(0, 80), icon: hn.icon, summary: parts.join(" · ").trim().slice(0, 240), pricing: pricing.slice(0, 80), connected: connected, shopify: shopify });
     });
@@ -573,8 +577,8 @@
       if (pm) { s.pricing = pm[1].slice(0, 80); s.maxPrice = pm[2]; }
       var bm = l.match(/^Base URL: (\S+)/);
       if (bm) s.baseUrl = bm[1];
-      var sh = l.match(/^Shopify store ([a-z0-9][a-z0-9.-]{1,252}), (agent checkout|browse only)\b/i);
-      if (sh) s.shopify = shopTag(s.id, sh[1], sh[2]);
+      var sh = l.match(/^Shopify store\b(.*)$/i);
+      if (sh) s.shopify = shopTag(s.id, sh[1]);
       var sm = l.match(/^Summary: (.+)/);
       if (sm) s.summary = sm[1].slice(0, 240);
       if (/^Permissions:\s*$/.test(l)) { inPerms = true; continue; }
@@ -587,21 +591,24 @@
     s.permissions = s.permissions.slice(0, 6);
     return s;
   }
-  /** Shopify facts in a service listing or doc: name, mode (from pricing), domain, cap. */
+  /** Shopify facts in a service listing or doc: name, domains, cap. */
   function learnShopService(s, text) {
     var h = s && handleOfId(s.id);
     if (!h) return;
-    var dom = (str(text).split(/\nDocs\b/)[0].match(/\b([a-z0-9][a-z0-9-]{0,62}\.myshopify\.com)\b/i) || [])[1];
+    var head = str(text).split(/\nDocs\b/)[0];
+    var dom = (head.match(/\b([a-z0-9][a-z0-9-]{0,62}\.myshopify\.com)\b/i) || [])[1];
     var tagged = s.shopify || {};
-    learnShop(h, { name: s.name, mode: tagged.mode || modeFromPricing(s.pricing), domain: tagged.domain || dom, maxPrice: capFromPricing(s.pricing) || s.maxPrice });
+    learnShop(h, { name: s.name, domain: tagged.domain || dom, site: tagged.site, maxPrice: capFromPricing(s.pricing) || s.maxPrice });
   }
   function learnFromEntry(e) {
     if (!e || e.kind !== "tool" || e.result == null) return;
     var r = str(e.result);
     var c = shopCall(e);
     if (c) {
-      var st = c.d.store && typeof c.d.store === "object" ? c.d.store : { name: typeof c.d.store === "string" ? c.d.store : "" };
-      learnShop(c.b.handle, { name: st.name, currency: st.currency || c.d.currency, mode: st.mode || c.d.mode });
+      // products: { store: { name, storefrontUrl, currency } }; carts and orders: { store } too (§15.1).
+      var o = c.d.order && typeof c.d.order === "object" ? c.d.order : c.d;
+      var st = o.store && typeof o.store === "object" ? o.store : { name: typeof o.store === "string" ? o.store : "" };
+      learnShop(c.b.handle, { name: st.name, currency: st.currency || c.d.currency, site: st.storefrontUrl });
     }
     if (e.name === "list_services" || e.name === "search_services") {
       parseServiceLines(r).forEach(function (s) {
@@ -614,9 +621,12 @@
       learnShopService(doc, r);
     } else if (e.name === "request_service" || e.name === "check_approval") {
       var said = storeInText(r);
-      if (said && said.handle) learnShop(said.handle, said);
       var rq = e.name === "request_service" ? storeRequest(e) : null;
-      if (rq && rq.handle) learnShop(rq.handle, { name: rq.named, domain: rq.link.handle === rq.handle ? rq.link.host : "" });
+      var sh = (said && said.handle) || (rq && rq.handle) || (r.match(/service_id: "shopify-([a-z0-9][a-z0-9-]{0,62})"/) || [])[1];
+      if (sh && said) learnShop(sh, said);
+      var capm = r.match(/up to \$([\d,]+(?:\.\d+)?) per order/i);
+      if (sh && capm) learnShop(sh, { maxPrice: capm[1] });
+      if (rq && rq.handle) learnShop(rq.handle, { name: rq.named, domain: rq.link.handle === rq.handle ? rq.link.host : "", site: rq.link.handle ? "" : rq.link.host ? "https://" + rq.link.host : "" });
     } else if (e.name === "find_work") {
       r.split("\n").forEach(function (l) {
         var m = l.match(/^\s*•\s+(\S+) — "(.{1,160}?)" — pays/);
@@ -646,26 +656,17 @@
   }
 
   // ================================================================ Shopify stores (ARCHITECTURE §15)
-  // A Shopify store is a service whose base URL is the bridge's /shops/<handle>. Agents shop with
-  // fetch_url, so the page sees the bridge's JSON (§15.1) only as tool text: "HTTP <status> <url>",
-  // a blank line, the pretty-printed body, then (when it paid) a receipt line. It is parsed here and
-  // escaped at render time like every other tool string. The only requests this adds are product
-  // images, from URLs the bridge returned, sent without a referrer.
+  // Any public Shopify store, from the shopper's side. A store is a service whose base URL is the
+  // bridge's /shops/<handle>. Agents shop with fetch_url, so the page sees the bridge's JSON (§15.1)
+  // only as tool text: "HTTP <status> <url>", a blank line, the pretty-printed body, then (when it
+  // paid) a receipt line. It is parsed here and escaped at render time like every other tool string.
+  // The only requests this adds are product images, from URLs the bridge returned, sent without a
+  // referrer. Links go to the store's public storefront only, never to a store admin.
   var SHOP_GREEN = "#95BF47";
-  var MODE_LABEL = { agent_checkout: "Agent checkout", handoff: "Browse only" };
   var HANDLE_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
   var DOMAIN_RE = /^[a-z0-9][a-z0-9.-]{1,252}$/;
-  /** handle -> { name, mode, currency, domain, maxPrice }, learned from tool results. Raw: callers esc(). */
+  /** handle -> { name, currency, domain (x.myshopify.com), site (storefront origin), maxPrice }, learned from tool results. Raw: callers esc(). */
   var shops = {};
-
-  function modeOf(v) {
-    return v === "agent_checkout" || v === "handoff" ? v : "";
-  }
-  /** §15.2 pricing: "Browse only · you pay at Shopify checkout" vs "Varies by item · up to $100.00 per order". */
-  function modeFromPricing(p) {
-    p = str(p);
-    return /^Browse only\b/i.test(p) ? "handoff" : /Varies by item|per order/i.test(p) ? "agent_checkout" : "";
-  }
   function capFromPricing(p) {
     var m = str(p).match(/up to \$([\d,]+(?:\.\d+)?) per order/i);
     return m ? m[1].replace(/,/g, "") : "";
@@ -674,39 +675,80 @@
     var m = str(id).match(/^shopify-([a-z0-9][a-z0-9-]{0,62})$/);
     return m ? m[1] : "";
   }
-  /** A store link as an agent passes it ("crypto-app-test.myshopify.com", a storefront URL) → { host, handle }. */
+  function myshopify(host) {
+    var m = str(host).toLowerCase().match(/^([a-z0-9][a-z0-9-]{0,62})\.myshopify\.com$/);
+    return m ? m[1] : "";
+  }
+  /** Shopify itself (admin.shopify.com, shopify.com), never a store: nothing links there. */
+  function isShopifyItself(host) {
+    return /(^|\.)shopify\.com$/i.test(str(host));
+  }
+  /** "https://www.allbirds.com/products/x" → "allbirds.com": the name a shopper knows the store by. */
+  function siteHost(u) {
+    var h = str(u).trim() ? hostOnly(u).toLowerCase().replace(/:\d+$/, "").replace(/\.$/, "").replace(/^www\./, "") : "";
+    return DOMAIN_RE.test(h) && /\.[a-z]{2,}$/.test(h) ? h : "";
+  }
+  /** A storefront URL from the wallet or the bridge, as its origin ("https://www.allbirds.com"), or "". */
+  function siteUrl(u) {
+    var s = safeUrl(str(u).trim());
+    if (!s) return "";
+    try {
+      var x = new URL(s);
+      return isShopifyItself(x.hostname) ? "" : x.origin;
+    } catch (e) {
+      return "";
+    }
+  }
+  /** A store link as an agent passes it ("allbirds.com", "https://www.allbirds.com/products/…", "x.myshopify.com") → { host, handle }. */
   function storeLink(u) {
-    var host = str(u).trim() ? hostOnly(u).toLowerCase().replace(/:\d+$/, "") : "";
-    var m = host.match(/^([a-z0-9][a-z0-9-]{0,62})\.myshopify\.com$/);
-    return { host: DOMAIN_RE.test(host) ? host : "", handle: m ? m[1] : "" };
+    var host = siteHost(u);
+    if (isShopifyItself(host)) host = "";
+    return { host: host, handle: myshopify(host) };
   }
-  function shopTag(id, domain, words) {
-    var dom = str(domain).toLowerCase();
-    return { handle: handleOfId(id) || storeLink(dom).handle, domain: dom, mode: /agent/i.test(words) ? "agent_checkout" : "handoff" };
+  /** Domains named in MCP text: x.myshopify.com is the store's own domain, anything else its storefront. */
+  function domainsIn(s) {
+    var out = { domain: "", handle: "", site: "" };
+    (str(s).toLowerCase().match(/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/g) || []).forEach(function (d) {
+      if (!/\.[a-z]{2,}$/.test(d) || isShopifyItself(d)) return;
+      var h = myshopify(d);
+      if (h) {
+        if (!out.handle) { out.handle = h; out.domain = d; }
+      } else if (!out.site) out.site = "https://" + d;
+    });
+    return out;
   }
-  /** "the Shopify store Crypto App Test (crypto-app-test.myshopify.com)" in MCP text (§15.4) → { name, domain, handle, mode }. */
+  /** The " · Shopify store …" tag of a service line, or get_service's "Shopify store …" line (apps/mcp format.ts) → { handle, domain, site }. */
+  function shopTag(id, tag) {
+    var d = domainsIn(tag);
+    return { handle: handleOfId(id) || d.handle, domain: d.domain, site: d.site };
+  }
+  /** "the Shopify store Allbirds (allbirds.com)" in MCP text (§15.4) → { name, handle, domain, site }. */
   function storeInText(r) {
     r = str(r);
-    var m = r.match(/the Shopify store (.{1,80}?) \(([a-z0-9][a-z0-9.-]{1,252})\)/i) || r.match(/^(.{1,80}?) \(Shopify store ([a-z0-9][a-z0-9.-]{1,252})\) is already connected/i);
+    var m = r.match(/the Shopify store (.{1,80}?) \(([^()\n]{3,200})\)/i) || r.match(/^(.{1,80}?) \(Shopify store ([^()\n]{3,200})\) is already connected/i);
     if (!m) return null;
-    var dom = m[2].toLowerCase();
-    return { name: m[1].trim(), domain: dom, handle: storeLink(dom).handle, mode: /Agent checkout:/.test(r) ? "agent_checkout" : /Browse only:/.test(r) ? "handoff" : "" };
+    var d = domainsIn(m[2]);
+    if (!d.domain && !d.site) return null;
+    return { name: m[1].trim(), handle: d.handle, domain: d.domain, site: d.site };
   }
   function learnShop(handle, o) {
     if (!HANDLE_RE.test(str(handle)) || !o || typeof o !== "object") return;
     var cur = shops[handle] || (shops[handle] = {});
     var name = str(o.name).trim().slice(0, 80);
     if (name) cur.name = name;
-    var mode = modeOf(o.mode);
-    if (mode) cur.mode = mode;
     var ccy = str(o.currency).trim();
     if (/^[A-Z]{3}$/.test(ccy)) cur.currency = ccy;
     var dom = str(o.domain).trim().toLowerCase();
-    if (DOMAIN_RE.test(dom)) cur.domain = dom;
+    if (DOMAIN_RE.test(dom) && !isShopifyItself(dom)) cur.domain = dom;
+    var site = siteUrl(o.site);
+    if (site) cur.site = site;
     var capv = str(o.maxPrice).replace(/^\$/, "").replace(/,/g, "");
     if (num(capv) != null) cur.maxPrice = capv;
   }
-  /** { handle, domain, mode } when this service is a Shopify store (wallet data, learned, or its id), else null. */
+  /**
+   * { handle, domain, site, host } when this service is a Shopify store (wallet data, learned, or its
+   * id), else null. `site` is the storefront to link to, `host` its domain as the shopper knows it.
+   */
   function shopRef(id, w, l) {
     var ref = (w && w.shopify) || (l && l.shopify);
     ref = ref && typeof ref === "object" ? ref : null;
@@ -714,11 +756,9 @@
     if (!h) return null;
     var k = shops[h] || {};
     var dom = ref ? str(ref.domain).toLowerCase() : "";
-    return {
-      handle: h,
-      domain: (DOMAIN_RE.test(dom) ? dom : "") || k.domain || h + ".myshopify.com",
-      mode: modeOf(ref && ref.mode) || k.mode || modeFromPricing((w && w.pricing) || (l && l.pricing)),
-    };
+    var domain = (DOMAIN_RE.test(dom) && !isShopifyItself(dom) ? dom : "") || k.domain || h + ".myshopify.com";
+    var site = siteUrl(ref && (ref.storefrontUrl || ref.site)) || k.site || siteUrl("https://" + domain);
+    return { handle: h, domain: domain, site: site, host: siteHost(site) || domain };
   }
   function shopName(handle, st) {
     var n = st && typeof st === "object" ? str(st.name) : str(st);
@@ -802,7 +842,8 @@
     if (r.slice(0, 5) !== "HTTP ") return null;
     if (httpMemo.has(r)) return httpMemo.get(r);
     var out = null;
-    var m = r.match(/^HTTP (\d{3}) (\S+)\n\n/);
+    // The URL is printed as the agent wrote it, so it may hold spaces ("?q=wool runners").
+    var m = r.match(/^HTTP (\d{3}) ([^\n]+?)\n\n/);
     if (m) {
       var body = r.slice(m[0].length);
       var i = body.search(/\S/);
@@ -834,6 +875,12 @@
   function imgUrlOf(v) {
     return typeof v === "string" ? v : v && typeof v === "object" ? str(v.url || v.src) : "";
   }
+  /** A storefront page (a product, the store) to link to: http(s), and never Shopify itself (no admin links). */
+  function pageUrl(u) {
+    var s = safeUrl(str(u).trim());
+    if (!s) return "";
+    try { return isShopifyItself(new URL(s).hostname) ? "" : s; } catch (e) { return ""; }
+  }
   function cleanProduct(p) {
     if (!p || typeof p !== "object") return null;
     var title = str(p.title).trim().slice(0, 140);
@@ -852,7 +899,7 @@
       handle: str(p.handle),
       description: str(p.description).replace(/\s+/g, " ").trim().slice(0, 300),
       image: imgUrlOf(p.image),
-      url: safeUrl(str(p.url)),
+      url: pageUrl(p.url),
       min: min,
       max: max,
       available: p.available !== false && (!vars.length || vars.some(function (v) { return v.available; })),
@@ -869,7 +916,7 @@
     var unit = num(x.unitPrice != null ? x.unitPrice : x.price);
     var total = num(x.lineTotal != null ? x.lineTotal : x.total);
     if (total == null && unit != null) total = unit * q;
-    return { title: title, variant: vt === "Default Title" ? "" : vt, qty: q, total: total, image: imgUrlOf(x.image) || str(x.imageUrl), variantId: str(x.variantId) };
+    return { title: title, variant: vt === "Default Title" ? "" : vt, qty: q, total: total, image: imgUrlOf(x.image) || str(x.imageUrl), url: pageUrl(x.url), variantId: str(x.variantId) };
   }
   function linesOf(arr) {
     return (Array.isArray(arr) ? arr : []).map(cleanLine).filter(Boolean);
@@ -893,7 +940,7 @@
     return u;
   }
   /**
-   * A fixed-size image box. While the image loads it shows a quiet bag icon; with no image (many
+   * A fixed-size image box. While the image loads it shows a quiet bag icon; with no image (some
    * stores have none) or a failed one (see the error listener) it is a soft Shopify-green tile with
    * the product's initial.
    */
@@ -910,21 +957,15 @@
     var t = ev.target;
     if (t && t.tagName === "IMG" && t.parentNode && t.parentNode.classList && t.parentNode.classList.contains("pimg")) t.parentNode.classList.add("broken");
   }, true);
-  function modePill(mode) {
-    return MODE_LABEL[mode] ? '<span class="pill mode ' + mode + '">' + esc(MODE_LABEL[mode]) + "</span>" : "";
+  /** §15.2 permissions, for a store the wallet hasn't described yet. */
+  function shopPerms(store, capv) {
+    return [
+      "Browse " + store + "'s catalog",
+      num(capv) ? "Pay up to " + money(capv) + " per order with a single-use Allowance card" : "Pay for orders with a single-use Allowance card, within its limits",
+      "Place orders on your behalf",
+    ];
   }
-  /** The one-line meaning of a mode, in the dashboard's words. */
-  function modeText(mode, who, capv) {
-    if (mode === "agent_checkout") return who + " pays in USDC" + (num(capv) ? ", up to " + money(capv) + " per order" : "") + ", and a real order lands in your Shopify admin.";
-    if (mode === "handoff") return who + " browses and builds a cart. You finish paying at Shopify's checkout.";
-    return "";
-  }
-  function shopPerms(mode, capv) {
-    if (mode === "agent_checkout") return ["Browse the catalog", num(capv) ? "Pay up to " + money(capv) + " per order" : "Pay for orders, within your limits", "Place orders on your behalf"];
-    if (mode === "handoff") return ["Browse the catalog", "Build carts for you to check out"];
-    return ["Browse the catalog"];
-  }
-  /** The cart this checkout paid for, from earlier in the log (its lines carry images). */
+  /** The cart this checkout paid for, from earlier in the log (its lines carry images and links). */
   function cartFromLog(a, handle, cartId) {
     var log = (a && a.log) || [];
     for (var i = log.length - 1; i >= 0; i--) {
@@ -941,15 +982,43 @@
     return cart && num(cart.total) != null ? money(cart.total) : "";
   }
 
+  // ---------------------------------------------------------------- the order confirmation (§15.1 checkout)
+  /** The confirmation in a checkout answer: the 200 body, or what a 409 cart_already_paid returns with. */
+  function confirmationOf(d) {
+    if (!d || typeof d !== "object") return {};
+    if (d.order && typeof d.order === "object") return d.order;
+    if (d.confirmation && typeof d.confirmation === "object") return d.confirmation;
+    return d;
+  }
+  /** "ALW-7K2P-9QXD": Allowance's reference for the order (not a Shopify order number). */
+  function orderRef(o) {
+    var r = str(o && o.reference).trim();
+    return /^[A-Za-z0-9][A-Za-z0-9-]{3,39}$/.test(r) ? r : "";
+  }
+  function isPlaced(o) {
+    return str(o.status) === "placed" || !!orderRef(o);
+  }
+  /** "Allowance Card ••1234" */
+  function cardLabel(o) {
+    var c = o && o.card && typeof o.card === "object" ? o.card : {};
+    var brand = str(c.brand).replace(/\s+/g, " ").trim().slice(0, 40) || "Allowance Card";
+    var last4 = str(c.last4).replace(/\D/g, "").slice(-4);
+    return brand + (last4.length === 4 ? " ••" + last4 : "");
+  }
+  var SIM_WHY = "Your agent's USDC payment is real. The single-use Allowance Card that would pay the store through Shopify's agent checkout isn't issued in this demo, so the store didn't receive an order.";
+
   // ---------------------------------------------------------------- cards
   function linesHtml(lines, max) {
     var shown = lines.slice(0, max || 6);
     return (
       '<ul class="lines">' +
       shown.map(function (l) {
+        var img = imgBox(l.image, 120, "sm", l.title);
+        var name = '<span class="l-name">' + esc(l.title) + "</span>";
         return (
-          "<li>" + imgBox(l.image, 120, "sm", l.title) +
-          '<span class="l-t"><span class="l-name">' + esc(l.title) + '</span><span class="l-sub">' + esc((l.variant ? l.variant + " · " : "") + "Qty " + l.qty) + "</span></span>" +
+          "<li>" + (l.url ? '<a class="l-img" href="' + esc(l.url) + '" target="_blank" rel="noopener noreferrer" tabindex="-1" aria-hidden="true">' + img + "</a>" : img) +
+          '<span class="l-t">' + (l.url ? '<a class="l-link" href="' + esc(l.url) + '" target="_blank" rel="noopener noreferrer">' + name + "</a>" : name) +
+          '<span class="l-sub">' + esc((l.variant ? l.variant + " · " : "") + "Qty " + l.qty) + "</span></span>" +
           '<span class="l-amt">' + esc(l.total != null ? money(l.total) : "") + "</span></li>"
         );
       }).join("") +
@@ -957,17 +1026,24 @@
       "</ul>"
     );
   }
-  function totalsHtml(rows) {
-    return '<dl class="totals">' + rows.filter(function (r) { return r[1]; }).map(function (r) { return '<div class="' + (r[2] || "") + '"><dt>' + esc(r[0]) + "</dt><dd>" + esc(r[1]) + "</dd></div>"; }).join("") + "</dl>";
+  function totalsHtml(rows, cls) {
+    return '<dl class="totals' + (cls ? " " + cls : "") + '">' + rows.filter(function (r) { return r[1]; }).map(function (r) { return '<div class="' + (r[2] || "") + '"><dt>' + esc(r[0]) + "</dt><dd>" + (r[3] ? r[1] : esc(r[1])) + "</dd></div>"; }).join("") + "</dl>";
   }
-  /** "crypto-app-test.myshopify.com" that wraps only before "myshopify.com", never at its hyphens. */
+  /** "weareallbirds.myshopify.com" that wraps only before "myshopify.com", never at its hyphens. */
   function domainHtml(d) {
     var parts = str(d).split(".");
     if (parts.length < 3) return '<span class="nw">' + esc(d) + "</span>";
     return '<span class="nw">' + esc(parts.slice(0, -2).join(".") + ".") + '</span><wbr><span class="nw">' + esc(parts.slice(-2).join(".")) + "</span>";
   }
+  /** The store's storefront domain ("allbirds.com"), linking to its storefront. */
+  function siteHtml(ref) {
+    if (!ref) return "";
+    var href = pageUrl(ref.site);
+    var label = domainHtml(ref.host || ref.domain);
+    return href ? '<a class="site" href="' + esc(href) + '" target="_blank" rel="noopener noreferrer">' + label + "</a>" : label;
+  }
   function shopHead(info, title, sub, right, tileCls) {
-    return '<div class="c-row">' + tileHtml(info, tileCls || "t48") + '<div class="c-who"><div class="c-title">' + esc(title) + '</div><div class="c-k">' + esc(sub) + "</div></div>" + (right || "") + "</div>";
+    return '<div class="c-row">' + tileHtml(info, tileCls || "t48") + '<div class="c-who"><div class="c-title">' + esc(title) + '</div><div class="c-k">' + sub + "</div></div>" + (right || "") + "</div>";
   }
   function productTile(p) {
     var opts = p.variants.length > 1 ? plural(p.variants.length, "option", "options") : "";
@@ -993,7 +1069,7 @@
     var shown = list.slice(0, 6);
     return (
       '<div class="card wide shop-prods"><div class="sp-head">' + tileHtml(info, "t32") +
-      '<div class="c-who"><div class="c-name">' + esc(store) + '</div><div class="c-k">' + esc(sub) + " · " + domainHtml(info.shopify ? info.shopify.domain : "Shopify") + "</div></div>" + modePill(info.shopify && info.shopify.mode) + "</div>" +
+      '<div class="c-who"><div class="c-name">' + esc(store) + '</div><div class="c-k">' + esc(sub) + (info.shopify ? " · " + siteHtml(info.shopify) : "") + "</div></div></div>" +
       '<div class="prods">' + shown.map(productTile).join("") +
       (list.length > shown.length ? '<div class="prod more"><span class="pimg">+' + (list.length - shown.length) + '</span><span class="p-title">more at ' + esc(store) + "</span></div>" : "") +
       "</div></div>"
@@ -1008,89 +1084,95 @@
     var chips = named.slice(0, 10).map(function (v) {
       return '<span class="vchip' + (v.available ? "" : " out") + '" title="' + esc(v.available ? v.title : v.title + " · sold out") + '">' + esc(v.title + (mixed && v.price != null ? " · " + money(v.price) : "")) + "</span>";
     }).join("");
+    var where = siteHost(p.url) || (svcInfo("shopify-" + c.b.handle).shopify || {}).host || store;
+    var img = imgBox(p.image, 240, "lg", p.title);
     return (
-      '<div class="card shop-prod"><div class="card-pad"><div class="pd">' + imgBox(p.image, 240, "lg", p.title) +
+      '<div class="card shop-prod"><div class="card-pad"><div class="pd">' + (p.url ? '<a class="pd-img" href="' + esc(p.url) + '" target="_blank" rel="noopener noreferrer" tabindex="-1" aria-hidden="true">' + img + "</a>" : img) +
       '<div class="pd-txt"><div class="c-k">' + esc(store) + '</div><div class="c-name">' + esc(p.title) + "</div>" +
       '<div class="pd-price">' + esc(priceLabel(p.min, p.max)) + (p.available ? "" : ' <span class="pd-out">Sold out</span>') + "</div>" +
       (p.description ? '<div class="pd-desc">' + esc(p.description) + "</div>" : "") + "</div></div>" +
       (chips ? '<div class="vchips">' + chips + (named.length > 10 ? '<span class="vchip more">+' + (named.length - 10) + "</span>" : "") + "</div>" : "") + "</div>" +
-      (p.url ? '<div class="c-foot"><a class="plain" href="' + esc(p.url) + '" target="_blank" rel="noopener noreferrer">View at Shopify' + icon("external") + "</a><span>" + esc(p.variants.length > 1 ? plural(p.variants.length, "option", "options") : "") + "</span></div>" : "") +
+      (p.url ? '<div class="c-foot"><a class="plain" href="' + esc(p.url) + '" target="_blank" rel="noopener noreferrer">View on ' + esc(where) + icon("external") + "</a><span>" + esc(p.variants.length > 1 ? plural(p.variants.length, "option", "options") : "") + "</span></div>" : "") +
       "</div>"
     );
-  }
-  function isHandoff(c) {
-    var mode = modeOf(c.d.mode) || (svcInfo("shopify-" + c.b.handle).shopify || {}).mode;
-    if (mode) return mode === "handoff";
-    // No mode in the body: the bridge's own checkout path means agent checkout.
-    return !bridgeOf(str(c.d.checkoutUrl)) && !!safeUrl(str(c.d.checkoutUrl));
   }
   function cartCard(c, e) {
     var info = svcInfo("shopify-" + c.b.handle);
     var store = shopName(c.b.handle, c.d.store);
     var lines = linesOf(c.d.lines);
-    var ship = num(c.d.shipping);
-    var handoff = isHandoff(c);
-    var totals = totalsHtml([
-      ["Subtotal", lines.length > 1 && num(c.d.subtotal) != null ? money(c.d.subtotal) : ""],
-      ["Shipping", ship == null ? "" : ship === 0 ? (handoff ? "At checkout" : "Free") : money(ship)],
-      ["Total", num(c.d.total) != null ? money(c.d.total) : "", "tot"],
-    ]);
     var items = lines.reduce(function (s, l) { return s + l.qty; }, 0);
-    if (handoff) {
-      var go = safeUrl(str(c.d.checkoutUrl));
-      return (
-        '<div class="card handoff"><div class="card-pad">' +
-        shopHead(info, lines.length ? "Your cart is ready" : "Checkout is at Shopify", lines.length ? store + " · " + plural(items, "item", "items") : store, modePill("handoff")) +
-        (lines.length ? linesHtml(lines) + totals : "") +
-        (go ? '<a class="shop-btn" href="' + esc(go) + '" target="_blank" rel="noopener noreferrer">' + icon("bag") + "Finish checkout at Shopify" + icon("external") + "</a>" : "") +
-        '</div><div class="c-foot"><span class="sim">' + icon("info") + "You pay at Shopify. Nothing was paid from the wallet.</span></div></div>"
-      );
-    }
+    var sub = num(c.d.subtotal);
+    var tot = num(c.d.total);
+    var ship = num(c.d.shipping);
+    var tax = num(c.d.tax != null ? c.d.tax : c.d.totalTax);
+    // Shopify's own totals. Subtotal only when it says something the lines and total don't.
+    var totals = totalsHtml([
+      ["Subtotal", sub != null && (lines.length > 1 || (tot != null && Math.abs(sub - tot) > 0.005)) ? money(sub) : ""],
+      ["Shipping", ship != null && ship > 0 ? money(ship) : ""],
+      ["Taxes", tax != null && tax > 0 ? money(tax) : ""],
+      ["Total", tot != null ? money(tot) : "", "tot"],
+    ]);
+    var notes = (Array.isArray(c.d.notes) ? c.d.notes : []).map(function (n) { return str(n).replace(/\s+/g, " ").trim().slice(0, 160); }).filter(Boolean).slice(0, 2);
+    if (!notes.length) notes = ["Shipping and taxes are added at checkout"];
     var exp = ts(c.d.expiresAt);
     return (
-      '<div class="card cart"><div class="card-pad">' + shopHead(info, "Cart", store + " · " + plural(items, "item", "items"), "", "t32") +
-      linesHtml(lines) + totals + "</div>" +
+      '<div class="card cart"><div class="card-pad">' + shopHead(info, "Cart", esc(store + " · " + plural(items, "item", "items")), "", "t32") +
+      linesHtml(lines) + totals +
+      notes.map(function (n) { return '<p class="cart-note">' + icon("info") + "<span>" + esc(n) + "</span></p>"; }).join("") + "</div>" +
       '<div class="c-foot"><span>' + esc(exp ? "Held until " + clock(exp) : "Held for 30 minutes") + "</span><span>" + esc(e.name === "check_approval" ? "" : "Pays in USDC") + "</span></div></div>"
     );
   }
+  /**
+   * The order confirmation (§15.5): store and storefront, items linking to their product pages, the
+   * total, the single-use card that paid, Allowance's reference, and a "Simulated order" badge whose
+   * explanation opens in place. The USDC payment (footer tx) is real; the card step is not.
+   */
   function shopOrderCard(a, e, c, rc) {
-    var d = c.d;
+    var d = confirmationOf(c.d);
     var info = svcInfo("shopify-" + c.b.handle);
+    var st = d.store && typeof d.store === "object" ? d.store : null;
+    var ref = info.shopify;
+    var site = siteUrl(st && st.storefrontUrl);
+    if (site && ref) ref = { handle: ref.handle, domain: ref.domain, site: site, host: siteHost(site) || ref.host };
     var store = shopName(c.b.handle, d.store);
     var lines = linesOf(d.items);
     var cart = cartFromLog(a, c.b.handle, c.b.item);
     var cartLines = cart ? linesOf(cart.lines) : [];
     if (!lines.length) lines = cartLines;
     else if (cartLines.length) {
-      // Order items may come without images or prices: borrow them from the cart they were bought from.
+      // Order items may come without images, links or prices: borrow them from the cart they were bought from.
       lines.forEach(function (l, i) {
         var m = cartLines.filter(function (x) { return (l.variantId && x.variantId === l.variantId) || x.title === l.title; })[0] || cartLines[i];
         if (!m) return;
         if (!l.image) l.image = m.image;
+        if (!l.url) l.url = m.url;
         if (l.total == null) l.total = m.total;
         if (!l.variant) l.variant = m.variant;
       });
     }
-    var name = str(d.orderName).trim().slice(0, 40);
-    var admin = safeUrl(str(d.adminUrl));
     var total = num(d.total) != null ? money(d.total) : rc && rc.amount ? rc.amount : "";
-    var tx = rc && rc.tx ? (rc.url ? '<a href="' + esc(rc.url) + '" target="_blank" rel="noopener noreferrer">tx ' + esc(rc.tx) + icon("external") + "</a>" : '<span class="mono">tx ' + esc(rc.tx) + "</span>") : d.txHash ? '<span class="mono">tx ' + esc(shortAddr(d.txHash)) + "</span>" : "<span>Paid</span>";
+    var reference = orderRef(d);
+    var simulated = d.simulated !== false;
+    var key = a.name + ":" + e.id;
+    var open = !!ui.openSim[key];
+    var why = str(d.explanation).replace(/\s+/g, " ").trim().slice(0, 400) || SIM_WHY;
+    // The USDC settlement: the receipt line fetch_url added, else the confirmation's own (once settled).
+    var txv = rc && rc.tx ? rc.tx : /^0x[0-9a-fA-F]{8,}$/.test(str(d.txHash)) ? shortAddr(str(d.txHash)) : "";
+    var txu = rc && rc.tx ? rc.url : safeUrl(str(d.explorerUrl));
+    var tx = txv ? (txu ? '<a href="' + esc(txu) + '" target="_blank" rel="noopener noreferrer">USDC tx ' + esc(txv) + icon("external") + "</a>" : '<span class="mono">USDC tx ' + esc(txv) + "</span>") : "<span>Paid in USDC</span>";
+    var at = ts(d.paidAt) || ts(e.at) + (e.ms || 0);
+    var badge = simulated
+      ? '<button type="button" class="pill sim-pill" data-action="sim" data-key="' + esc(key) + '" aria-expanded="' + open + '" title="' + esc(why) + '">' + icon("info") + "Simulated order</button>"
+      : '<span class="pill ok">' + icon("check") + "Paid</span>";
     return (
-      '<div class="card shop-order"><div class="card-pad">' +
-      shopHead(info, name ? "Order " + name + " placed" : "Order placed", store + " · paid in USDC", '<span class="pill ok">' + icon("check") + "Paid</span>") +
-      (lines.length ? linesHtml(lines) : "") + totalsHtml([["Total", total, "tot"]]) +
-      (admin ? '<a class="btn-ghost shop-admin" href="' + esc(admin) + '" target="_blank" rel="noopener noreferrer">View in Shopify admin' + icon("external") + "</a>" : "") +
-      '</div><div class="c-foot">' + tx + "<span>" + esc(clock(ts(e.at) + (e.ms || 0))) + "</span></div></div>"
+      '<div class="card shop-order' + (simulated ? " simulated" : "") + '"><div class="card-pad">' +
+      shopHead(info, "Order placed", esc(store) + (ref ? " · " + siteHtml(ref) : ""), badge) +
+      (simulated && open ? '<p class="sim-why">' + esc(why) + "</p>" : "") +
+      (lines.length ? linesHtml(lines) : "") +
+      totalsHtml([["Total", total, "tot"]]) +
+      totalsHtml([["Paid with", icon("card") + "<span>" + esc(cardLabel(d)) + "</span>", "", true], ["Reference", reference ? '<span class="mono">' + esc(reference) + "</span>" : "", "", true]], "paid") +
+      '</div><div class="c-foot">' + tx + "<span>" + esc(at ? clock(at) : "") + "</span></div></div>"
     );
-  }
-  /** checkout on a browse-only store (409 agent_checkout_unavailable): the cart, and Shopify's link. */
-  function handoffFromError(a, c) {
-    var cart = cartFromLog(a, c.b.handle, c.b.item);
-    // The cart's own card already offers Shopify's checkout link: don't show it twice.
-    if (cart && modeOf(cart.mode) !== "agent_checkout" && safeUrl(str(cart.checkoutUrl)) && !bridgeOf(str(cart.checkoutUrl))) return "";
-    var url = safeUrl(str(c.d.handoffUrl)) || (cart ? safeUrl(str(cart.checkoutUrl)) : "");
-    var fake = { b: { handle: c.b.handle }, d: { store: c.d.store || (cart && cart.store), lines: cart ? cart.lines : [], total: cart ? cart.total : c.d.total, mode: "handoff", checkoutUrl: url } };
-    return cartCard(fake, {});
   }
   /** Cards for one bridge response, or null when this entry isn't one (blocked payments etc. stay generic). */
   function shopCards(a, e, key) {
@@ -1103,12 +1185,10 @@
     else if (c.b.op === "product" && ok) html = productCard(c);
     else if (c.b.op === "carts" && ok && c.d.cartId) html = cartCard(c, e);
     else if (c.b.op === "checkout") {
-      var code = str(c.d.error);
-      if (ok && (c.d.orderId || c.d.orderName)) html = shopOrderCard(a, e, c, parseReceipt(c.h.tail));
-      else if (code === "agent_checkout_unavailable") html = handoffFromError(a, c);
-      else if (code === "cart_already_paid") {
-        var o = c.d.order && typeof c.d.order === "object" ? c.d.order : c.d;
-        html = '<div class="chip-card ok">' + icon("check") + "<span>" + esc("Already paid" + (str(o.orderName) ? " · order " + str(o.orderName).slice(0, 40) : "")) + "</span></div>";
+      var o = confirmationOf(c.d);
+      if (ok && isPlaced(o)) html = shopOrderCard(a, e, c, parseReceipt(c.h.tail));
+      else if (str(c.d.error) === "cart_already_paid") {
+        html = '<div class="chip-card ok">' + icon("check") + "<span>" + esc("Already paid" + (orderRef(o) ? " · order " + orderRef(o) : "")) + "</span></div>";
       }
     }
     if (html) out.push({ key: key("shop"), html: html });
@@ -1342,10 +1422,10 @@
         if (r) {
           var rc2 = parseReceipt(r);
           var so = shopCall(e);
-          if (rc2 && so && so.b.op === "checkout" && str(so.d.orderName)) {
-            s.label = "Paid " + (rc2.amount || money(so.d.total)) + " · Shopify order " + str(so.d.orderName).slice(0, 40);
+          if (so && so.b.op === "checkout" && so.h.status < 300 && isPlaced(confirmationOf(so.d))) {
+            s.label = paidLabel(confirmationOf(so.d), rc2);
             s.icon = "card";
-            s.detail = "You approved · " + shopName(so.b.handle, so.d.store);
+            s.detail = "You approved · " + shopName(so.b.handle, confirmationOf(so.d).store) + " · simulated order";
             break;
           }
           var said = /^Owner connected/.test(r) ? storeInText(r) : null;
@@ -1420,10 +1500,16 @@
     if (/Could not reach/.test(r)) { s.label = "Couldn't reach " + hostOnly(url); s.st = "err"; return; }
     if (e.isError) { s.label = "Couldn't open " + where; s.detail = firstLine(r); }
   }
+  /** "Paid $110.00 · Allowance Card ••1234 · order ALW-7K2P-9QXD" for a placed order (and its receipt line, if any). */
+  function paidLabel(o, rc) {
+    var amt = rc && rc.amount ? rc.amount : num(o.total) != null ? money(o.total) : "";
+    var ref = orderRef(o);
+    return "Paid " + (amt ? amt + " · " : "") + cardLabel(o) + (ref ? " · order " + ref : "");
+  }
   /**
-   * Steps on the Shopify bridge (§15.1): "Searched Crypto App Test for “hoodie”", "Started a cart ·
-   * $42.00", "Paid $42.00 · Shopify order #1001". Returns false when the result is not an HTTP
-   * response (a block, a pending approval, a refusal), so the generic wording takes over.
+   * Steps on the Shopify bridge (§15.1): "Searched Allbirds for “wool runners”", "Started a cart ·
+   * $110.00", "Paid $110.00 · Allowance Card ••1234 · order ALW-…". Returns false when the result is
+   * not an HTTP response (a block, a pending approval, a refusal), so the generic wording takes over.
    */
   function shopStep(s, b, r, e) {
     var store = svcInfo("shopify-" + b.handle).name;
@@ -1450,18 +1536,18 @@
     var c = shopCall(e);
     if (!c) return false;
     var d = c.d;
-    store = shopName(b.handle, d.store);
+    store = shopName(b.handle, confirmationOf(d).store || d.store);
     if (c.h.status < 200 || c.h.status >= 300) {
       var code = str(d.error);
       if (b.op === "checkout" && code === "cart_already_paid") {
-        var o = d.order && typeof d.order === "object" ? d.order : d;
+        var ref = orderRef(confirmationOf(d));
         s.label = "This cart was already paid";
-        s.detail = str(o.orderName) ? "Shopify order " + str(o.orderName).slice(0, 40) : "";
+        s.detail = ref ? "Order " + ref : "";
         s.st = "soft";
-      } else if (b.op === "checkout" && code === "agent_checkout_unavailable") {
-        s.label = "Checkout is at Shopify for " + store;
-        s.detail = "You finish paying there";
-        s.st = "soft";
+      } else if (b.op === "checkout" && (code === "cart_not_found" || c.h.status === 404)) {
+        s.label = "That cart at " + store + " expired";
+        s.detail = "Nothing was paid";
+        s.st = "err";
       } else {
         s.label = store + " returned " + c.h.status;
         s.detail = firstLine(str(d.message)) || code;
@@ -1483,12 +1569,13 @@
     } else if (b.op === "carts") {
       var n = linesOf(d.lines).reduce(function (t, l) { return t + l.qty; }, 0);
       s.label = "Started a cart" + (num(d.total) != null ? " · " + money(d.total) : "");
-      s.detail = plural(n, "item", "items") + " · " + (isHandoff(c) ? "you check out at Shopify" : store);
+      s.detail = plural(n, "item", "items") + " · " + store;
     } else if (b.op === "checkout") {
+      var o = confirmationOf(d);
       var rc = parseReceipt(c.h.tail);
       s.icon = "card";
-      s.label = "Paid " + (rc && rc.amount ? rc.amount : money(d.total)) + (str(d.orderName) ? " · Shopify order " + str(d.orderName).slice(0, 40) : " · order placed");
-      s.detail = rc && rc.tx ? "tx " + rc.tx : store;
+      s.label = isPlaced(o) ? paidLabel(o, rc) : "Paid " + (rc && rc.amount ? rc.amount + " " : "") + "at " + store;
+      s.detail = store + (o.simulated !== false && isPlaced(o) ? " · simulated order" : "") + (rc && rc.tx ? " · tx " + rc.tx : "");
     }
     return true;
   }
@@ -1587,18 +1674,26 @@
     return st;
   }
   /** What a store-link request (§15.4) is about, before and after the wallet discovered the store. */
-  function storeRequestInfo(e) {
+  function storeRequestInfo(a, e) {
     var rq = storeRequest(e);
     var capArg = num(objArgs(e).max_price);
+    var host = rq.link.host;
     var info = rq.handle
       ? svcInfo("shopify-" + rq.handle)
-      : { id: "", name: rq.link.host || "A Shopify store", provider: "Shopify", glyph: "bag", color: SHOP_GREEN, shopify: { handle: "", domain: rq.link.host, mode: "" }, permissions: [], maxPrice: "" };
+      : { id: "", name: host || "A Shopify store", provider: "Shopify store", glyph: "bag", color: SHOP_GREEN, shopify: { handle: "", domain: host, site: host ? siteUrl("https://" + host) : "", host: host }, permissions: [], maxPrice: "" };
+    var described = !!info.id && !!((svcFromAgents(info.id) || {}).permissions || (learned[info.id] || {}).permissions);
     if (rq.named) info.name = rq.named;
     // Until the wallet has discovered it, the store's link is the only honest name we have.
-    else if (rq.link.host && !(shops[rq.handle] || {}).name && !learned[info.id] && !svcFromAgents(info.id)) info.name = rq.link.host;
-    if (rq.link.host && info.shopify && !rq.handle) info.shopify.domain = rq.link.host;
+    else if (host && !(shops[rq.handle] || {}).name && !learned[info.id] && !svcFromAgents(info.id)) info.name = host;
+    // The storefront the agent linked to, until the wallet or the bridge names it.
+    if (host && !myshopify(host) && info.shopify && myshopify(info.shopify.host)) {
+      info.shopify = { handle: info.shopify.handle, domain: info.shopify.domain, site: siteUrl("https://" + host), host: host };
+    }
     if (capArg != null && !num(info.maxPrice)) info.maxPrice = String(capArg);
-    if (!info.permissions.length) info.permissions = shopPerms(info.shopify && info.shopify.mode, info.maxPrice);
+    // The wallet caps a store an agent asks for at the agent's max per payment (§15.3).
+    var lim = (a && a.wallet && a.wallet.limits) || {};
+    if (!num(info.maxPrice) && num(lim.maxPerTx)) info.maxPrice = String(num(lim.maxPerTx));
+    if (!described) info.permissions = shopPerms(info.name, info.maxPrice);
     return info;
   }
   function connCard(a, e) {
@@ -1608,7 +1703,7 @@
     var info = custom
       ? { name: str(custom.name).slice(0, 60) || "New service", provider: "Proposed by " + a.name + " · " + hostOnly(custom.base_url), glyph: "globe", color: "#7C8799", permissions: ["Pay up to " + money(custom.max_price) + " per request under " + hostPath(custom.base_url)] }
       : adding
-        ? storeRequestInfo(e)
+        ? storeRequestInfo(a, e)
         : svcInfo(str(args.service_id));
     var shop = !custom && info.shopify;
     var st = connStatus(a, e);
@@ -1617,15 +1712,17 @@
     var fail = st === "failed" && e.result != null ? firstLine(e.result).replace(/^ERROR:\s*/, "") : "";
     // A request that never reached the owner grants nothing: no "will be able to" list.
     var perms = fail ? [] : info.permissions || [];
-    // Shopify: the tile and label already say Shopify, so the subtitle is just the store's domain.
-    var sub = shop ? (shop.domain && shop.domain !== info.name.toLowerCase() ? shop.domain : "") : info.provider ? (custom ? info.provider : "by " + info.provider) : "";
-    var mode = shop && !fail ? modeText(shop.mode, a.name, info.maxPrice) : "";
+    // Shopify: the tile and label already say Shopify, so the subtitle is the storefront's domain.
+    var sub = shop
+      ? shop.host && shop.host !== info.name.toLowerCase() ? siteHtml(shop) : ""
+      : info.provider ? esc(custom ? info.provider : "by " + info.provider) : "";
+    var capRow = shop && !fail && num(info.maxPrice) ? totalsHtml([["Per-order cap", "Up to " + money(info.maxPrice)]], "c-cap") : "";
     return (
       '<div class="card conn ' + st + (shop ? " shopc" : "") + '"><div class="card-pad">' +
       '<div class="c-label">' + icon(shop ? "bag" : "plug") + (adding ? "Asks to add a Shopify store" : "Connection request") + "</div>" +
-      '<div class="c-row">' + tileHtml(info, "t48") + '<div class="c-who"><div class="c-name">' + (shop && info.name === shop.domain ? domainHtml(info.name) : esc(info.name)) + "</div>" + (sub ? '<div class="c-k">' + (shop ? domainHtml(sub) : esc(sub)) + "</div>" : "") + "</div>" +
+      '<div class="c-row">' + tileHtml(info, "t48") + '<div class="c-who"><div class="c-name">' + (shop && info.name === shop.host ? domainHtml(info.name) : esc(info.name)) + "</div>" + (sub ? '<div class="c-k">' + sub + "</div>" : "") + "</div>" +
       '<span class="pill ' + badge[0] + '">' + icon(badge[1]) + badge[2] + "</span></div>" +
-      (mode ? '<div class="c-mode">' + modePill(shop.mode) + "<span>" + esc(mode) + "</span></div>" : "") +
+      capRow +
       (perms.length ? '<div class="c-asks">' + esc(a.name) + " will be able to</div>" + '<ul class="c-perms">' + perms.map(function (p) { return "<li>" + icon("check") + "<span>" + esc(p) + "</span></li>"; }).join("") + "</ul>" : "") +
       (reason ? '<div class="c-reason"><small>' + esc(a.name) + "'s reason, in its own words</small>" + esc(reason) + "</div>" : "") +
       (custom ? '<div class="c-flag">Not in the directory · proposed by the agent</div>' : "") +
@@ -3171,6 +3268,12 @@
     } else if (act === "act") {
       var k = t.getAttribute("data-key");
       ui.openAct[k] = !ui.openAct[k];
+      ui.holdScroll = true;
+      ui.stickPausedUntil = Date.now() + 400;
+      render();
+    } else if (act === "sim") {
+      var sk = t.getAttribute("data-key");
+      ui.openSim[sk] = !ui.openSim[sk];
       ui.holdScroll = true;
       ui.stickPausedUntil = Date.now() + 400;
       render();

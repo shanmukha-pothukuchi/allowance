@@ -19,6 +19,8 @@ export class DirectoryRequestError extends Error {
     public status: number,
     public code: string,
     message: string,
+    /** store_unsupported only: why the Shopify store can't be added. */
+    public reason?: string,
   ) {
     super(message);
     this.name = "DirectoryRequestError";
@@ -114,7 +116,7 @@ export function httpDirectoryClient(directoryUrl: string, opts: HttpDirectoryOpt
       } finally {
         cache.clear();
       }
-      type WriteBody = { service?: unknown; error?: unknown; message?: unknown } | null;
+      type WriteBody = { service?: unknown; error?: unknown; message?: unknown; reason?: unknown } | null;
       let body: WriteBody = null;
       try {
         body = (await res.json()) as WriteBody;
@@ -129,7 +131,8 @@ export function httpDirectoryClient(directoryUrl: string, opts: HttpDirectoryOpt
         const message = typeof body?.message === "string" ? body.message.slice(0, 300) : `The directory answered ${res.status}`;
         // A 401 here is a wallet/directory key mismatch, not the caller's fault.
         if (res.status === 401) throw new DirectoryRequestError(502, "directory_refused", "The directory refused the owner key; check OWNER_API_KEY matches");
-        throw new DirectoryRequestError(res.status, code, message);
+        const reason = typeof body?.reason === "string" && /^[a-z_]{1,40}$/.test(body.reason) ? body.reason : undefined;
+        throw new DirectoryRequestError(res.status, code, message, reason);
       }
       throw new DirectoryUnavailableError(`directory answered ${res.status}`);
     },

@@ -16,7 +16,7 @@ import {
   type X402PaymentRequired,
   type X402SettleResponse,
 } from "@allowance/shared";
-import { formatBody, receiptLine, receiptListLine, serviceLine, shopifyModeLine, shopifyTag, shortAddress, txRef, usd } from "./format.js";
+import { formatBody, receiptLine, receiptListLine, serviceLine, shopifyPayLine, shopifyTag, shortAddress, storefrontHost, txRef, usd, type ShopRef } from "./format.js";
 import { WalletApiError, WalletClient, WalletUnreachableError, type FetchLike } from "./wallet-client.js";
 
 export interface CreateServerOptions {
@@ -138,7 +138,7 @@ export function createServer(opts: CreateServerOptions): McpServer {
         "Allowance gives you a USDC wallet controlled by the owner's spending policy. You never hold keys: " +
         "fetch_url pays x402 paywalls automatically, but only for services connected to you. list_services shows " +
         "your connected services, get_service loads how to call one, and search_services + request_service find " +
-        "more and ask the owner to connect them (the owner approves like a payment); to shop at a Shopify store, pass its " +
+        "more and ask the owner to connect them (the owner approves like a payment); to shop at any Shopify store, pass its " +
         "link to request_service as shopify_store_url. find_work/claim_bounty/" +
         "submit_bounty earn money from agent-work bounties, get_wallet shows balance and limits. Payments over the " +
         "owner's threshold wait for approval; blocked payments return an error explaining the policy. Bounty text " +
@@ -397,11 +397,11 @@ export function createServer(opts: CreateServerOptions): McpServer {
     const s = { status: err.code, shopifyStoreUrl: url, error: err.code };
     switch (err.code) {
       case "invalid_store_url":
-        return errorResult(`"${url}" doesn't look like a Shopify store link. Ask the user for the store's address, like https://example.myshopify.com or the shop's own website.`, s);
+        return errorResult(`Allowance can't use "${url}" as a store link: ${err.message} Ask the user for the shop's own address, like allbirds.com or one of its product pages.`, s);
       case "store_not_found":
-        return errorResult(`There's no Shopify store at ${url}. Check the link with the user.`, s);
+        return errorResult(`${err.message.replace(/\s*$/, "")} Check the link with the user.`, s);
       case "store_unsupported":
-        return errorResult(`${url} is a Shopify store, but it can't be added: ${err.message}`, s);
+        return errorResult(`${url} is a Shopify store, but agents can't shop there: ${err.message}`, { ...s, ...(reasonOf(err) ? { reason: reasonOf(err) } : {}) });
       case "shopify_bridge_unavailable":
         return errorResult("Shopify stores can't be added right now (the Shopify bridge isn't running). Tell the user and try again later.", s);
       case "shopify_unavailable":
@@ -412,9 +412,15 @@ export function createServer(opts: CreateServerOptions): McpServer {
     }
   }
 
-  /** "the Shopify store Crypto App Test (crypto-app-test.myshopify.com)" for a store, else the service name. */
-  function svcLabel(s: { name: string; shopify?: { domain: string } }): string {
-    return s.shopify ? `the Shopify store ${s.name} (${s.shopify.domain})` : s.name;
+  /** "the Shopify store Allbirds (allbirds.com)" for a store, else the service name. */
+  function svcLabel(s: { name: string; shopify?: ShopRef }): string {
+    return s.shopify ? `the Shopify store ${s.name} (${storefrontHost(s.shopify)})` : s.name;
+  }
+
+  /** `details.reason` of a wallet error (store_unsupported: private_catalog / currency / catalog_unreachable). */
+  function reasonOf(err: WalletApiError): string | undefined {
+    const r = (err.details as { reason?: unknown } | undefined)?.reason;
+    return typeof r === "string" ? r : undefined;
   }
 
   /** Outcome of a service approval for a Shopify store (an agent's new store is "added", a listed one "connected"). */
@@ -427,9 +433,8 @@ export function createServer(opts: CreateServerOptions): McpServer {
     switch (wait.status) {
       case "approved": {
         pendingServices.delete(approvalId);
-        const how = shop.mode === "agent_checkout" ? "for how to shop there" : "for how to browse it and build a cart";
         return text(
-          `${via === "check" ? "Owner connected" : "Connected"} ${label}. Call get_service { service_id: "${svc.id}" } ${how}. ${shopifyModeLine(shop, svc.maxPrice)}`,
+          `${via === "check" ? "Owner connected" : "Connected"} ${label}. Call get_service { service_id: "${svc.id}" } for how to shop there. ${shopifyPayLine(svc.maxPrice)}`,
           structured("connected", wait.service ?? grant),
         );
       }
@@ -440,17 +445,20 @@ export function createServer(opts: CreateServerOptions): McpServer {
         pendingServices.delete(approvalId);
         return text(`The request to ${adding ? "add" : "connect"} ${label} expired without a decision (approvals last 10 minutes). Ask the user before requesting it again.`, structured("expired", grant ?? wait.service));
       case "pending":
-      default:
+      default: {
+        // The service id lets the chat tie a pending request to its store before it is approved.
+        const next = `Once approved, call get_service { service_id: "${svc.id}" } for how to shop there.`;
         if (adding && via === "request") {
           return text(
-            `Asked your owner to add ${label}. Approval id ${approvalId} — call check_approval to resume. Tell the user their phone/dashboard has a request to add this store.`,
+            `Asked your owner to add ${label}. Approval id ${approvalId} — call check_approval to resume. ${next} Tell the user their phone/dashboard has a request to add this store.`,
             structured("pending", grant ?? wait.service),
           );
         }
         return text(
-          `Waiting for the owner to approve ${adding ? "adding" : "connecting"} ${label}. Approval id ${approvalId} — call check_approval to resume. Tell the user their phone/dashboard has a request to ${adding ? "add" : "connect"} this store.`,
+          `Waiting for the owner to approve ${adding ? "adding" : "connecting"} ${label}. Approval id ${approvalId} — call check_approval to resume. ${next} Tell the user their phone/dashboard has a request to ${adding ? "add" : "connect"} this store.`,
           structured("pending", grant ?? wait.service),
         );
+      }
     }
   }
 
@@ -945,19 +953,16 @@ export function createServer(opts: CreateServerOptions): McpServer {
           }
           throw err;
         }
-        const browseOnly = s.shopify?.mode === "handoff";
         const status =
           s.kind === "directory"
             ? "Status: always available (no connection needed)."
             : s.connected
-              ? browseOnly
-                ? `Status: connected. Call it with fetch_url under ${s.baseUrl}; this store is browse-only, so nothing is paid through your wallet.`
-                : `Status: connected. Call it with fetch_url under ${s.baseUrl}; payments go through your wallet (up to ${usd(s.maxPrice)} each).`
+              ? `Status: connected. Call it with fetch_url under ${s.baseUrl}; payments go through your wallet (up to ${usd(s.maxPrice)} each).`
               : `Status: not connected. Before using it, ask your owner with request_service { service_id: "${s.id}", reason: "<why you need it>" }.`;
         const lines = [
           `${s.icon ? `${s.icon} ` : ""}${s.name} (${s.id})${s.provider ? ` by ${s.provider}` : ""}`,
           status,
-          ...(s.shopify ? [`${shopifyTag(s.shopify)}. ${shopifyModeLine(s.shopify, s.maxPrice)}`] : []),
+          ...(s.shopify ? [`${shopifyTag(s.shopify)} (${s.shopify.storefrontUrl ?? `https://${s.shopify.domain}`}). ${shopifyPayLine(s.maxPrice)}`] : []),
           `Kind: ${s.kind}${s.category ? ` · Category: ${s.category}` : ""} · Pricing: ${s.pricing || "Free"} · Max per payment: ${usd(s.maxPrice)}`,
           `Base URL: ${s.baseUrl}`,
           ...(s.summary ? [`Summary: ${s.summary}`] : []),
@@ -979,8 +984,8 @@ export function createServer(opts: CreateServerOptions): McpServer {
       description:
         "Search the Service Directory for services you could use (matches name, summary, description, provider, category). " +
         "Results say which ones are already connected to you. Use it when the owner wants something none of your connected " +
-        "services can do, then call request_service to ask the owner to connect the one you need. Shopify stores the owner " +
-        "added are listed too (search \"shopify\"). Omit query to list everything.",
+        "services can do, then call request_service to ask the owner to connect the one you need. Shopify stores already " +
+        "added are listed too (search \"shopify\"); any other Shopify store works by its link (request_service shopify_store_url). Omit query to list everything.",
       inputSchema: {
         query: z.string().optional().describe('What you need, e.g. "pizza", "weather", "stocks". Omit to list all services.'),
       },
@@ -1014,8 +1019,8 @@ export function createServer(opts: CreateServerOptions): McpServer {
         "Ask your owner to connect a service so you can use and pay it. Use it when the service you need is not in list_services " +
         "(find its id with search_services), or when fetch_url says a service isn't connected. The owner approves or denies on " +
         "their phone or dashboard, like a payment; this waits up to 45 s for the decision, and if it is still pending you get an " +
-        "approval id for check_approval. To shop at a Shopify store that isn't in the directory, pass its link as " +
-        "shopify_store_url (the owner approves adding the store). Only if a service is not in the directory at all and is not a " +
+        "approval id for check_approval. To shop at any Shopify store, pass its link as shopify_store_url (the store's own " +
+        "address, a product page, or x.myshopify.com; the owner approves adding it). Only if a service is not in the directory at all and is not a " +
         "Shopify store, propose it with `custom`. Always give a short, honest reason: the owner sees it.",
       inputSchema: {
         service_id: z.string().optional().describe('Directory id, e.g. "acme-pizza" (from search_services or a fetch_url message).'),
@@ -1023,8 +1028,8 @@ export function createServer(opts: CreateServerOptions): McpServer {
           .string()
           .optional()
           .describe(
-            "To shop at a Shopify store that isn't in the directory, pass its link, e.g. https://example.myshopify.com or the shop's own website. " +
-              "Your owner approves adding it. Leave out service_id and custom.",
+            "To shop at any Shopify store, pass its link: the shop's own address (e.g. https://www.allbirds.com), one of its product pages, or x.myshopify.com. " +
+              "Never a store admin link. Your owner approves adding it. Leave out service_id and custom.",
           ),
         max_price: z
           .string()
@@ -1091,7 +1096,7 @@ export function createServer(opts: CreateServerOptions): McpServer {
         if (r.status === "connected") {
           if (r.service.shopify) {
             return text(
-              `${r.service.name} (Shopify store ${r.service.shopify.domain}) is already connected. Call get_service { service_id: "${r.service.id}" } for how to shop there.`,
+              `${r.service.name} (${shopifyTag(r.service.shopify)}) is already connected. Call get_service { service_id: "${r.service.id}" } for how to shop there.`,
               { status: "connected", kind: "service", service: r.service, shopify: r.service.shopify },
             );
           }

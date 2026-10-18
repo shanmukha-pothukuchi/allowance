@@ -697,36 +697,8 @@ html.embed {
   background: color-mix(in srgb, #95bf47 18%, var(--surface));
   color: color-mix(in srgb, #5e8e3e 70%, var(--text));
 }
-.mode-chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 10px;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  font-weight: 700;
-  white-space: nowrap;
-  flex: none;
-}
-.mode-agent_checkout {
-  background: var(--in-dim);
-  color: var(--in);
-}
-.mode-handoff {
-  background: var(--surface-3);
-  color: var(--text-2);
-}
-.shop-mode {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 10px;
-}
-.shop-mode-text {
-  font-size: 0.92rem;
-  line-height: 1.4;
-  color: var(--text-2);
-}
-.shop-mode-block {
+/* how paying works: USDC from the wallet, then a single-use card (simulated) */
+.shop-how-block {
   padding: 12px 14px;
   border-radius: 14px;
   background: var(--surface-2);
@@ -780,6 +752,12 @@ html.embed {
 }
 .shop-link:hover {
   text-decoration: underline;
+}
+.shop-link-quiet {
+  color: inherit;
+}
+.shop-card-fact {
+  font-size: 0.88rem;
 }
 
 /* gallery header + the "Add a Shopify store" card */
@@ -865,7 +843,7 @@ html.embed {
 }
 .shop-preview-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 12px;
 }
@@ -884,6 +862,71 @@ html.embed {
   font-weight: 750;
   letter-spacing: -0.01em;
   overflow-wrap: anywhere;
+}
+.shop-preview-site {
+  display: flex;
+  min-width: 0;
+}
+/* a few of the store's products, square and calm, a bag while they load or if they fail */
+.shop-samples {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.shop-sample {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1 / 1;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface-3);
+  color: var(--muted);
+}
+.shop-sample::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgba(15, 15, 20, 0.05);
+  pointer-events: none;
+}
+.shop-sample img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.shop-sample-bag {
+  width: 34%;
+  height: 34%;
+}
+.shop-sample-broken {
+  background: color-mix(in srgb, #95bf47 14%, var(--surface));
+  color: color-mix(in srgb, #5e8e3e 80%, var(--text));
+}
+.shop-card-ok {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: 4px 11px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  background: var(--in-dim);
+  color: var(--in);
+}
+.shop-card-ok svg {
+  flex: none;
+}
+.shop-how {
+  margin-top: 2px;
 }
 .shop-exists {
   display: flex;
@@ -946,12 +989,8 @@ html.embed {
   }
 }
 @media (max-width: 480px) {
-  .shop-preview-row {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-  .shop-preview-row .mode-chip {
-    grid-column: 2;
-    justify-self: start;
+  .shop-samples {
+    gap: 6px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

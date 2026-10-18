@@ -1,41 +1,78 @@
 /**
- * UCP (Universal Commerce Protocol) helpers.
+ * Public store facts outside the Storefront API (docs/ARCHITECTURE.md §15.1).
  *
- * - `/.well-known/ucp` on a storefront names its `*.myshopify.com` MCP endpoint, which is how a custom
- *   storefront domain is resolved to a Shopify shop.
- * - Optional catalog fallback for password-protected stores: JSON-RPC `tools/call` `search_catalog` /
- *   `lookup_catalog` at `https://{shop}/api/ucp/mcp`. Shopify requires a public HTTPS agent profile
- *   (`meta["ucp-agent"].profile`, env UCP_AGENT_PROFILE_URL); without one this path is skipped.
+ * - `/.well-known/ucp` (Universal Commerce Protocol profile): its `dev.ucp.shopping` service endpoint
+ *   names the store's `*.myshopify.com` host (how a custom domain like allbirds.com resolves), and its
+ *   `payment_handlers` say whether the store takes card payments from agents (`dev.shopify.card`).
+ * - `/meta.json` (every Online Store answers it): `myshopify_domain` and `published_products_count`.
+ *   Used when a storefront has no UCP profile, and for the catalog size.
+ * - Optional catalog fallback for stores whose Storefront API is not public: JSON-RPC `tools/call`
+ *   `search_catalog` / `lookup_catalog` at `https://{shop}/api/ucp/mcp`. Shopify requires a public
+ *   HTTPS agent profile (`meta["ucp-agent"].profile`, `config.shopify.ucpAgentProfileUrl`); without
+ *   one this path is skipped.
  */
 import { ShopifyError } from "./errors.js";
-import { requestJson, type FetchLike } from "./http.js";
+import { getPublicJson, requestJson, type FetchLike } from "./http.js";
 
 export const MYSHOPIFY_HOST_RE = /^([a-z0-9][a-z0-9-]*)\.myshopify\.com$/;
+/** The UCP payment handler for card payments (what an Allowance Card would pay through). */
+export const CARD_HANDLER = "dev.shopify.card";
 
-/** Fetch `https://{host}/.well-known/ucp` and return the `*.myshopify.com` domain it names, if any. */
-export async function myshopifyDomainFromUcp(host: string, doFetch: FetchLike): Promise<string | null> {
-  let r;
-  try {
-    r = await requestJson(doFetch, `https://${host}/.well-known/ucp`, { timeoutMs: 8000 });
-  } catch {
-    return null;
-  }
-  if (r.status !== 200 || !r.json || typeof r.json !== "object") return null;
-  const services = (r.json as { ucp?: { services?: Record<string, unknown> } }).ucp?.services;
-  const shopping = services?.["dev.ucp.shopping"];
+export interface UcpProfile {
+  /** The `*.myshopify.com` host of the store's UCP shopping endpoint, if any. */
+  myshopifyDomain: string | null;
+  /** `payment_handlers` lists `dev.shopify.card`. */
+  cardCheckout: boolean;
+}
+
+export interface ShopMeta {
+  myshopifyDomain: string | null;
+  /** The storefront's own URL, e.g. "https://www.allbirds.com". */
+  url?: string;
+  productCount?: number;
+}
+
+type IsPrivate = (host: string) => boolean;
+
+/** `https://{host}/.well-known/ucp`, parsed. Null when the host has no readable profile. */
+export async function fetchUcpProfile(host: string, doFetch: FetchLike, isPrivateHost: IsPrivate): Promise<UcpProfile | null> {
+  const r = await getPublicJson(doFetch, `https://${host}/.well-known/ucp`, { isPrivateHost });
+  const ucp = (r?.json as { ucp?: { services?: Record<string, unknown>; payment_handlers?: unknown } } | undefined)?.ucp;
+  if (!ucp || typeof ucp !== "object") return null;
+  const shopping = ucp.services?.["dev.ucp.shopping"];
   const entries = Array.isArray(shopping) ? shopping : shopping ? [shopping] : [];
+  let myshopifyDomain: string | null = null;
   for (const e of entries) {
     const endpoint = (e as { endpoint?: unknown } | null)?.endpoint;
     if (typeof endpoint !== "string") continue;
     try {
       const u = new URL(endpoint);
       const h = u.hostname.toLowerCase();
-      if (u.protocol === "https:" && MYSHOPIFY_HOST_RE.test(h)) return h;
+      if (u.protocol === "https:" && MYSHOPIFY_HOST_RE.test(h)) {
+        myshopifyDomain = h;
+        break;
+      }
     } catch {
       /* ignore */
     }
   }
-  return null;
+  const handlers = ucp.payment_handlers;
+  const cardCheckout = Boolean(handlers && typeof handlers === "object" && !Array.isArray(handlers) && CARD_HANDLER in handlers);
+  return { myshopifyDomain, cardCheckout };
+}
+
+/** `https://{host}/meta.json`, parsed. Null when the host is not a readable Shopify storefront. */
+export async function fetchShopMeta(host: string, doFetch: FetchLike, isPrivateHost: IsPrivate): Promise<ShopMeta | null> {
+  const r = await getPublicJson(doFetch, `https://${host}/meta.json`, { isPrivateHost });
+  const j = r?.json as { myshopify_domain?: unknown; url?: unknown; published_products_count?: unknown } | undefined;
+  if (!j) return null;
+  const d = typeof j.myshopify_domain === "string" ? j.myshopify_domain.toLowerCase() : "";
+  const out: ShopMeta = { myshopifyDomain: MYSHOPIFY_HOST_RE.test(d) ? d : null };
+  if (typeof j.url === "string") out.url = j.url;
+  if (typeof j.published_products_count === "number" && Number.isFinite(j.published_products_count) && j.published_products_count >= 0) {
+    out.productCount = Math.floor(j.published_products_count);
+  }
+  return out.myshopifyDomain || out.productCount !== undefined ? out : null;
 }
 
 export interface UcpClient {

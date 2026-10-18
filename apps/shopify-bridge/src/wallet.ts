@@ -1,7 +1,8 @@
 /**
- * The bridge's merchant wallet: the x402 `payTo` for every store. Generated once into
+ * The Allowance Card treasury: the x402 `payTo` for every store. Agents' USDC lands here and (for
+ * real, once card issuing is wired) funds each single-use Allowance Card. Generated once into
  * `DATA_DIR/shopify-bridge-key.json` (mode 0600). The key is never logged; only the address is.
- * The bridge only receives payments, so it needs no self-funding.
+ * The treasury only receives payments, so it needs no self-funding.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -19,7 +20,7 @@ export function loadBridgeAccount(dataDir: string, log: (msg: string) => void = 
     try {
       const { privateKey } = JSON.parse(readFileSync(file, "utf8")) as { privateKey: `0x${string}` };
       const account = privateKeyToAccount(privateKey);
-      log(`bridge wallet ${account.address} (from ${file})`);
+      log(`Allowance Card treasury ${account.address} (from ${file})`);
       return account;
     } catch (err) {
       // Never overwrite a key file we could not read: it may hold received funds.
@@ -30,6 +31,6 @@ export function loadBridgeAccount(dataDir: string, log: (msg: string) => void = 
   const account = privateKeyToAccount(privateKey);
   mkdirSync(dataDir, { recursive: true });
   writeFileSync(file, JSON.stringify({ address: account.address, privateKey, createdAt: new Date().toISOString() }, null, 2), { mode: 0o600 });
-  log(`generated bridge wallet ${account.address} (key stored in ${file})`);
+  log(`generated the Allowance Card treasury ${account.address} (key stored in ${file})`);
   return account;
 }

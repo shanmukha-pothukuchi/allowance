@@ -77,3 +77,7 @@ export const ShoppingBag = (p: SVGProps<SVGSVGElement>) => (
 export const ExternalLink = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p}><path d="M14 4h6v6M20 4l-9 9" /><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></svg>
 );
+/** A payment card: the single-use Allowance Card that pays Shopify stores (§15). */
+export const CreditCard = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}><rect x="2.5" y="5" width="19" height="14" rx="2.5" /><path d="M2.5 10h19M6.5 15h4" /></svg>
+);

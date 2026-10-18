@@ -84,7 +84,7 @@ export function formatEvent(e: WalletEvent): TelegramMessage | null {
       const s = e.data?.service as Partial<ConnectedService> | undefined;
       if (!s?.name) return { text: `🔌 ${esc(e.message)}` };
       const verb = e.type === "service.connected" ? "connected to" : "disconnected from";
-      const shop = s.shopify ? ` (Shopify store <code>${esc(s.shopify.domain)}</code>)` : "";
+      const shop = s.shopify ? ` (Shopify store <code>${esc(storefrontHost(s.shopify))}</code>)` : "";
       return { text: `🔌 ${esc(s.icon ?? "")}${s.icon ? " " : ""}<b>${esc(s.name)}</b>${shop} ${verb} ${agent}.` };
     }
     case "payment.blocked": {
@@ -143,25 +143,30 @@ export function serviceRequestMessage(a: Approval): TelegramMessage | null {
   return { text: lines.join("\n"), keyboard: approvalKeyboard(a.id) };
 }
 
+/** The storefront domain people know: "https://www.allbirds.com" → "allbirds.com" (else the myshopify address). */
+export function storefrontHost(shop: { domain: string; storefrontUrl?: string }): string {
+  try {
+    if (shop.storefrontUrl) return new URL(shop.storefrontUrl).host.replace(/^www\./, "");
+  } catch {
+    /* fall through */
+  }
+  return shop.domain;
+}
+
 /**
- * A Shopify store (ARCHITECTURE §15): say it is a Shopify store, show the domain, the mode and the
- * per-order cap. A store the agent found is "added" (approving puts it in the directory).
- *   🛍️ shopper wants to add the Shopify store Crypto App Test.
- *   Store: crypto-app-test.myshopify.com (new: approving adds it to your directory)
- *   Mode: 💳 Agent checkout: it pays in USDC and the store gets a real, paid order.
- *   Per-order cap: $20.00
+ * A Shopify store (ARCHITECTURE §15): say it is a Shopify store, show its storefront domain, the
+ * per-order cap and how it is paid. A store the agent found is "added" (approving puts it in the directory).
+ *   🛍️ shopper wants to add the Shopify store Allbirds.
+ *   Store: allbirds.com (new: approving adds it to your directory)
+ *   Per-order cap: $20.00 · pays with a single-use Allowance card (simulated)
  */
 function shopifyRequestMessage(a: Approval, s: Partial<ServiceGrant>, shop: NonNullable<ServiceGrant["shopify"]>): TelegramMessage {
   const agent = esc(a.agentName || "An agent");
   const adding = s.source === "agent";
-  const checkout = shop.mode === "agent_checkout";
   const lines = [
     `🛍️ <b>${agent}</b> wants to ${adding ? "add" : "connect"} the Shopify store <b>${esc(s.name)}</b>.`,
-    `Store: <code>${esc(shop.domain)}</code>${adding ? " (new: approving adds it to your directory)" : ""}`,
-    checkout
-      ? "Mode: 💳 <b>Agent checkout</b>: it pays in USDC and the store gets a real, paid order."
-      : "Mode: 👀 <b>Browse only</b>: it can search and build carts; you finish checkout at Shopify.",
-    checkout ? `Per-order cap: <b>${esc(money(s.maxPrice ?? a.amount))}</b>` : "Per-order cap: none (it cannot pay this store)",
+    `Store: <code>${esc(storefrontHost(shop))}</code>${adding ? " (new: approving adds it to your directory)" : ""}`,
+    `Per-order cap: <b>${esc(money(s.maxPrice ?? a.amount))}</b> · pays with a single-use Allowance card (simulated)`,
   ];
   const perms = (s.permissions ?? []).slice(0, 6);
   if (perms.length) lines.push("", "It could:", ...perms.map((p) => `• ${esc(p)}`));

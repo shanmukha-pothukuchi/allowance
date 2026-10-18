@@ -12,7 +12,7 @@ import { groupMembers, roleFor, type AgentSpec } from "./roster.js";
 import { GroupStore, GroupError, defaultGroups } from "./groups.js";
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { AGENT_NAME_RE } from "@allowance/shared";
+import { AGENT_NAME_RE, type ShopifyStoreRef } from "@allowance/shared";
 import type { LlmConfig } from "./llm.js";
 import { fontsDir, renderChatPage, staticDir } from "./ui.js";
 
@@ -35,8 +35,15 @@ export interface ServiceChip {
   color: string;
   pricing?: string;
   maxPrice?: string;
-  /** Shopify stores: domain and mode, so the page needn't infer them from tool text. */
-  shopify?: { handle: string; domain: string; mode: "agent_checkout" | "handoff" };
+  /** Shopify stores (ShopifyStoreRef), so the page needn't infer them from tool text. */
+  shopify?: ShopifyStoreRef;
+}
+
+/** A store ref from the wallet poll, as plain strings (the page renders it; https storefront links only). */
+function shopifyRef(x: Partial<ShopifyStoreRef>): ShopifyStoreRef {
+  const domain = String(x.domain ?? "");
+  const storefront = typeof x.storefrontUrl === "string" && /^https:\/\/[^\s"'<>]+$/.test(x.storefrontUrl) ? x.storefrontUrl : `https://${domain}`;
+  return { handle: String(x.handle ?? ""), domain, storefrontUrl: storefront, cardCheckout: x.cardCheckout === true };
 }
 
 /** Preview for the conversation list: the last user / assistant / error entry. */
@@ -154,7 +161,7 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
             color: x.color ?? "",
             ...(x.pricing ? { pricing: String(x.pricing) } : {}),
             ...(x.maxPrice ? { maxPrice: String(x.maxPrice) } : {}),
-            ...(x.shopify && typeof x.shopify === "object" ? { shopify: { handle: String(x.shopify.handle), domain: String(x.shopify.domain), mode: x.shopify.mode === "agent_checkout" ? ("agent_checkout" as const) : ("handoff" as const) } } : {}),
+            ...(x.shopify && typeof x.shopify === "object" ? { shopify: shopifyRef(x.shopify) } : {}),
           }));
         view = {
           address: me.agent.address,

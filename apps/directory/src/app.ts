@@ -8,7 +8,7 @@ import type { NextFunction, Request, Response } from "express";
 import type { AppConfig, ServiceManifest } from "@allowance/shared";
 import { buildCatalog, searchCatalog, withoutDocs } from "./catalog.js";
 import { DirectoryExtras } from "./extra.js";
-import { asShopifyStore, parseShopifyCap, shopifyManifest, shopifyServiceId, SHOPIFY_DEFAULT_MAX_PRICE } from "./shopify.js";
+import { asShopifyStore, parseShopifyCap, shopifyManifest, shopifyServiceId, storefrontHost, SHOPIFY_DEFAULT_MAX_PRICE } from "./shopify.js";
 
 /** merchantUrl/directoryUrl build the catalog. dataDir persists added stores (memory only without it). */
 export type DirectoryConfig = Pick<AppConfig, "merchantUrl" | "directoryUrl"> & Partial<Pick<AppConfig, "dataDir" | "shopifyBridgeUrl" | "ownerApiKey">>;
@@ -98,7 +98,7 @@ export function createDirectoryApp(config: DirectoryConfig, deps: DirectoryDeps 
   app.post("/services/shopify", ownerAuth, async (req, res) => {
     const body = (req.body ?? {}) as { url?: unknown; maxPrice?: unknown };
     if (typeof body.url !== "string" || !body.url.trim() || body.url.length > 500) {
-      throw new HttpError(400, "invalid_request", "Body must be { url, maxPrice? } with the store's link, e.g. https://example.myshopify.com");
+      throw new HttpError(400, "invalid_request", "Body must be { url, maxPrice? } with the store's link, e.g. https://www.allbirds.com or a product page");
     }
     let maxPrice = SHOPIFY_DEFAULT_MAX_PRICE;
     if (body.maxPrice !== undefined && body.maxPrice !== null) {
@@ -110,7 +110,7 @@ export function createDirectoryApp(config: DirectoryConfig, deps: DirectoryDeps 
     }
     const store = await registerWithBridge(body.url.trim());
     if (store.currency && store.currency.toUpperCase() !== "USD") {
-      throw new HttpError(422, "store_unsupported", `${store.name} prices in ${store.currency}; only USD stores can be paid in USDC`);
+      throw new HttpError(422, "store_unsupported", `${store.name} doesn't sell to US shoppers in US dollars (it prices in ${store.currency}), so agents can't pay it in USDC.`, { reason: "currency" });
     }
     const id = shopifyServiceId(store.handle);
     const existing = services.find((s) => s.id === id);
@@ -120,7 +120,7 @@ export function createDirectoryApp(config: DirectoryConfig, deps: DirectoryDeps 
     extras.add({ store, maxPrice, addedAt: new Date().toISOString() });
     refresh();
     const service = services.find((s) => s.id === id)!;
-    console.log(`${LOG} added Shopify store ${store.name} (${store.domain}, ${store.mode}) as ${id}`);
+    console.log(`${LOG} added Shopify store ${store.name} (${storefrontHost(store)}) as ${id}, up to $${maxPrice} per order`);
     res.status(201).json({ service });
   });
 
@@ -169,7 +169,7 @@ export function createDirectoryApp(config: DirectoryConfig, deps: DirectoryDeps 
       console.warn(`${LOG} Shopify bridge not reachable at ${bridgeUrl}: ${(err as Error).message}`);
       throw new HttpError(503, "shopify_bridge_unavailable", "The Shopify bridge is not reachable right now; start it and try again.");
     }
-    type BridgeBody = { store?: unknown; error?: string; message?: string } | null;
+    type BridgeBody = { store?: unknown; error?: string; message?: string; reason?: unknown } | null;
     let json: BridgeBody = null;
     try {
       json = (await r.json()) as BridgeBody;
@@ -183,7 +183,8 @@ export function createDirectoryApp(config: DirectoryConfig, deps: DirectoryDeps 
     }
     if (r.status === 400 || r.status === 404 || r.status === 422) {
       const fallback = { 400: "invalid_store_url", 404: "store_not_found", 422: "store_unsupported" }[r.status];
-      throw new HttpError(r.status, typeof json?.error === "string" ? json.error.slice(0, 60) : fallback, typeof json?.message === "string" ? json.message.slice(0, 300) : `The Shopify bridge answered ${r.status}`);
+      const reason = typeof json?.reason === "string" && /^[a-z_]{1,40}$/.test(json.reason) ? { reason: json.reason } : undefined;
+      throw new HttpError(r.status, typeof json?.error === "string" ? json.error.slice(0, 60) : fallback, typeof json?.message === "string" ? json.message.slice(0, 300) : `The Shopify bridge answered ${r.status}`, reason);
     }
     if (r.status === 401 || r.status === 403) {
       throw new HttpError(502, "shopify_bridge_error", "The Shopify bridge refused the owner key; check OWNER_API_KEY matches");
@@ -223,7 +224,7 @@ export function catalogPage(services: readonly ServiceManifest[]): string {
   <div class="body">
     <div class="head"><h2>${escapeHtml(s.name)}</h2><span class="price">${escapeHtml(s.pricing)}</span></div>
     <div class="meta">${escapeHtml(s.provider)} · ${escapeHtml(CATEGORY_LABEL[s.category] ?? s.category)} · <code>${escapeHtml(s.id)}</code></div>
-    ${s.shopify ? `<div class="shop"><code>${escapeHtml(s.shopify.domain)}</code> · ${s.shopify.mode === "agent_checkout" ? "Agent checkout (pays in USDC)" : "Browse only (you pay at Shopify)"}</div>` : ""}
+    ${s.shopify ? `<div class="shop"><a href="${escapeHtml(s.shopify.storefrontUrl)}" rel="noopener noreferrer">${escapeHtml(storefrontHost(s.shopify))}</a> · Pays with a single-use Allowance card (simulated)</div>` : ""}
     <p>${escapeHtml(s.description)}</p>
     <ul class="perms">${perms}</ul>
     <div class="url"><code>${escapeHtml(s.baseUrl)}</code></div>
@@ -255,7 +256,8 @@ export function catalogPage(services: readonly ServiceManifest[]): string {
   .meta { color:var(--muted); font-size:13px; margin:2px 0 6px; }
   p { margin:0 0 8px; }
   .perms { margin:0 0 8px; padding-left:18px; color:var(--muted); font-size:13px; }
-  .url code, .meta code, .shop code { font-size:12px; overflow-wrap:anywhere; }
+  .url code, .meta code { font-size:12px; overflow-wrap:anywhere; }
+  .shop a { color:inherit; }
   .shop { font-size:13px; color:#5E8E3E; margin:-2px 0 6px; }
   footer { max-width:960px; margin:0 auto; padding:8px 16px 32px; color:var(--muted); font-size:13px; }
 </style>

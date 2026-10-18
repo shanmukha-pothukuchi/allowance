@@ -1,11 +1,12 @@
 /**
- * Shopify stores as services (§15). Pure helpers: is it a store, its domain and mode, the owner
- * sentences, the "Add a Shopify store" link check, the cap, and the request body. No React, no
- * fetch. Unit-tested in shopify.test.ts.
+ * Shopify stores as services (§15), from the shopper's side: any public store, no store admin.
+ * Pure helpers: is it a store, its storefront and cap, the owner sentences, the "Add a Shopify
+ * store" link check, the sample images, and the request body. No React, no fetch. Unit-tested in
+ * shopify.test.ts.
  */
 import { isShopifyGrant, money, toCents } from "./format";
 import { MAX_TOPUP, parseAmount, type AmountCheck } from "./sheets";
-import type { AddShopifyStoreRequest, DirectoryService, ShopifyMode, ShopifyStore, ShopifyStoreRef } from "./types";
+import type { AddShopifyStoreRequest, DirectoryService, ShopifyStore, ShopifyStoreRef } from "./types";
 
 export const SHOPIFY_GREEN = "#95BF47";
 export const SHOPIFY_PREFIX = "shopify-";
@@ -18,47 +19,68 @@ type ServiceLike = { id?: string; shopify?: Partial<ShopifyStoreRef> | null; pri
 /** A Shopify store: it carries `shopify`, or its id is `shopify-<handle>`. */
 export const isShopify = (s: ServiceLike): boolean => isShopifyGrant(s);
 
-/** `crypto-app-test` → `shopify-crypto-app-test` (the directory id, §15.2). */
+/** `weareallbirds` → `shopify-weareallbirds` (the directory id, §15.2). */
 export const serviceIdFor = (handle: string) => `${SHOPIFY_PREFIX}${handle}`;
 
+/** Shopify itself (admin.shopify.com, shopify.com): never a store, never linked. */
+export const isShopifyItself = (host: string) => /(^|\.)shopify\.com$/i.test(host);
+
+/** A storefront URL as its origin (`https://www.allbirds.com`), or "" when it isn't a plain web address of a store. */
+export function storefrontOrigin(raw: string | undefined): string {
+  if (!raw) return "";
+  try {
+    const u = new URL(raw);
+    if ((u.protocol !== "https:" && u.protocol !== "http:") || isShopifyItself(u.hostname)) return "";
+    return u.origin;
+  } catch {
+    return "";
+  }
+}
+
+/** `https://www.allbirds.com` → `allbirds.com`: the store's name for its shoppers. */
+export function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
 /**
- * Handle, domain and mode of a store. From `shopify` when present, else derived: the id gives the
- * handle (and `<handle>.myshopify.com`), the pricing line gives the mode ("Browse only …" is handoff).
+ * Handle, domain, storefront and card checkout of a store. From `shopify` when present, else
+ * derived from the id (`shopify-<handle>` → `<handle>.myshopify.com`, which is also its storefront).
  */
 export function shopifyRefOf(s: ServiceLike): ShopifyStoreRef | undefined {
   if (!s || !isShopify(s)) return undefined;
   const fromId = typeof s.id === "string" && s.id.startsWith(SHOPIFY_PREFIX) ? s.id.slice(SHOPIFY_PREFIX.length) : "";
   const handle = s.shopify?.handle || fromId;
   const domain = s.shopify?.domain || (handle ? `${handle}.myshopify.com` : "");
-  const declared = s.shopify?.mode;
-  const mode: ShopifyMode =
-    declared === "agent_checkout" || declared === "handoff"
-      ? declared
-      : /^browse only/i.test(s.pricing ?? "")
-        ? "handoff"
-        : toCents(s.maxPrice) > 0 || /per order/i.test(s.pricing ?? "")
-          ? "agent_checkout"
-          : "handoff";
-  return { handle, domain, mode };
+  const storefrontUrl = storefrontOrigin(s.shopify?.storefrontUrl) || (domain && !isShopifyItself(domain) ? `https://${domain}` : "");
+  return { handle, domain, storefrontUrl, cardCheckout: s.shopify?.cardCheckout === true };
 }
 
-export function modeLabel(mode: ShopifyMode): string {
-  return mode === "agent_checkout" ? "Agent checkout" : "Browse only";
+/** What the owner calls the store's address: `allbirds.com` (its storefront), else its myshopify domain. */
+export function storefrontHost(ref: Pick<ShopifyStoreRef, "storefrontUrl" | "domain"> | undefined): string {
+  if (!ref) return "";
+  return hostOf(storefrontOrigin(ref.storefrontUrl)) || ref.domain;
 }
 
-/** One line for the owner: what an agent can do at this store. Same words as the chat. */
-export function modeExplain(mode: ShopifyMode, cap?: string): string {
-  if (mode === "handoff") return "Your agent browses and builds a cart. You finish paying at Shopify's checkout.";
-  return toCents(cap) > 0
-    ? `Your agent pays in USDC, up to ${money(cap)} per order, and a real order lands in your Shopify admin.`
-    : "Your agent pays in USDC, and a real order lands in your Shopify admin.";
+/** A store's pricing line without its cap (shown on its own): "Store prices · paid with your Allowance card". */
+export function pricingWithoutCap(pricing: string | undefined): string {
+  return (pricing ?? "").replace(/\s*·\s*up to \$[\d,]+(?:\.\d+)? per order\s*$/i, "").trim();
 }
 
-/** The price-cap line on cards and sheets. */
-export function capLabel(mode: ShopifyMode, maxPrice: string | undefined): string {
-  if (mode === "handoff") return "No agent payments";
+/** The per-order cap line on cards and sheets. */
+export function capLabel(maxPrice: string | undefined): string {
   return toCents(maxPrice) > 0 ? `Up to ${money(maxPrice)} per order` : "No cap set";
 }
+
+/**
+ * How paying works, in one calm, honest line. The USDC payment is real; the single-use card that
+ * would pay the store through Shopify's agent checkout is simulated in this project (§15).
+ */
+export const HOW_IT_PAYS =
+  "Your agent pays in USDC from its wallet. Allowance then pays the store with a single-use Allowance Card (simulated in this demo: no real order reaches the store).";
 
 /** "juniper-goods" → "Juniper Goods". */
 export function prettyHandle(handle: string): string {
@@ -69,11 +91,22 @@ export function prettyHandle(handle: string): string {
     .join(" ");
 }
 
-/** "14 products · USD", or just "USD" when the size is unknown. */
-export function catalogLine(store: Pick<ShopifyStore, "productCount" | "currency">): string {
+/** "248 products", or "" when the size is unknown. */
+export function catalogLine(store: Pick<ShopifyStore, "productCount">): string {
   const n = store.productCount;
-  const size = typeof n === "number" && Number.isFinite(n) && n >= 0 ? `${n} product${n === 1 ? "" : "s"}` : "";
-  return [size, store.currency].filter(Boolean).join(" · ");
+  return typeof n === "number" && Number.isFinite(n) && n >= 0 ? `${n.toLocaleString("en-US")} product${n === 1 ? "" : "s"}` : "";
+}
+
+/**
+ * Up to four product pictures for the preview. Third-party data: only web images (shown without a
+ * referrer) and inline image data (the mock's SVGs) are kept.
+ */
+export function sampleImagesOf(store: Pick<ShopifyStore, "sampleImages"> | undefined): string[] {
+  const list = Array.isArray(store?.sampleImages) ? store.sampleImages : [];
+  return list
+    .filter((u): u is string => typeof u === "string")
+    .filter((u) => /^data:image\/(?:svg\+xml|png|jpeg|webp|gif)[;,]/i.test(u) || /^https?:\/\//i.test(u))
+    .slice(0, 4);
 }
 
 // ---------------------------------------------------------------------------- the store link
@@ -81,15 +114,16 @@ export function catalogLine(store: Pick<ShopifyStore, "productCount" | "currency
 export type LinkCheck =
   | { state: "idle" }
   | { state: "bad"; message: string }
-  /** `url` is what we send (the origin: the bridge normalizes the rest); `key` dedupes previews. */
+  /** `url` is what we send (the origin: the bridge ignores the path); `key` dedupes previews. */
   | { state: "ok"; url: string; key: string; host: string; handle?: string };
 
-const LINK_EXAMPLE = "Paste something like crypto-app-test.myshopify.com.";
+const LINK_EXAMPLE = "Paste the shop's address, like allbirds.com, or a link to one of its products.";
+export const ADMIN_LINK_MESSAGE = "That's a store admin link. Paste the shop's own address, like allbirds.com.";
 
 /**
- * A quick client-side look at what the owner pasted. Accepts `x.myshopify.com`,
- * `https://x.myshopify.com/anything`, or a storefront domain. The bridge is the authority; this only
- * keeps obvious typos from round-tripping.
+ * A quick client-side look at what the owner pasted. Accepts any store or product link:
+ * `x.myshopify.com`, `allbirds.com`, `https://www.allbirds.com/products/…`. The bridge is the
+ * authority; this only keeps obvious typos (and admin links) from round-tripping.
  */
 export function checkStoreLink(raw: string): LinkCheck {
   const s = raw.trim();
@@ -103,17 +137,17 @@ export function checkStoreLink(raw: string): LinkCheck {
   }
   if (u.protocol !== "https:" && u.protocol !== "http:") return { state: "bad", message: `Use a web address. ${LINK_EXAMPLE}` };
   const host = u.hostname.toLowerCase().replace(/\.$/, "");
+  if (host === "admin.shopify.com" || /\/admin(\/|$)/.test(u.pathname)) return { state: "bad", message: ADMIN_LINK_MESSAGE };
   const labels = host.split(".");
   const tld = labels[labels.length - 1];
   if (labels.length < 2 || labels.some((l) => !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(l)) || !/^[a-z]{2,}$/.test(tld)) {
     return { state: "bad", message: `That doesn't look like a store address. ${LINK_EXAMPLE}` };
   }
-  const shop = host.match(/^([a-z0-9][a-z0-9-]*)\.myshopify\.com$/);
-  if (host === "myshopify.com" || host === "www.myshopify.com" || host === "admin.shopify.com" || host === "shopify.com" || host === "www.shopify.com") {
+  if (host === "myshopify.com" || host === "www.myshopify.com" || isShopifyItself(host)) {
     return { state: "bad", message: `That's Shopify itself, not a store. ${LINK_EXAMPLE}` };
   }
-  const origin = `https://${host}`;
-  return { state: "ok", url: origin, key: host, host, ...(shop ? { handle: shop[1] } : {}) };
+  const shop = host.match(/^([a-z0-9][a-z0-9-]*)\.myshopify\.com$/);
+  return { state: "ok", url: `https://${host}`, key: host.replace(/^www\./, ""), host, ...(shop ? { handle: shop[1] } : {}) };
 }
 
 /** The directory entry for this store, if the owner already added it. */
@@ -123,12 +157,12 @@ export function existingStore<T extends Pick<DirectoryService, "id" | "shopify">
 
 // ---------------------------------------------------------------------------- errors
 
-/** A failed preview or add (§15.1 / §15.3 codes) in owner words. */
+/** A failed preview or add (§15.1 / §15.3 codes) in owner words. The backend's own message wins when it has one. */
 export function storeErrorMessage(err: { status?: number; code?: string; message?: string } | undefined): string {
   const code = err?.code;
   const status = err?.status;
   const message = (err?.message ?? "").trim();
-  if (code === "invalid_store_url" || (!code && status === 400)) return `That doesn't look like a store link. ${LINK_EXAMPLE}`;
+  if (code === "invalid_store_url" || (!code && status === 400)) return /admin/i.test(message) ? ADMIN_LINK_MESSAGE : `That doesn't look like a store link. ${LINK_EXAMPLE}`;
   if (code === "store_not_found" || (!code && status === 404)) return "No Shopify store answers at that address. Check the spelling.";
   if (code === "store_unsupported" || status === 422) return message || "Agents can't shop at this store.";
   if (code === "service_exists" || code === "store_exists" || status === 409) return "This store is already in your services.";
@@ -145,10 +179,10 @@ export function checkCap(raw: string): AmountCheck {
   return r;
 }
 
-/** `POST /v1/directory/shopify`: the cap only for agent checkout, `connectTo` only when someone is picked. */
-export function addStoreBody(input: { url: string; mode: ShopifyMode; cap?: string; connectTo?: string[] }): AddShopifyStoreRequest {
+/** `POST /v1/directory/shopify`: the cap when chosen, `connectTo` only when someone is picked. */
+export function addStoreBody(input: { url: string; cap?: string; connectTo?: string[] }): AddShopifyStoreRequest {
   const body: AddShopifyStoreRequest = { url: input.url };
-  if (input.mode === "agent_checkout" && input.cap) body.maxPrice = input.cap;
+  if (input.cap) body.maxPrice = input.cap;
   const ids = [...new Set((input.connectTo ?? []).filter(Boolean))];
   if (ids.length) body.connectTo = ids;
   return body;

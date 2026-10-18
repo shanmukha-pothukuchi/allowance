@@ -80,18 +80,14 @@ the wallet's own form, because creating an agent and adding money are owner powe
 tops up any agent. **New broadcast** makes a group of agents you message at once, like a WhatsApp
 broadcast list; each agent replies on its own and pays only within its own policy.
 
-**Shop at Shopify stores.** Paste a store link in the dashboard (Services › Add a Shopify store),
-or just tell an agent "buy me a sticker from https://your-store.myshopify.com": it finds the store,
-asks you to add it, and shops. For **your own store** (with Admin API credentials in `.env`, see
-below) the agent pays in USDC through its wallet and a real, paid order appears in your Shopify
-admin (as a test order). Any **other store** is browse-only: the agent searches and builds a cart,
-and gives you Shopify's checkout link to pay yourself.
-
-To enable agent checkout on your store: in Shopify's [Dev Dashboard](https://dev.shopify.com/dashboard)
-create an app with Admin API scopes `read_products,read_orders,write_orders`, release it, install it
-on your store, and put `SHOPIFY_ADMIN_SHOP`, `SHOPIFY_CLIENT_ID` and `SHOPIFY_CLIENT_SECRET` in
-`.env`. The bridge (`apps/shopify-bridge`, port 4070) gets 24-hour tokens with the client
-credentials grant and refreshes them itself.
+**Shop at any Shopify store.** Paste any store or product link in the dashboard (Services › Add a
+Shopify store), or just tell an agent "buy me wool runners from allbirds.com": it finds the store,
+asks you to add it, searches the real catalog, builds a real Shopify cart and pays the total in USDC
+from its wallet, within its limits and your approvals. That USDC funds a single-use **Allowance
+Card**, which would pay the store through Shopify's agent card checkout. Issuing the card and that
+last call are simulated here, so the order confirmation is labelled "Simulated order". Nothing uses
+or shows a store's admin, and no store credentials are needed. Stores whose catalog isn't public
+(e.g. password-protected dev stores) are reported as unsupported.
 
 `npm run reset` wipes `.data/` (keys, tokens, ledger, receipts, conversations) and re-runs setup.
 Stop `npm run dev` first; reset refuses to run under live services.
@@ -170,6 +166,8 @@ Mainnet is never configured anywhere in this repo.
 | Pizza fulfillment, "virtual card" | **Simulated**. No card, no offramp, no pizza. |
 | "Add $20 with card" on the dashboard | Simulated top-up (mints on the mock ledger) |
 | The poisoned bounty's attacker | A burn-style address; nothing is ever sent |
+| Shopify catalogs, prices and carts | Real (public Storefront API, any store) |
+| Paying a Shopify store with the Allowance Card | **Simulated** (the agent's USDC payment is real; card issuing and Shopify's agent card checkout are not wired) |
 | Chat agents | Real LLM agents (OpenAI-compatible endpoint); they act only when you message them |
 | `npm run demo` | Scripted fallback; no model, labelled as such |
 
@@ -187,7 +185,7 @@ apps/mcp/               MCP server for Claude Desktop
 apps/dashboard/         Vite + React owner UI
 apps/agent-chat/        chat agents (LLM tool loop over the MCP tools), chat page on :4050
 apps/directory/         service directory (catalog of services agents can connect) on :4060
-apps/shopify-bridge/    Shopify stores as x402 services: catalog, carts, USDC checkout → real orders, on :4070
+apps/shopify-bridge/    any public Shopify store as an x402 service: catalog, real carts, USDC → Allowance Card, on :4070
 apps/agents/            setup, reset, scripted offline demo
 docs/                   ARCHITECTURE.md, agent-work-spec.md, DEMO.md
 ```

@@ -15,13 +15,21 @@ import type { AppConfig, Policy, ShopifyStore, WalletEvent, X402PaymentRequired 
 import { createApp } from "./app.js";
 import type { WalletApp } from "./app.js";
 import { createDirectoryApp } from "../../directory/src/app.js";
-import { CRYPTO_STORE, EURO_STORE, HANDOFF_STORE, startStubBridge } from "../../directory/src/test-bridge.js";
+import { ALLBIRDS_STORE, EURO_STORE, PRIVATE_STORE, SOCKS_STORE, startStubBridge } from "../../directory/src/test-bridge.js";
 import type { StubBridge } from "../../directory/src/test-bridge.js";
 
 const KEY = "ok_shopify_wallet_test";
 const MERCHANT = "http://localhost:4021";
 const PAY_TO = "0x7777777777777777777777777777777777777777";
-const GEAR: ShopifyStore = { handle: "agent-gear", domain: "agent-gear.myshopify.com", mode: "agent_checkout", name: "Agent Gear", currency: "USD", productCount: 3 };
+const GEAR: ShopifyStore = {
+  handle: "agent-gear",
+  domain: "agent-gear.myshopify.com",
+  storefrontUrl: "https://www.agentgear.example",
+  cardCheckout: true,
+  name: "Agent Gear",
+  currency: "USD",
+  productCount: 3,
+};
 const CLOSED = { addresses: [], origins: [] };
 
 let facilitator: StubFacilitator;
@@ -91,7 +99,7 @@ async function events(): Promise<WalletEvent[]> {
 beforeAll(async () => {
   for (const level of ["log", "warn"] as const) vi.spyOn(console, level).mockImplementation(() => {});
   facilitator = await startStubFacilitator();
-  bridge = await startStubBridge({ ownerKey: KEY, stores: [CRYPTO_STORE, HANDOFF_STORE, EURO_STORE, GEAR] });
+  bridge = await startStubBridge({ ownerKey: KEY, stores: [ALLBIRDS_STORE, SOCKS_STORE, EURO_STORE, PRIVATE_STORE, GEAR], aliases: { "agentgear.example": "agent-gear", "www.agentgear.example": "agent-gear" } });
   directoryBase = await listen(createDirectoryApp({ merchantUrl: MERCHANT, directoryUrl: "http://127.0.0.1:0", dataDir: tmp("allowance-shopify-dir-"), shopifyBridgeUrl: bridge.url, ownerApiKey: KEY }));
   baseConfig = {
     chainMode: "mock",
@@ -134,21 +142,37 @@ afterAll(async () => {
 
 describe("owner: preview and add a Shopify store (§15.3)", () => {
   it("preview is bridge discovery: the store, its service id, whether it is listed; errors pass through", async () => {
-    const p = await call("GET", "/v1/directory/shopify/preview?url=https://crypto-app-test.myshopify.com");
+    const p = await call("GET", `/v1/directory/shopify/preview?url=${encodeURIComponent("https://www.allbirds.com/products/mens-tree-runners")}`);
     expect(p.status).toBe(200);
-    expect(p.body).toMatchObject({ name: "Crypto App Test", mode: "agent_checkout", currency: "USD", productCount: 12, domain: "crypto-app-test.myshopify.com", serviceId: "shopify-crypto-app-test", existing: null });
-    expect(p.body.store).toMatchObject({ handle: "crypto-app-test", mode: "agent_checkout" });
+    expect(p.body).toMatchObject({
+      name: "Allbirds",
+      currency: "USD",
+      productCount: 692,
+      domain: "weareallbirds.myshopify.com",
+      storefrontUrl: "https://www.allbirds.com",
+      cardCheckout: true,
+      sampleImages: ALLBIRDS_STORE.sampleImages,
+      serviceId: "shopify-weareallbirds",
+      existing: null,
+    });
+    expect(p.body).not.toHaveProperty("mode");
+    expect(p.body.store).toMatchObject({ handle: "weareallbirds", storefrontUrl: "https://www.allbirds.com" });
     expect(bridge.registered.size).toBe(0); // no side effects
 
-    expect((await call("GET", "/v1/directory/shopify/preview?url=crypto-app-test.myshopify.com", { owner: false })).status).toBe(401);
+    expect((await call("GET", "/v1/directory/shopify/preview?url=allbirds.com", { owner: false })).status).toBe(401);
     expect(await call("GET", "/v1/directory/shopify/preview")).toMatchObject({ status: 400, body: { error: "invalid_request" } });
     expect(await call("GET", "/v1/directory/shopify/preview?url=%20nope%20at%20all")).toMatchObject({ status: 400, body: { error: "invalid_store_url" } });
     expect(await call("GET", "/v1/directory/shopify/preview?url=ghost.myshopify.com")).toMatchObject({ status: 404, body: { error: "store_not_found" } });
-    expect(await call("GET", "/v1/directory/shopify/preview?url=euro-shop.myshopify.com")).toMatchObject({ status: 422, body: { error: "store_unsupported" } });
+    expect(await call("GET", "/v1/directory/shopify/preview?url=euro-shop.myshopify.com")).toMatchObject({ status: 422, body: { error: "store_unsupported", details: { reason: "currency" } } });
+    expect(await call("GET", "/v1/directory/shopify/preview?url=crypto-app-test.myshopify.com")).toMatchObject({
+      status: 422,
+      body: { error: "store_unsupported", message: "This store's catalog isn't public yet (it's password-protected), so agents can't browse it.", details: { reason: "private_catalog" } },
+    });
+    expect(await call("GET", `/v1/directory/shopify/preview?url=${encodeURIComponent("https://admin.shopify.com/store/weareallbirds")}`)).toMatchObject({ status: 400, body: { error: "invalid_store_url" } });
     const offline = createApp({ ...baseConfig, dataDir: tmp("allowance-shopify-nobridge-"), shopifyBridgeUrl: "http://127.0.0.1:1" });
     try {
       const at = await listen(offline.app);
-      expect(await call("GET", "/v1/directory/shopify/preview?url=crypto-app-test.myshopify.com", { at })).toMatchObject({ status: 503, body: { error: "shopify_bridge_unavailable" } });
+      expect(await call("GET", "/v1/directory/shopify/preview?url=allbirds.com", { at })).toMatchObject({ status: 503, body: { error: "shopify_bridge_unavailable" } });
     } finally {
       offline.close();
     }
@@ -161,52 +185,73 @@ describe("owner: preview and add a Shopify store (§15.3)", () => {
     expect((await agentCall("GET", "/v1/directory", buyer.token)).body.services).toHaveLength(6);
 
     const before = bridge.calls.length;
-    expect(await call("POST", "/v1/directory/shopify", { body: { url: "crypto-app-test.myshopify.com", connectTo: ["agt_nobody"] } })).toMatchObject({ status: 404 });
+    expect(await call("POST", "/v1/directory/shopify", { body: { url: "allbirds.com", connectTo: ["agt_nobody"] } })).toMatchObject({ status: 404 });
     expect(bridge.calls.length).toBe(before); // a bad agent id adds nothing
-    expect((await call("POST", "/v1/directory/shopify", { body: { url: "crypto-app-test.myshopify.com", maxPrice: "nope" } })).status).toBe(400);
-    expect((await call("POST", "/v1/directory/shopify", { body: { url: "crypto-app-test.myshopify.com", connectTo: "x" } })).status).toBe(400);
-    expect((await call("POST", "/v1/directory/shopify", { body: { url: "crypto-app-test.myshopify.com" }, token: buyer.token, owner: false })).status).toBe(401);
+    expect((await call("POST", "/v1/directory/shopify", { body: { url: "allbirds.com", maxPrice: "nope" } })).status).toBe(400);
+    expect((await call("POST", "/v1/directory/shopify", { body: { url: "allbirds.com", connectTo: "x" } })).status).toBe(400);
+    expect((await call("POST", "/v1/directory/shopify", { body: { url: "allbirds.com" }, token: buyer.token, owner: false })).status).toBe(401);
 
-    const add = await call("POST", "/v1/directory/shopify", { body: { url: "https://crypto-app-test.myshopify.com", maxPrice: "30", connectTo: [buyer.agent.id] } });
+    const add = await call("POST", "/v1/directory/shopify", { body: { url: "https://allbirds.com", maxPrice: "30", connectTo: [buyer.agent.id] } });
     expect(add.status, JSON.stringify(add.body)).toBe(201);
     expect(add.body).toMatchObject({
       created: true,
       connectedAgents: [buyer.agent.id],
-      service: { id: "shopify-crypto-app-test", name: "Crypto App Test", provider: "Shopify", icon: "🛍️", kind: "x402", maxPrice: "30.00", baseUrl: `${bridge.url}/shops/crypto-app-test`, shopify: { handle: "crypto-app-test", mode: "agent_checkout" } },
+      service: {
+        id: "shopify-weareallbirds",
+        name: "Allbirds",
+        provider: "Shopify store",
+        icon: "🛍️",
+        kind: "x402",
+        maxPrice: "30.00",
+        pricing: "Store prices · paid with your Allowance card · up to $30.00 per order",
+        baseUrl: `${bridge.url}/shops/weareallbirds`,
+        shopify: { handle: "weareallbirds", storefrontUrl: "https://www.allbirds.com", cardCheckout: true },
+      },
     });
-    expect(bridge.registered.has("crypto-app-test")).toBe(true);
+    expect(bridge.registered.has("weareallbirds")).toBe(true);
     expect(bridge.calls.find((c) => c.method === "POST" && c.path === "/stores")?.ownerKey).toBe(KEY);
 
     // Visible at once (the listing cache was cleared), marked connected for the buyer only.
     const listing = (await agentCall("GET", "/v1/directory", buyer.token)).body.services;
-    expect(listing.find((s: { id: string }) => s.id === "shopify-crypto-app-test")).toMatchObject({ connected: true, shopify: { domain: "crypto-app-test.myshopify.com" } });
-    expect((await agentCall("GET", "/v1/directory?q=crypto", other.token)).body.services).toEqual([expect.objectContaining({ id: "shopify-crypto-app-test", connected: false })]);
-    const docs = await agentCall("GET", "/v1/directory/shopify-crypto-app-test", buyer.token);
+    expect(listing.find((s: { id: string }) => s.id === "shopify-weareallbirds")).toMatchObject({ connected: true, shopify: { domain: "weareallbirds.myshopify.com", storefrontUrl: "https://www.allbirds.com" } });
+    expect((await agentCall("GET", "/v1/directory?q=allbirds", other.token)).body.services).toEqual([expect.objectContaining({ id: "shopify-weareallbirds", connected: false })]);
+    const docs = await agentCall("GET", "/v1/directory/shopify-weareallbirds", buyer.token);
     expect(docs.body.docs).toContain("/carts");
     expect(docs.body.connected).toBe(true);
     const connected = (await agentCall("GET", "/v1/services", buyer.token)).body.connected;
-    expect(connected).toEqual([expect.objectContaining({ id: "shopify-crypto-app-test", connectedBy: "owner", maxPrice: "30.00", shopify: { handle: "crypto-app-test", domain: "crypto-app-test.myshopify.com", mode: "agent_checkout" } })]);
-    expect((await events()).find((e) => e.type === "service.connected" && e.agentId === buyer.agent.id)?.message).toBe("Crypto App Test connected to shop-buyer.");
+    expect(connected).toEqual([
+      expect.objectContaining({
+        id: "shopify-weareallbirds",
+        connectedBy: "owner",
+        maxPrice: "30.00",
+        pricing: "Store prices · paid with your Allowance card · up to $30.00 per order",
+        shopify: { handle: "weareallbirds", domain: "weareallbirds.myshopify.com", storefrontUrl: "https://www.allbirds.com", cardCheckout: true },
+      }),
+    ]);
+    // The agent reads its own cap in the docs and summary.
+    expect(docs.body.summary).toContain("up to $30.00 per order");
+    expect(docs.body.docs).toContain("up to $30.00 per order");
+    expect((await events()).find((e) => e.type === "service.connected" && e.agentId === buyer.agent.id)?.message).toBe("Allbirds connected to shop-buyer.");
 
     // Payments to the store follow the normal rules: connected prefix, store cap, no freeze for the cap.
-    expect((await agentCall("POST", "/v1/pay", buyer.token, checkout("crypto-app-test", "12.00"))).status).toBe(200);
-    const over = await agentCall("POST", "/v1/pay", buyer.token, checkout("crypto-app-test", "31.00", "cart_2"));
+    expect((await agentCall("POST", "/v1/pay", buyer.token, checkout("weareallbirds", "12.00"))).status).toBe(200);
+    const over = await agentCall("POST", "/v1/pay", buyer.token, checkout("weareallbirds", "31.00", "cart_2"));
     expect(over.body).toMatchObject({ status: "blocked", reason: "service_cap", frozen: false });
     // Not connected: a soft block naming the store (the directory lists it right away).
-    const soft = await agentCall("POST", "/v1/pay", other.token, checkout("crypto-app-test", "12.00", "cart_3"));
-    expect(soft.body).toMatchObject({ status: "blocked", reason: "service_not_connected", frozen: false, serviceId: "shopify-crypto-app-test" });
+    const soft = await agentCall("POST", "/v1/pay", other.token, checkout("weareallbirds", "12.00", "cart_3"));
+    expect(soft.body).toMatchObject({ status: "blocked", reason: "service_not_connected", frozen: false, serviceId: "shopify-weareallbirds" });
 
     // Adding it again is fine: the existing entry, and connectTo still connects.
-    const again = await call("POST", "/v1/directory/shopify", { body: { url: "crypto-app-test.myshopify.com", connectTo: [other.agent.id] } });
-    expect(again).toMatchObject({ status: 200, body: { created: false, service: { id: "shopify-crypto-app-test", maxPrice: "30.00" } } });
+    const again = await call("POST", "/v1/directory/shopify", { body: { url: "allbirds.com", connectTo: [other.agent.id] } });
+    expect(again).toMatchObject({ status: 200, body: { created: false, service: { id: "shopify-weareallbirds", maxPrice: "30.00" } } });
     expect(again.body.connectedAgents.sort()).toEqual([buyer.agent.id, other.agent.id].sort());
 
     // The preview now says it is listed, and who has it.
-    const p = await call("GET", "/v1/directory/shopify/preview?url=crypto-app-test.myshopify.com");
-    expect(p.body.existing).toMatchObject({ id: "shopify-crypto-app-test" });
+    const p = await call("GET", "/v1/directory/shopify/preview?url=allbirds.com");
+    expect(p.body.existing).toMatchObject({ id: "shopify-weareallbirds" });
     expect(p.body.existing).not.toHaveProperty("docs");
     expect(p.body.existing.connectedAgents.sort()).toEqual([buyer.agent.id, other.agent.id].sort());
-    const owner = (await call("GET", "/v1/directory/shopify-crypto-app-test")).body;
+    const owner = (await call("GET", "/v1/directory/shopify-weareallbirds")).body;
     expect(owner.connectedAgents).toHaveLength(2);
   });
 });
@@ -215,34 +260,36 @@ describe("agent: request a Shopify store by link (§15.3)", () => {
   it("a store not in the directory → the owner is asked to add it; approval adds and connects it", async () => {
     const c = await createAgent("shop-c", { maxPerTx: "25.00", dailyCap: "100.00", approvalThreshold: "30.00" });
     const reason = "The owner wants agent stickers.";
-    const req = await agentCall("POST", "/v1/services/requests", c.token, { shopifyStoreUrl: "https://agent-gear.myshopify.com", reason });
+    const req = await agentCall("POST", "/v1/services/requests", c.token, { shopifyStoreUrl: "https://www.agentgear.example/products/sticker", reason });
     expect(req.status, JSON.stringify(req.body)).toBe(202);
     expect(req.body).toMatchObject({
       status: "needs_approval",
       service: {
         id: "shopify-agent-gear",
         name: "Agent Gear",
-        provider: "Shopify",
+        provider: "Shopify store",
         source: "agent",
         kind: "x402",
         category: "shopping",
         maxPrice: "25.00", // the agent's max per payment
         baseUrl: `${bridge.url}/shops/agent-gear`,
-        pricing: "Varies by item · up to $25.00 per order",
-        shopify: { handle: "agent-gear", domain: "agent-gear.myshopify.com", mode: "agent_checkout" },
+        pricing: "Store prices · paid with your Allowance card · up to $25.00 per order",
+        permissions: ["Browse Agent Gear's catalog", "Pay up to $25.00 per order with a single-use Allowance card", "Place orders on your behalf"],
+        shopify: { handle: "agent-gear", domain: "agent-gear.myshopify.com", storefrontUrl: "https://www.agentgear.example", cardCheckout: true },
       },
     });
-    expect(req.body.message).toBe(`Waiting for your owner to approve adding the Shopify store Agent Gear (agent-gear.myshopify.com). Approval id ${req.body.approvalId}.`);
+    expect(req.body.message).toBe(`Waiting for your owner to approve adding the Shopify store Agent Gear (agentgear.example). Approval id ${req.body.approvalId}.`);
     expect(req.body.service).not.toHaveProperty("docs");
     const approvalId: string = req.body.approvalId;
     // Same store by another spelling while pending: the same approval.
     expect((await agentCall("POST", "/v1/services/requests", c.token, { shopifyStoreUrl: "agent-gear.myshopify.com", reason })).body.approvalId).toBe(approvalId);
 
     const pending = (await call("GET", "/v1/approvals?status=pending")).body.approvals.find((a: { id: string }) => a.id === approvalId);
-    expect(pending).toMatchObject({ kind: "service", amount: "25.00", reason, description: "Add the Shopify store Agent Gear (agent-gear.myshopify.com)", service: { source: "agent", shopify: { mode: "agent_checkout" } } });
+    expect(pending).toMatchObject({ kind: "service", amount: "25.00", reason, description: "Add the Shopify store Agent Gear (agentgear.example)", service: { source: "agent", shopify: { storefrontUrl: "https://www.agentgear.example" } } });
     const requested = (await events()).find((e) => e.type === "service.requested" && e.approval?.id === approvalId);
-    expect(requested?.message).toBe("shop-c wants to add the Shopify store Agent Gear (agent-gear.myshopify.com).");
-    expect(requested?.data).toMatchObject({ custom: false, newStore: true, shopify: { domain: "agent-gear.myshopify.com" }, service: { id: "shopify-agent-gear", shopify: { mode: "agent_checkout" } } });
+    expect(requested?.message).toBe("shop-c wants to add the Shopify store Agent Gear (agentgear.example).");
+    expect(requested?.data).toMatchObject({ custom: false, newStore: true, shopify: { domain: "agent-gear.myshopify.com", storefrontUrl: "https://www.agentgear.example" }, service: { id: "shopify-agent-gear" } });
+    expect(JSON.stringify(requested)).not.toMatch(/admin\.shopify|"mode"/);
     // Nothing is added before the owner says yes.
     expect(bridge.registered.has("agent-gear")).toBe(false);
     expect((await agentCall("GET", "/v1/directory/shopify-agent-gear", c.token)).status).toBe(404);
@@ -262,7 +309,7 @@ describe("agent: request a Shopify store by link (§15.3)", () => {
     const ok = await call("POST", `/v1/approvals/${approvalId}/approve`, { body: { by: "telegram" } });
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
     const done = await waiting;
-    expect(done.body).toMatchObject({ kind: "service", status: "approved", service: { id: "shopify-agent-gear", connectedBy: "approval", source: "directory", maxPrice: "25.00", shopify: { mode: "agent_checkout" } } });
+    expect(done.body).toMatchObject({ kind: "service", status: "approved", service: { id: "shopify-agent-gear", connectedBy: "approval", source: "directory", maxPrice: "25.00", shopify: { cardCheckout: true } } });
 
     // Now in the directory (registered with the bridge by the directory, owner key), with docs.
     expect(bridge.registered.has("agent-gear")).toBe(true);
@@ -282,13 +329,13 @@ describe("agent: request a Shopify store by link (§15.3)", () => {
     expect(normal.body.service).toMatchObject({ id: "shopify-agent-gear", source: "directory", maxPrice: "25.00" });
     expect(normal.body.message).toBe(`Waiting for your owner to approve connecting Agent Gear. Approval id ${normal.body.approvalId}.`);
     const card = wallet.store.approvalById(normal.body.approvalId)!;
-    expect(card.description).toBe("Connect Agent Gear (agent-gear.myshopify.com)");
+    expect(card.description).toBe("Connect Agent Gear (agentgear.example)");
     expect((await events()).find((e) => e.type === "service.requested" && e.approval?.id === card.id)).toMatchObject({ message: "shop-d wants to connect Agent Gear.", data: { newStore: false, custom: false } });
     // Asking for it by id works the same.
     expect((await agentCall("POST", "/v1/services/requests", d.token, { serviceId: "shopify-agent-gear" })).body.approvalId).toBe(card.id);
   });
 
-  it("handoff stores are browse-only grants; caps and inputs are validated before the bridge is called", async () => {
+  it("stores without agent card checkout are payable up to their cap too; caps and inputs are validated before the bridge is called", async () => {
     const e = await createAgent("shop-e", { maxPerTx: "10.00", dailyCap: "50.00", approvalThreshold: "10.00" });
     const before = bridge.calls.length;
     for (const body of [
@@ -310,8 +357,19 @@ describe("agent: request a Shopify store by link (§15.3)", () => {
 
     const socks = await agentCall("POST", "/v1/services/requests", e.token, { shopifyStoreUrl: "https://cool-socks.myshopify.com", maxPrice: "4.00", reason: "Socks for the owner" });
     expect(socks.status).toBe(202);
-    expect(socks.body.service).toMatchObject({ id: "shopify-cool-socks", source: "agent", maxPrice: "0.00", pricing: "Browse only · you pay at Shopify checkout", shopify: { mode: "handoff" } });
-    expect(wallet.store.approvalById(socks.body.approvalId)).toMatchObject({ amount: "0.00", description: "Add the Shopify store Cool Socks (cool-socks.myshopify.com)" });
+    expect(socks.body.service).toMatchObject({
+      id: "shopify-cool-socks",
+      source: "agent",
+      maxPrice: "4.00",
+      pricing: "Store prices · paid with your Allowance card · up to $4.00 per order",
+      shopify: { cardCheckout: false, storefrontUrl: "https://cool-socks.myshopify.com" },
+    });
+    expect(wallet.store.approvalById(socks.body.approvalId)).toMatchObject({ amount: "4.00", description: "Add the Shopify store Cool Socks (cool-socks.myshopify.com)" });
+    // A password-protected store: the plain reason, passed through.
+    expect(await agentCall("POST", "/v1/services/requests", e.token, { shopifyStoreUrl: "crypto-app-test.myshopify.com" })).toMatchObject({
+      status: 422,
+      body: { error: "store_unsupported", details: { reason: "private_catalog" } },
+    });
 
     const offline = createApp({ ...baseConfig, dataDir: tmp("allowance-shopify-nobridge2-"), shopifyBridgeUrl: "http://127.0.0.1:1" }, { store: wallet.store, settlement: wallet.settlement });
     try {
@@ -325,7 +383,7 @@ describe("agent: request a Shopify store by link (§15.3)", () => {
 
   it("a denied store request adds nothing", async () => {
     const f = await createAgent("shop-f", { maxPerTx: "10.00", dailyCap: "50.00", approvalThreshold: "10.00" });
-    bridge.known.set("deny-me", { handle: "deny-me", domain: "deny-me.myshopify.com", mode: "agent_checkout", name: "Deny Me", currency: "USD" });
+    bridge.known.set("deny-me", { handle: "deny-me", domain: "deny-me.myshopify.com", storefrontUrl: "https://deny-me.myshopify.com", cardCheckout: true, name: "Deny Me", currency: "USD" });
     const req = await agentCall("POST", "/v1/services/requests", f.token, { shopifyStoreUrl: "deny-me.myshopify.com" });
     expect((await call("POST", `/v1/approvals/${req.body.approvalId}/deny`, { body: { by: "dashboard" } })).status).toBe(200);
     expect((await agentCall("GET", `/v1/approvals/${req.body.approvalId}/wait?timeoutMs=0`, f.token)).body).toMatchObject({ status: "denied", service: { id: "shopify-deny-me", source: "agent" } });

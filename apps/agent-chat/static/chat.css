@@ -496,12 +496,12 @@ svg.i { width: 1em; height: 1em; flex: none; display: inline-block; vertical-ali
 .tile.shop svg { stroke-width: 2.2; }
 /* as wide as its products need, between a normal card and the thread's reading width */
 .card.wide { width: auto; min-width: min(360px, 100%); max-width: min(640px, 100%); }
-.pill.mode.agent_checkout { background: color-mix(in srgb, #95bf47 20%, var(--card)); color: #3b6612; }
-.pill.mode.handoff { background: var(--fill-2); color: var(--text-2); }
-:root[data-theme="dark"] .pill.mode.agent_checkout { color: #b5dc82; }
-/* the mode chip leads the sentence and the text flows after it, at any width */
-.conn .c-mode { margin-top: 12px; font-size: 13.5px; line-height: 1.5; color: var(--text-2); }
-.conn .c-mode .pill { margin-right: 6px; padding: 1px 9px; vertical-align: 1px; }
+/* the storefront's domain, linking to the store (never an admin) */
+a.site { color: inherit; text-decoration: none; }
+a.site:hover { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
+/* a Shopify store's per-order cap on a connection request */
+.totals.c-cap { margin-top: 12px; padding: 8px 12px; border: 0; border-radius: 10px; background: var(--sec); font-size: 13.5px; }
+.totals.c-cap dd { font-weight: 500; color: var(--text); }
 .conn .c-note { font-size: 12.5px; color: var(--text-2); margin-top: 10px; }
 .conn .c-fail { font-size: 13px; color: var(--red-ink); margin-top: 10px; overflow-wrap: anywhere; }
 
@@ -567,19 +567,40 @@ a.prod:focus-visible { outline-offset: 3px; border-radius: 12px; }
 .totals dt { color: var(--text-2); }
 .totals dd { margin: 0; font-variant-numeric: tabular-nums; }
 .totals .tot dt, .totals .tot dd { color: var(--text); font-weight: 600; font-size: 15.5px; }
-.cart .c-title, .handoff .c-title, .shop-order .c-title { font-weight: 500; font-size: 15.5px; }
-.shop-btn {
-  display: flex; align-items: center; justify-content: center; gap: 8px; height: 42px; margin-top: 14px; border-radius: 99px;
-  background: #008060; color: #fff; font-size: 15px; font-weight: 500; text-decoration: none;
-}
-.shop-btn:hover { background: #006e52; }
-.shop-btn svg:last-child { opacity: 0.8; font-size: 14px; }
-:root[data-theme="dark"] .shop-btn { background: #2b9a73; }
+.cart .c-title, .shop-order .c-title { font-weight: 500; font-size: 15.5px; }
+/* line items link to the store's product pages */
+a.l-img, a.pd-img { display: block; flex: none; color: inherit; text-decoration: none; }
+a.l-img { border-radius: 9px; }
+a.l-link { color: inherit; text-decoration: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+a.l-link .l-name { display: inline; }
+a.l-link:hover .l-name { text-decoration: underline; text-underline-offset: 2px; }
+a.pd-img { border-radius: 12px; }
+.cart-note { display: flex; align-items: flex-start; gap: 6px; margin: 10px 0 0; font-size: 12.5px; line-height: 1.4; color: var(--text-2); }
+.cart-note svg { flex: none; margin-top: 2px; color: var(--text-3); }
 .c-foot a.plain { font: 13px var(--font); color: var(--text-2); }
 .nw { white-space: nowrap; }
-.shop-admin { width: 100%; margin-top: 14px; height: 38px; text-decoration: none; }
-.shop-admin svg { color: var(--text-2); }
+/* the order confirmation: paid in USDC (real), the Allowance Card step labelled simulated */
 .shop-order { border-color: color-mix(in srgb, var(--green) 28%, var(--card-line)); }
+.shop-order .c-k { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* narrow cards: the badge drops below the title rather than squeezing it */
+.shop-order .c-row { flex-wrap: wrap; row-gap: 8px; }
+.shop-order .c-who { flex: 1 1 120px; }
+.shop-order .c-row > .pill { margin-left: auto; }
+.sim-pill {
+  border: 0; cursor: pointer; font-family: inherit; line-height: 1.3;
+  background: color-mix(in srgb, var(--accent) 11%, var(--card)); color: color-mix(in srgb, var(--accent) 88%, var(--text));
+}
+.sim-pill:hover { background: color-mix(in srgb, var(--accent) 17%, var(--card)); }
+.sim-pill[aria-expanded="true"] { background: color-mix(in srgb, var(--accent) 20%, var(--card)); }
+.sim-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sim-why {
+  margin: 12px 0 0; padding: 9px 12px; border-radius: 10px; font-size: 13px; line-height: 1.45; color: var(--text-2);
+  background: color-mix(in srgb, var(--accent) 6%, var(--card)); border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--card));
+}
+.totals.paid { border-top: 0; padding-top: 0; margin-top: 6px; font-size: 13.5px; gap: 4px; }
+.totals.paid dd { display: inline-flex; align-items: center; gap: 6px; color: var(--text); }
+.totals.paid dd svg { color: var(--text-3); font-size: 15px; }
+.totals.paid .mono { font: 12.5px var(--mono); letter-spacing: 0.02em; }
 .mini .card.wide { width: 100%; }
 .mini .prod { width: 120px; }
 .mini .prods { padding: 2px 12px 12px; gap: 10px; }
@@ -921,7 +942,6 @@ button.btn-pill { border: 0; }
   .sub-act .i { font-size: 16px; }
   .thread { padding: 10px 12px 18px; }
   .composer { padding: 6px 10px 10px; }
-  .sp-head .pill.mode { display: none; }
   .prod { width: 132px; }
 }
 @media (max-height: 760px) {

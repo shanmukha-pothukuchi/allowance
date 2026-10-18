@@ -121,13 +121,15 @@ describe("services: sentences and labels", () => {
     expect(describeEvent({ type: "service.disconnected", message: "", agentName: "shopper", data: { serviceId: "acme-pizza", serviceName: "Acme Pizza" } })).toBe("Acme Pizza disconnected from shopper.");
   });
   it("words Shopify store requests (§15.3): a proposed store is added, a listed one is connected", () => {
-    const store = { ...grant, id: "shopify-juniper-goods", name: "Juniper Goods", provider: "Shopify", pricing: "Browse only · you pay at Shopify checkout", maxPrice: "0.00", source: "agent" as const, shopify: { handle: "juniper-goods", domain: "juniper-goods.myshopify.com", mode: "handoff" as const } };
-    expect(describeEvent({ type: "service.requested", message: "", agentName: "shopper", approval: { ...approval, service: store } })).toBe(
+    const shopify = { handle: "juniper-goods", domain: "juniper-goods.myshopify.com", storefrontUrl: "https://www.junipergoods.com", cardCheckout: false };
+    const store = { ...grant, id: "shopify-juniper-goods", name: "Juniper Goods", provider: "Shopify store", pricing: "Store prices · paid with your Allowance card · up to $20.00 per order", maxPrice: "20.00", source: "agent" as const, shopify };
+    // named by the storefront shoppers know, never the myshopify domain when there is one
+    expect(describeEvent({ type: "service.requested", message: "", agentName: "shopper", approval: { ...approval, service: store } })).toBe("shopper wants to add the Shopify store Juniper Goods (junipergoods.com).");
+    expect(describeEvent({ type: "service.requested", message: "", agentName: "shopper", approval: { ...approval, service: { ...store, shopify: { ...shopify, storefrontUrl: "" } } } })).toBe(
       "shopper wants to add the Shopify store Juniper Goods (juniper-goods.myshopify.com).",
     );
-    expect(describeEvent({ type: "service.requested", message: "", agentName: "shopper", approval: { ...approval, service: { ...store, source: "directory" } } })).toBe("shopper wants to connect Juniper Goods (browse only).");
-    const own = { ...store, id: "shopify-crypto-app-test", name: "Crypto App Test", source: "directory" as const, maxPrice: "100.00", pricing: "Varies by item · up to $100.00 per order", shopify: { handle: "crypto-app-test", domain: "crypto-app-test.myshopify.com", mode: "agent_checkout" as const } };
-    expect(describeEvent({ type: "service.requested", message: "", agentName: "shopper", approval: { ...approval, service: own } })).toBe("shopper wants to connect Crypto App Test (up to $100.00 per order).");
+    expect(describeEvent({ type: "service.requested", message: "", agentName: "shopper", approval: { ...approval, service: { ...store, source: "directory" } } })).toBe("shopper wants to connect Juniper Goods (up to $20.00 per order).");
+    expect(describeEvent({ type: "service.requested", message: "", agentName: "shopper", approval: { ...approval, service: { ...store, source: "directory", maxPrice: "0.00" } } })).toBe("shopper wants to connect Juniper Goods (junipergoods.com).");
     // a store the agent asked for is not an agent-written custom service: no warning
     expect(isCustomGrant(store)).toBe(false);
     expect(isCustomGrant({ ...grant, source: "agent" })).toBe(true);

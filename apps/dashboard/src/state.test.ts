@@ -310,7 +310,7 @@ describe("services: reducer", () => {
   });
 
   it("shows a store the owner just added before the directory reloads (directoryUpsert)", () => {
-    const store = { ...grant, id: "shopify-gift-shop", name: "Gift Shop", category: "shopping" as const, description: "", shopify: { handle: "gift-shop", domain: "gift-shop.myshopify.com", mode: "handoff" as const } };
+    const store = { ...grant, id: "shopify-gift-shop", name: "Gift Shop", category: "shopping" as const, description: "", shopify: { handle: "gift-shop", domain: "gift-shop.myshopify.com", storefrontUrl: "https://giftshop.example", cardCheckout: false } };
     let s = reducer(initialState, { type: "directoryUpsert", service: store });
     expect(s.directory.map((x) => x.id)).toEqual(["shopify-gift-shop"]);
     expect(s.directoryStatus).toBe("ready");
