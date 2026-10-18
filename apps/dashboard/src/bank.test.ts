@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  bankNote,
   accountFor,
   bankFromEvent,
   bankMarker,
@@ -100,6 +101,16 @@ describe("receipt markers", () => {
     });
     expect(bankMarker(receipt("r4", { status: "blocked" }), true)).toMatchObject({ tone: "stopped", text: "Stopped before it reached your bank" });
     expect(bankMarker(receipt("r5", { status: "denied" }), true)?.tone).toBe("stopped");
+  });
+
+  it("says USDC paid and the statement is a copy; top-ups come from checking", () => {
+    const paid = receipt("r7", { bank: { status: "posted", account: "••4438" } });
+    expect(bankNote(paid)).toEqual({ line: "Paid in USDC · on Capital One statement ••4438", title: `Paid in USDC · also on ${paid.agentName}'s Capital One statement ••4438 (Nessie sandbox)` });
+    expect(bankNote({ ...paid, kind: "earn" })?.line).toBe("Earned in USDC · on Capital One statement ••4438");
+    expect(bankNote({ ...paid, bank: { status: "queued", account: "••4438" } })?.line).toBe("Paid in USDC · posting to Capital One statement ••4438");
+    expect(bankNote({ ...paid, kind: "topup" }, "7688")?.line).toBe("From Capital One Checking ••7688");
+    expect(bankNote({ ...paid, kind: "topup" })?.title).toMatch(/^From Capital One Checking: the dollars leave checking/);
+    expect(bankNote(receipt("r8"))).toBeNull();
   });
 
   it("nothing at all without a bank, or for receipts that never reach it", () => {

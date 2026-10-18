@@ -158,10 +158,14 @@ describe("sheet URLs", () => {
     expect(embedSheet("?sheet=new-agent")).toBeNull(); // the dashboard opens it as a sheet instead
   });
 
-  it("opens Add a Shopify store on the dashboard only, never as a chat embed", () => {
-    expect(sheetFromSearch("?mock=1&sheet=add-shopify")).toEqual({ sheet: "add-shopify" });
-    expect(embedSheet("?sheet=add-shopify&embed=1")).toBeNull();
-    expect(withSheet("?mock=1", { sheet: "add-shopify" })).toBe("?mock=1&sheet=add-shopify");
+  it("opens Add service in the dashboard and in the chat, for one agent with agent=", () => {
+    expect(sheetFromSearch("?mock=1&sheet=add-service")).toEqual({ sheet: "add-service" });
+    // the old link still works: stores are services now (§18)
+    expect(sheetFromSearch("?mock=1&sheet=add-shopify")).toEqual({ sheet: "add-service" });
+    expect(embedSheet("?sheet=add-service&agent=shopper&embed=1")).toEqual({ sheet: "add-service", agent: "shopper" });
+    expect(embedSheet("?sheet=add-shopify&embed=1")).toEqual({ sheet: "add-service" });
+    expect(withSheet("", { sheet: "add-service", agent: "shopper" })).toBe("?sheet=add-service&agent=shopper");
+    expect(withSheet("?mock=1", { sheet: "add-service" })).toBe("?mock=1&sheet=add-service");
     expect(withSheet("?mock=1&sheet=add-shopify", null)).toBe("?mock=1");
   });
 

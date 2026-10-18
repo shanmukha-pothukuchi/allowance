@@ -680,4 +680,56 @@ describe("mockAdapter", () => {
       m.stop();
     });
   });
+
+  describe("Add service (§18): one link, three kinds", () => {
+    const flush = async <T>(p: Promise<T>) => {
+      await vi.advanceTimersByTimeAsync(1);
+      return p;
+    };
+    const fresh = () => createMockAdapter({ seed: 1, latencyMs: 0, previewLatencyMs: 0 });
+    const code = async (p: Promise<unknown>) => {
+      const out = p.then(
+        () => "resolved",
+        (e: HttpError) => `${e.status} ${e.code}`,
+      );
+      await vi.advanceTimersByTimeAsync(1);
+      return out;
+    };
+
+    it("resolves directory services, x402 APIs and stores; 'nope' is unrecognized", async () => {
+      const m = fresh();
+      const weather = await flush(m.previewService("http://localhost:4021/api/weather?city=Paris"));
+      expect(weather).toMatchObject({ kind: "directory", service: { id: "acme-weather" } });
+      expect(weather.connectedAgents?.length).toBeGreaterThan(0);
+      expect(await flush(m.previewService("https://www.allbirds.com/products/x"))).toMatchObject({ kind: "shopify", listed: true, service: { id: "shopify-weareallbirds" } });
+      const api = await flush(m.previewService("https://data.example.com/api/flood"));
+      expect(api).toMatchObject({ kind: "x402", price: "0.05", service: { id: "custom-data-example-com-api-flood", name: "data.example.com", maxPrice: "0.05", pricing: "$0.05 per request", baseUrl: "https://data.example.com/api/flood", source: "owner" } });
+      const store = await flush(m.previewService("candles.myshopify.com"));
+      expect(store).toMatchObject({ kind: "shopify", listed: false });
+      expect(store.store?.handle).toBe("candles");
+      expect(await code(m.previewService("nope.example.com"))).toBe("422 unrecognized_service_url");
+      expect(await code(m.previewService("candles.myshopify.comhttps://x.example.com/api/a"))).toBe("400 invalid_store_url");
+      m.stop();
+    });
+
+    it("adds: a store is listed and connected, an API is connected to the agents picked", async () => {
+      const m = fresh();
+      const agents = await flush(m.getAgents());
+      const shopper = agents.find((a) => a.name === "shopper")!;
+      const added = await flush(m.addService({ url: "candles.myshopify.com", maxPrice: "50", connectTo: [shopper.id] }));
+      expect(added).toMatchObject({ kind: "shopify", service: { id: "shopify-candles", maxPrice: "50.00" }, connected: [shopper.id] });
+      expect((await flush(m.getDirectory())).some((s) => s.id === "shopify-candles")).toBe(true);
+      expect(await code(m.addService({ url: "https://data.example.com/api/flood" }))).toBe("400 invalid_request");
+      const api = await flush(m.addService({ url: "https://data.example.com/api/flood", maxPrice: "0.10", connectTo: [shopper.id] }));
+      expect(api).toMatchObject({ kind: "x402", service: { maxPrice: "0.10" }, connected: [shopper.id] });
+      const after = (await flush(m.getAgents())).find((a) => a.id === shopper.id)!;
+      expect(after.services.find((s) => s.id === api.service.id)?.connectedBy).toBe("owner");
+      expect((await flush(m.getDirectory())).some((s) => s.id === api.service.id)).toBe(false);
+      // re-adding raises the cap in place, for everyone who has it
+      const raised = await flush(m.addService({ url: "https://data.example.com/api/flood", maxPrice: "0.25" }));
+      expect(raised.connected).toEqual([shopper.id]);
+      expect((await flush(m.getAgents())).find((a) => a.id === shopper.id)!.services.find((s) => s.id === api.service.id)?.maxPrice).toBe("0.25");
+      m.stop();
+    });
+  });
 });

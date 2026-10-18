@@ -5,14 +5,16 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { HttpError, type WalletAdapter } from "../api/adapter";
-import { bankMarker, isBankEvent, masked, queueLine, SANDBOX_NOTE } from "../bank";
-import { counterpartyName, money, relativeTime, signedMoney } from "../format";
+import { isBankEvent, masked, queueLine, SANDBOX_NOTE } from "../bank";
+import { money } from "../format";
+import { shortAgo } from "../lines";
 import { isMoneyEvent } from "../state";
 import type { BankSummary, Receipt } from "../types";
 import { useNow } from "../useWallet";
 import { AgentAvatar } from "./Avatar";
-import { BankMarkerView, BankTile } from "./BankParts";
-import { Chevron, Info } from "./Icons";
+import { BankTile } from "./BankParts";
+import { Chevron } from "./Icons";
+import { ReceiptRow } from "./ReceiptsList";
 import { Field, SheetShell } from "./SheetParts";
 
 interface Props {
@@ -37,8 +39,6 @@ const NO_BANK: BankSummary = { enabled: false, linked: false, provider: "Capital
 /** Embedded, the sheet follows the wallet's events; the poll only covers a dropped stream. */
 const POLL_MS = 10_000;
 const EVENT_DEBOUNCE_MS = 700;
-
-const amountText = (r: Receipt) => (r.kind === "earn" || r.kind === "topup" ? signedMoney(r.amount, "+") : signedMoney(r.amount, "-"));
 
 export function BankSheet({ adapter, offline = false, embed, bank: liveBank, receipts: liveReceipts, onClose, onOpenAgent, onRetry, onChanged }: Props) {
   const live = liveBank !== undefined;
@@ -126,82 +126,77 @@ export function BankSheet({ adapter, offline = false, embed, bank: liveBank, rec
 
   const head = (
     <div className="osheet-title">
-      <BankTile size="lg" />
+      <BankTile size="sm" />
       <div className="osheet-titles">
         <h2 className="osheet-name">Capital One</h2>
-        <p className="muted">Nessie sandbox · sandbox money</p>
+        <p className="osheet-sub">Nessie sandbox{bank?.linked ? ` · as of ${shortAgo(bank.updatedAt, now)}` : ""}</p>
       </div>
     </div>
   );
 
-  const footer = (
-    <button type="button" className="btn btn-big" onClick={onClose}>
-      Close
-    </button>
-  );
-
   return (
-    <SheetShell embed={embed} label="Capital One bank" head={head} footer={footer} onClose={onClose}>
+    <SheetShell embed={embed} label="Capital One bank" head={head} onClose={onClose}>
       {offline && !adapter && <div className="osheet-banner banner-offline">Can't reach the wallet. Start it with npm run dev. Retrying…</div>}
       {loadError && <div className="osheet-banner banner-offline">{loadError}</div>}
       {adapter && !bank && !loadError && <p className="muted">Loading…</p>}
 
-      {bank && !bank.enabled && (
-        <p className="osheet-info">
-          <Info width={20} height={20} />
-          <span>No bank is connected. Put a Nessie key in .env as NESSIE_API_KEY and restart the wallet to put Capital One behind Allowance.</span>
-        </p>
-      )}
+      {bank && !bank.enabled && <p className="muted">No bank is connected. Put a Nessie key in .env as NESSIE_API_KEY and restart the wallet to put Capital One behind Allowance.</p>}
 
       {bank?.enabled && !bank.linked && (
-        <p className="osheet-info osheet-warn">
-          <Info width={20} height={20} />
+        <div className="osheet-row-action">
           <span>Capital One isn't linked yet.</span>
-          <button type="button" className="btn" onClick={() => void link()} disabled={busy === "link"}>
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => void link()} disabled={busy === "link"}>
             {busy === "link" ? "Linking…" : "Link Capital One"}
           </button>
-        </p>
+        </div>
       )}
 
       {bank?.error && <div className="osheet-banner bank-error">{bank.error}</div>}
 
       {bank?.linked && bank.checking && (
-        <section className="bank-card bank-checking" aria-label="Checking">
-          <div className="bank-card-top">
-            <span className="bank-card-name">Checking {masked(bank.checking.last4)}</span>
-            <span className="muted bank-card-nick">{bank.checking.nickname}</span>
-          </div>
-          <span className="bank-card-balance">{money(bank.checking.balance)}</span>
-          <span className="muted bank-card-sub">Funds every agent's allowance account · as of {relativeTime(bank.updatedAt, now)}</span>
-        </section>
+        <Field label="Checking">
+          <ul className="ln-group">
+            <li className="grow">
+              <span className="grow-main">
+                <span className="grow-title">
+                  Checking {masked(bank.checking.last4)}
+                  {bank.checking.nickname && <span className="grow-meta"> · {bank.checking.nickname}</span>}
+                </span>
+                <span className="grow-meta">Funds every agent's allowance account</span>
+              </span>
+              <span className="grow-end grow-amt">{money(bank.checking.balance)}</span>
+            </li>
+          </ul>
+        </Field>
       )}
 
       {bank?.linked && (
-        <Field label="Allowance accounts" aside={<span className="muted">{bank.accounts.length}</span>}>
+        <Field label="Allowance accounts" aside={bank.accounts.length || undefined}>
           {bank.accounts.length === 0 ? (
             <p className="muted">None yet. An agent gets its account the first time its money moves.</p>
           ) : (
-            <ul className="bank-accounts">
+            <ul className="ln-group">
               {bank.accounts.map((a) => {
                 const inner = (
                   <>
-                    <AgentAvatar name={a.agentName} size="sm" />
-                    <span className="bank-acct-main">
-                      <span className="bank-acct-name">{a.agentName}</span>
-                      <span className="muted bank-acct-sub">Allowance account {masked(a.last4)}</span>
+                    <AgentAvatar name={a.agentName} size="xs" />
+                    <span className="grow-main">
+                      <span className="grow-title">
+                        {a.agentName} <span className="grow-meta">{masked(a.last4)}</span>
+                      </span>
                     </span>
-                    <span className="bank-acct-bal">{money(a.balance)}</span>
-                    {onOpenAgent && <Chevron width={16} height={16} className="bank-acct-chev" />}
+                    <span className="grow-end grow-amt">{money(a.balance)}</span>
+                    {onOpenAgent && <Chevron width={14} height={14} className="grow-chev" />}
                   </>
                 );
                 return (
                   <li key={a.agentId}>
                     {onOpenAgent ? (
-                      <button type="button" className="bank-acct" onClick={() => onOpenAgent(a.agentName)} title={`${a.agentName}'s statement`}>
+                      <button type="button" className="grow grow-btn" onClick={() => onOpenAgent(a.agentName)} title={`${a.agentName}'s statement`}>
                         {inner}
                       </button>
                     ) : (
-                      <div className="bank-acct">{inner}</div>
+                      <div className="grow">{inner}</div>
                     )}
                   </li>
                 );
@@ -213,20 +208,18 @@ export function BankSheet({ adapter, offline = false, embed, bank: liveBank, rec
 
       {bank?.linked && (
         <Field
-          label="Recent bank activity"
+          label="Recent activity"
           aside={
             queue ? (
               <span className="bank-queue">
                 {queue}
                 {bank.queue.failed > 0 && (
-                  <button type="button" className="bank-retry" onClick={() => void retry()} disabled={busy === "*"}>
+                  <button type="button" className="ln-retry" onClick={() => void retry()} disabled={busy === "*"}>
                     {busy === "*" ? "Retrying…" : bank.queue.failed > 1 ? "Retry all" : "Retry"}
                   </button>
                 )}
               </span>
-            ) : (
-              <span className="muted">All on the statements</span>
-            )
+            ) : undefined
           }
         >
           {note && (
@@ -237,28 +230,16 @@ export function BankSheet({ adapter, offline = false, embed, bank: liveBank, rec
           {activity.length === 0 ? (
             <p className="muted">Nothing yet. Payments, earnings and top-ups land here as they reach Capital One.</p>
           ) : (
-            <ul className="bank-activity">
+            <ul className="ln-list ln-group">
               {activity.map((r) => (
-                <li key={r.id} className="bank-act-row">
-                  <AgentAvatar name={r.agentName} size="sm" />
-                  <span className="bank-act-main">
-                    <span className="bank-act-what">{r.description || counterpartyName(r)}</span>
-                    <span className="bank-act-sub">
-                      <span className="muted">
-                        {r.agentName} · {relativeTime(r.createdAt, now)}
-                      </span>
-                      <BankMarkerView marker={bankMarker(r, true)} onRetry={() => void retry(r.id)} busy={busy === r.id || busy === "*"} />
-                    </span>
-                  </span>
-                  <span className={`bank-act-amt${r.kind === "earn" || r.kind === "topup" ? " amt-in" : ""}`}>{amountText(r)}</span>
-                </li>
+                <ReceiptRow key={r.id} r={r} now={now} bankLinked bankText checkingLast4={bank.checking?.last4} onRetry={() => void retry(r.id)} busy={busy === r.id || busy === "*"} />
               ))}
             </ul>
           )}
         </Field>
       )}
 
-      {bank?.enabled && <p className="muted bank-foot">{SANDBOX_NOTE} USDC still does the paying; each payment shows on the agent's statement under the merchant's name.</p>}
+      {bank?.enabled && <p className="osheet-note">{SANDBOX_NOTE} USDC still does the paying; each payment shows on the agent's statement under the merchant's name.</p>}
     </SheetShell>
   );
 }

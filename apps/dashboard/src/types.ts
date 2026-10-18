@@ -23,7 +23,10 @@ export type {
   ServiceCategory,
   ServiceGrant,
   ServiceKind,
+  ServiceAddResponse,
+  ServiceLinkKind,
   ServiceManifest,
+  ServicePreviewResponse,
   ShopifyStore,
   ShopifyStoreRef,
   SummaryResponse,
@@ -32,7 +35,7 @@ export type {
   Hex,
 } from "@allowance/shared";
 
-import type { ServiceManifest } from "@allowance/shared";
+import type { ServiceAddResponse, ServiceLinkKind, ServiceManifest, ServicePreviewResponse } from "@allowance/shared";
 
 export type ConnectionStatus = "connecting" | "live" | "reconnecting" | "offline" | "demo";
 
@@ -45,6 +48,21 @@ export interface AddShopifyStoreRequest {
   maxPrice?: string;
   connectTo?: string[];
 }
+
+/** What a pasted link turned out to be (§18): a directory service, a Shopify store, or an x402 API. */
+export type ResolvedKind = ServiceLinkKind;
+
+/** `GET /v1/directory/preview?url=` (§18). `connectedAgents` are agent ids; `listed` (stores) and `price` (x402). */
+export type ServicePreview = ServicePreviewResponse;
+
+/** `POST /v1/directory/add` (§18). `maxPrice` is the cap (per order for a store); `connectTo` are agent ids. */
+export interface AddServiceRequest {
+  url: string;
+  maxPrice?: string;
+  connectTo?: string[];
+}
+/** `connected`: every agent that has it after the call. */
+export type AddServiceResponse = ServiceAddResponse;
 
 /** All event types, in one place, so the SSE client can subscribe to each named event. */
 export const EVENT_TYPES = [

@@ -1,396 +1,49 @@
-/* Capital One behind Allowance (§16.5, Nessie sandbox): rail checking (app.css), agent rows, receipt
-   markers, statements and the bank sheet. Nothing here renders without a linked bank. */
+/* Capital One behind Allowance (§16.5, Nessie sandbox): the bank tile and the few bank-only bits.
+   Rows, marks and statements use the shared line styles (app.css .ln-*, sheets.css .ln-group). */
 
-/* ---------- the bank's tile: a building on a calm navy tint (no borrowed logo) ---------- */
+/* the bank's tile: a building on a calm navy tint (no borrowed logo) */
 .bank-tile {
   --tile: #3b6fb6;
-  --size: 44px;
+  --size: 36px;
   flex: none;
   display: inline-grid;
   place-items: center;
   width: var(--size);
   height: var(--size);
-  border-radius: 28%;
-  background: color-mix(in srgb, var(--tile) 16%, var(--surface));
+  border-radius: 26%;
+  background: color-mix(in srgb, var(--tile) 18%, var(--surface));
   color: color-mix(in srgb, var(--tile) 80%, var(--text));
 }
 .bank-tile svg {
-  width: 56%;
-  height: 56%;
+  width: 58%;
+  height: 58%;
+}
+.bank-tile-xs {
+  --size: 20px;
+  border-radius: 6px;
 }
 .bank-tile-sm {
-  --size: 26px;
+  --size: 28px;
+  border-radius: 7px;
 }
 .bank-tile-lg {
-  --size: 68px;
+  --size: 44px;
 }
 
-/* ---------- receipt marker ---------- */
-.bank-mark {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-  font-size: 0.76rem;
-  font-weight: 550;
-  color: var(--muted);
-  white-space: nowrap;
-}
-.bank-mark svg {
-  flex: none;
-}
-.bank-mark > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.bank-mark-posted {
-  color: var(--in);
-}
-.bank-mark-queued svg {
-  animation: bankTick 1.6s ease-in-out infinite;
-}
-.bank-mark-failed {
-  color: var(--warn);
-}
-.bank-mark-stopped {
-  color: var(--muted);
-}
-.bank-retry {
-  padding: 0 2px;
-  border: 0;
-  background: none;
-  color: var(--accent);
-  font: inherit;
-  font-weight: 650;
-  cursor: pointer;
-  border-radius: 6px;
-}
-.bank-retry:hover {
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.bank-retry:disabled {
-  color: var(--muted);
-  cursor: wait;
-  text-decoration: none;
-}
-.receipt-bank {
-  display: flex;
-  min-width: 0;
-}
-
-/* ---------- add money: where the dollars come from ---------- */
-.bank-source {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--surface-2);
-}
-.bank-source-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.bank-source-text strong {
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
-}
-.bank-source-text .muted {
-  font-size: 0.82rem;
-}
 .bank-short {
-  font-size: 0.88rem;
-  color: var(--warn);
-  font-weight: 600;
-}
-.bank-after {
-  font-size: 0.9rem;
-  font-variant-numeric: tabular-nums;
-}
-
-/* ---------- account cards (bank sheet, agent sheet) ---------- */
-.bank-card {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 14px 16px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--surface-2);
-}
-.bank-card-top {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 10px;
-}
-.bank-card-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.bank-card-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.bank-card-name {
-  font-weight: 700;
-  overflow-wrap: anywhere;
-}
-.bank-card-nick,
-.bank-card-sub {
-  font-size: 0.82rem;
-}
-.bank-card-balance {
-  font-size: 2.1rem;
-  line-height: 1.1;
-  font-weight: 750;
-  letter-spacing: -0.02em;
-  font-variant-numeric: tabular-nums;
-}
-.bank-card-amt {
-  font-size: 1.35rem;
-  font-weight: 750;
-  letter-spacing: -0.01em;
-  font-variant-numeric: tabular-nums;
-}
-.sandbox-tag {
-  font-size: 0.68rem;
-  font-weight: 750;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  padding: 3px 9px;
-  border-radius: 6px;
-  background: var(--surface-3);
-  color: var(--text-2);
-}
-
-/* every agent's account */
-.bank-accounts {
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-}
-.bank-accounts > li + li {
-  border-top: 1px solid var(--border);
-}
-.bank-acct {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 9px 12px;
-  border: 0;
-  background: var(--surface-2);
-  color: inherit;
-  font: inherit;
-  text-align: left;
-}
-button.bank-acct {
-  cursor: pointer;
-}
-button.bank-acct:hover {
-  background: var(--surface-3);
-}
-.bank-acct-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-.bank-acct-name {
-  font-weight: 650;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.bank-acct-sub {
-  font-size: 0.8rem;
-}
-.bank-acct-bal {
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-.bank-acct-chev {
-  flex: none;
-  color: var(--muted);
-}
-
-/* recent activity / receipts with their marker */
-.bank-activity {
-  display: flex;
-  flex-direction: column;
-}
-.bank-act-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 0;
-}
-.bank-act-row + .bank-act-row {
-  border-top: 1px solid var(--border);
-}
-.bank-act-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.bank-act-what {
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.bank-act-sub {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px 10px;
-  font-size: 0.8rem;
-  min-width: 0;
-}
-.bank-act-amt {
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+  font-size: 0.86rem;
+  color: var(--danger);
 }
 .bank-queue {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: 0.8rem;
-  color: var(--warn);
-  font-weight: 600;
+  font-size: 0.82rem;
+  color: var(--text-2);
 }
 .bank-note {
-  font-size: 0.85rem;
-}
-.bank-foot {
-  font-size: 0.8rem;
-  line-height: 1.45;
+  font-size: 0.86rem;
 }
 .osheet-banner.bank-error {
-  font-weight: 550;
-}
-
-/* ---------- a statement, as Nessie reports it ---------- */
-.stmt-list {
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-}
-.stmt-row {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  padding: 9px 12px;
-  background: var(--surface-2);
-}
-.stmt-row + .stmt-row,
-.stmt-more {
-  border-top: 1px solid var(--border);
-}
-.stmt-more {
-  padding: 8px 12px;
-  font-size: 0.82rem;
-  background: var(--surface-2);
-}
-.stmt-ic {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-weight: 750;
-  background: var(--surface-3);
-  color: var(--text-2);
-}
-.stmt-ic.stmt-in {
-  background: var(--in-dim);
-  color: var(--in);
-}
-.stmt-main {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-.stmt-what {
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.stmt-sub {
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-.stmt-right {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 3px;
-}
-.stmt-amt {
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.stmt-status {
-  font-size: 0.7rem;
-  font-weight: 650;
-  padding: 0 8px;
-  border-radius: 6px;
-  background: var(--surface-3);
-  color: var(--text-2);
-}
-.stmt-status.stmt-done {
-  background: var(--in-dim);
-  color: var(--in);
-}
-.stmt-status.stmt-pending {
-  background: var(--warn-dim);
-  color: var(--warn);
-}
-.stmt-status.stmt-void {
-  background: var(--danger-dim);
-  color: var(--danger);
-}
-
-@media (max-width: 480px) {
-  .bank-card-balance {
-    font-size: 1.7rem;
-  }
-  .bank-card-amt {
-    font-size: 1.1rem;
-  }
-  .stmt-row {
-    gap: 10px;
-    padding: 8px 10px;
-  }
-}
-
-@keyframes bankTick {
-  50% {
-    opacity: 0.35;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .bank-mark-queued svg {
-    animation: none;
-  }
+  font-weight: 400;
 }

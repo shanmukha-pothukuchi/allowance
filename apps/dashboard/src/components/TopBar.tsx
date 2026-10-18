@@ -1,4 +1,4 @@
-import { checkingLine, masked } from "../bank";
+import { checkingLine } from "../bank";
 import { money } from "../format";
 import { navigate, type Route } from "../route";
 import type { DashboardState } from "../state";
@@ -55,12 +55,9 @@ export function SideNav({ state, route, theme, onToggleTheme, onToggleDetails, o
             aria-label={`${checkingLine(bank)}, Nessie sandbox. Open the bank.`}
           >
             <span className="nav-bank-ic" aria-hidden>
-              <Bank width={15} height={15} />
+              <Bank width={14} height={14} />
             </span>
-            <span className="nav-bank-text">
-              <span>Capital One</span>
-              <span className="nav-bank-sub">Checking {masked(bank.checkingLast4)}</span>
-            </span>
+            <span className="nav-bank-text">Capital One</span>
             <span className="nav-bank-amt">{bank.checkingBalance !== undefined ? money(bank.checkingBalance) : "—"}</span>
           </button>
         </div>
@@ -79,7 +76,7 @@ export function SideNav({ state, route, theme, onToggleTheme, onToggleDetails, o
             <span>Technical details</span>
           </label>
           <button className="icon-btn" onClick={onToggleTheme} title={theme === "dark" ? "Switch to light" : "Switch to dark"} aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}>
-            {theme === "dark" ? <Sun width={16} height={16} /> : <Moon width={16} height={16} />}
+            {theme === "dark" ? <Sun width={15} height={15} /> : <Moon width={15} height={15} />}
           </button>
         </div>
       </div>
@@ -100,7 +97,7 @@ export function Banners({ state }: { state: DashboardState }) {
           <Snowflake />
           <span>
             <strong>{frozen.map((a) => a.name).join(", ")}</strong> {frozen.length === 1 ? "is" : "are"} frozen.
-            {frozen.length === 1 && frozen[0].frozenReason ? <span className="banner-sub"> {frozen[0].frozenReason}</span> : null}
+            {frozen.length === 1 && frozen[0].frozenReason ? <span className="banner-sub"> {frozen[0].frozenReason.replace(/\s*Agent frozen\.?\s*$/i, "")}</span> : null}
           </span>
         </div>
       )}

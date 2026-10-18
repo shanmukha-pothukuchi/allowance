@@ -1,14 +1,19 @@
-import { feedMarker } from "../bank";
-import { describeEvent, isServiceApproval, isShopifyGrant, isSoftBlock, money, relativeTime, serviceOfEvent, shortHex, signedMoney } from "../format";
-import { connectedByLabel } from "../services";
-import type { ConnectedService, EventType, WalletEvent } from "../types";
-import { AgentAvatar, ServiceTile } from "./Avatar";
-import { BankMarkerView } from "./BankParts";
-import { ArrowIn, ArrowOut, Check, Clock, Cross, Info, Plug, Plus, Shield, Snowflake, Sun, Unplug } from "./Icons";
+/**
+ * The activity feed (docs/ui-rules.md D3): one Linear line per event. Avatar, "**researcher** paid
+ * **Quantcomm Flood Research** · 5h ago", the amount right-aligned. A posted bank entry is a small
+ * bank icon with a tooltip; only "posting" (a clock) and "not on statement" (words + Retry) show.
+ */
+import { bankNote, feedMarker } from "../bank";
+import { shortHex } from "../format";
+import { activityLine, eventAmount, shortAgo } from "../lines";
+import type { WalletEvent } from "../types";
+import { AgentAvatar } from "./Avatar";
+import { Info } from "./Icons";
+import { BankIcon, BankProblem, LineRow } from "./Lines";
 
 interface Props {
   events: WalletEvent[];
-  /** Approvals still open: their rows point at the inbox, where they are decided. */
+  /** Approvals still open: their ask rows carry a "Pending" mark (the card above decides them). */
   pendingIds: Set<string>;
   showDetails: boolean;
   now: number;
@@ -17,133 +22,50 @@ interface Props {
   onRetryBank?(receiptId: string): void;
   /** Receipt ids with a retry in flight ("*": all of them). */
   retrying?: string[];
+  /** The owner's checking (top-ups come from it). */
+  checkingLast4?: string;
 }
 
-type Tone = "neutral" | "out" | "in" | "danger" | "pending" | "ok" | "soft";
-
-export function toneFor(type: EventType, e?: WalletEvent): Tone {
-  if (e && isSoftBlock(e)) return "soft"; // e.g. "not connected": the agent asks, nothing froze
-  switch (type) {
-    case "earning.received":
-    case "topup":
-      return "in";
-    case "payment.blocked":
-    case "agent.frozen":
-      return "danger";
-    case "payment.needs_approval":
-    case "service.requested":
-      return "pending";
-    case "approval.approved":
-    case "agent.unfrozen":
-    case "service.connected":
-      return "ok";
-    case "payment.signed":
-    case "payment.settled":
-    case "transfer.sent":
-      return "out";
-    default:
-      return "neutral";
-  }
-}
-
-function IconFor({ type }: { type: EventType }) {
-  const p = { width: 14, height: 14, strokeWidth: 2.25 };
-  switch (type) {
-    case "earning.received":
-      return <ArrowIn {...p} />;
-    case "topup":
-      return <Plus {...p} />;
-    case "payment.blocked":
-      return <Shield {...p} />;
-    case "agent.frozen":
-      return <Snowflake {...p} />;
-    case "agent.unfrozen":
-      return <Sun {...p} />;
-    case "payment.needs_approval":
-      return <Clock {...p} />;
-    case "service.requested":
-    case "service.connected":
-      return <Plug {...p} />;
-    case "service.disconnected":
-      return <Unplug {...p} />;
-    case "approval.approved":
-      return <Check {...p} />;
-    case "approval.denied":
-      return <Cross {...p} />;
-    case "payment.signed":
-    case "payment.settled":
-    case "transfer.sent":
-      return <ArrowOut {...p} />;
-    default:
-      return <Info {...p} />;
-  }
-}
-
-/** The amount column: signed like a statement, struck through when the wallet refused it. */
-function amountOf(e: WalletEvent, tone: Tone): { text: string; cls: string } | null {
-  const raw = e.receipt?.amount ?? (e.type === "payment.needs_approval" ? e.approval?.amount : undefined);
-  if (raw === undefined || e.type === "approval.approved" || e.type === "approval.denied") return null;
-  if (tone === "danger" || tone === "soft") return { text: money(raw), cls: "amt-void" };
-  if (tone === "in") return { text: signedMoney(raw, "+"), cls: "amt-in" };
-  if (tone === "pending") return { text: money(raw), cls: "amt-pending" };
-  return { text: signedMoney(raw, "-"), cls: "amt-out" };
-}
-
-const isServiceEvent = (e: WalletEvent) => e.type.startsWith("service.") || ((e.type === "approval.approved" || e.type === "approval.denied") && isServiceApproval(e.approval));
-
-export function ActivityFeed({ events, pendingIds, showDetails, now, bankLinked = false, onRetryBank, retrying = [] }: Props) {
+export function ActivityFeed({ events, pendingIds, showDetails, now, bankLinked = false, onRetryBank, retrying = [], checkingLast4 }: Props) {
   return (
-    <ol className="feed-list">
-        {events.length === 0 && <li className="empty">Waiting for the first payment&hellip;</li>}
-        {events.map((e) => {
-          const tone = toneFor(e.type, e);
-          const approvalId = e.approval?.id;
-          const asks = e.type === "payment.needs_approval" || e.type === "service.requested";
-          const stillPending = asks && approvalId && pendingIds.has(approvalId);
-          const svc = isServiceEvent(e) ? serviceOfEvent(e) : undefined;
-          const amt = amountOf(e, tone);
-          const mark = feedMarker(e, bankLinked);
-          const by = e.type === "service.connected" ? ((e.data as { connectedBy?: ConnectedService["connectedBy"] } | undefined)?.connectedBy ?? (svc as Partial<ConnectedService> | undefined)?.connectedBy) : undefined;
-          // Rows are keyed by event id and mount once, so the CSS entry animation runs exactly once.
-          return (
-            <li key={e.id} className={`feed-row tone-${tone}${svc ? " feed-service" : ""}`}>
-              {e.agentName ? (
-                <AgentAvatar name={e.agentName} size="sm" badge={<IconFor type={e.type} />} />
-              ) : (
-                <span className="feed-icon"><IconFor type={e.type} /></span>
-              )}
-              <div className="feed-body">
-                <p className="feed-text">{describeEvent(e)}</p>
-                <span className="feed-meta">
-                  {e.agentName && <span className="feed-agent">{e.agentName}</span>}
-                  <time dateTime={e.at}>{relativeTime(e.at, now)}</time>
-                  {by && <span className="by-chip">{connectedByLabel(by)}</span>}
-                  {mark && e.receipt && (
-                    <BankMarkerView marker={mark} onRetry={onRetryBank && (() => onRetryBank(e.receipt!.id))} busy={retrying.includes(e.receipt.id) || retrying.includes("*")} />
-                  )}
-                  {showDetails && e.receipt?.txHash && (
-                    e.receipt.explorerUrl ? (
-                      <a className="hash" href={e.receipt.explorerUrl} target="_blank" rel="noreferrer">{shortHex(e.receipt.txHash, 8, 6)}</a>
-                    ) : (
-                      <code className="hash">{shortHex(e.receipt.txHash, 8, 6)}</code>
-                    )
-                  )}
-                  {showDetails && e.receipt?.counterparty.address && (
-                    <code className="hash">to {shortHex(e.receipt.counterparty.address, 8, 6)}</code>
-                  )}
-                </span>
-                {stillPending && <span className="feed-waiting">Waiting on you · decide above</span>}
-              </div>
-              {amt ? (
-                <span className={`feed-amt ${amt.cls}`}>{amt.text}</span>
-              ) : svc ? (
-                <ServiceTile name={svc.name} color={svc.color} size="sm" title={svc.name} shopify={isShopifyGrant(svc)} />
-              ) : (
-                <span />
-              )}
-            </li>
-          );
-        })}
+    <ol className="ln-list feed-list">
+      {events.length === 0 && <li className="empty">Waiting for the first payment&hellip;</li>}
+      {events.map((e) => {
+        const approvalId = e.approval?.id;
+        const asks = e.type === "payment.needs_approval" || e.type === "service.requested";
+        const pending = asks && !!approvalId && pendingIds.has(approvalId);
+        const mark = feedMarker(e, bankLinked);
+        const r = e.receipt;
+        // Rows are keyed by event id and mount once, so the CSS entry animation runs exactly once.
+        return (
+          <LineRow
+            key={e.id}
+            className="feed-row"
+            lead={e.agentName ? <AgentAvatar name={e.agentName} size="xs" /> : <span className="ln-icon"><Info width={13} height={13} /></span>}
+            line={activityLine(e, { pending, checkingLast4 })}
+            time={shortAgo(e.at, now)}
+            dateTime={e.at}
+            amount={eventAmount(e)}
+            amountTitle={mark?.tone === "stopped" ? mark.text : undefined}
+            marks={<BankIcon marker={mark} note={r && mark ? bankNote(r, checkingLast4) : null} />}
+          >
+            {r && <BankProblem marker={mark} onRetry={onRetryBank && (() => onRetryBank(r.id))} busy={retrying.includes(r.id) || retrying.includes("*")} />}
+            {showDetails && r && (r.txHash || r.counterparty.address) && (
+              <p className="ln-details">
+                {r.txHash &&
+                  (r.explorerUrl ? (
+                    <a className="hash" href={r.explorerUrl} target="_blank" rel="noreferrer">
+                      tx {shortHex(r.txHash, 8, 6)}
+                    </a>
+                  ) : (
+                    <code className="hash">tx {shortHex(r.txHash, 8, 6)}</code>
+                  ))}
+                {r.counterparty.address && <code className="hash">to {shortHex(r.counterparty.address, 8, 6)}</code>}
+              </p>
+            )}
+          </LineRow>
+        );
+      })}
     </ol>
   );
 }

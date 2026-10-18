@@ -24,7 +24,7 @@ export function SheetShell({ embed, label, head, children, footer, locked = fals
 
   const close = (
     <button type="button" className="icon-btn sheet-close" onClick={onClose} disabled={locked} aria-label="Close" title={locked ? "Finish first" : "Close"}>
-      <Close width={22} height={22} />
+      <Close width={18} height={18} />
     </button>
   );
 
@@ -40,7 +40,7 @@ export function SheetShell({ embed, label, head, children, footer, locked = fals
           {footer && <footer className="osheet-foot">{footer}</footer>}
         </div>
         <p className="embed-foot">
-          <Lock width={13} height={13} /> Allowance wallet · only you can do this
+          <Lock width={12} height={12} /> Allowance wallet · only you can do this
         </p>
       </div>
     );
@@ -57,6 +57,20 @@ export function SheetShell({ embed, label, head, children, footer, locked = fals
         {footer && <footer className="osheet-foot">{footer}</footer>}
       </aside>
     </>
+  );
+}
+
+/** Facts as label / value rows, like Linear's properties panel. */
+export function Facts({ rows }: { rows: [string, ReactNode][] }) {
+  return (
+    <dl className="facts">
+      {rows.map(([k, v]) => (
+        <div key={k}>
+          <dt>{k}</dt>
+          <dd>{v}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
@@ -180,7 +194,7 @@ export function CopyField({ value, label, secret = false }: { value: string; lab
       <button type="button" className={`btn copy-btn${state === "copied" ? " copy-done" : ""}`} onClick={() => void copy()}>
         {state === "copied" ? (
           <>
-            <Check width={18} height={18} /> Copied
+            <Check width={15} height={15} /> Copied
           </>
         ) : (
           "Copy"

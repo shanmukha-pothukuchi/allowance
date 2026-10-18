@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityFeed } from "./components/ActivityFeed";
 import { AddMoneySheet } from "./components/AddMoneySheet";
-import { AddShopifySheet } from "./components/AddShopifySheet";
+import { AddServiceSheet } from "./components/AddServiceSheet";
 import { AgentCard } from "./components/AgentCard";
 import { AgentSheet } from "./components/AgentSheet";
 import { ApprovalsPanel } from "./components/ApprovalsPanel";
@@ -12,7 +12,7 @@ import { ReceiptsList } from "./components/ReceiptsList";
 import { ServicesView } from "./components/ServicesView";
 import { Banners, SideNav } from "./components/TopBar";
 import { accountFor, isLinked } from "./bank";
-import { money } from "./format";
+import { money, toCents } from "./format";
 import { navigate, useRoute, useSheetRoute } from "./route";
 import { chatUrlFrom } from "./sheets";
 import { applyTheme, effectiveTheme, saveTheme, storedTheme, themeFromSearch, type ThemePref } from "./theme";
@@ -62,7 +62,7 @@ export default function App() {
 
   const [feedTab, setFeedTab] = useState<"activity" | "receipts">("activity");
   const pending = state.approvals.length;
-  const ledger = state.totals.chainMode === "mock" ? "Test money on the mock ledger" : state.totals.chainMode === "unknown" ? "" : "USDC on Base Sepolia";
+  const ledger = state.totals.chainMode === "mock" ? "test money on the mock ledger" : state.totals.chainMode === "unknown" ? "" : "USDC on Base Sepolia";
 
   return (
     <div className="app">
@@ -70,7 +70,7 @@ export default function App() {
       <div className="page">
         <Banners state={state} />
         {route.view === "services" ? (
-          <ServicesView state={state} actions={actions} selectedId={route.serviceId} now={now} onAddShopify={() => setSheet({ sheet: "add-shopify" })} />
+          <ServicesView state={state} actions={actions} selectedId={route.serviceId} now={now} onAddService={() => setSheet({ sheet: "add-service" })} />
         ) : (
           <main className="overview">
             <header className="page-head">
@@ -78,7 +78,7 @@ export default function App() {
                 <span className="eyebrow">Total balance</span>
                 <span className="balance">{money(state.totals.totalBalance)}</span>
                 <span className="balance-sub">
-                  Across {state.agents.length} {state.agents.length === 1 ? "agent" : "agents"}
+                  {state.agents.length} {state.agents.length === 1 ? "agent" : "agents"}
                   {ledger && ` · ${ledger}`}
                 </span>
               </div>
@@ -89,11 +89,10 @@ export default function App() {
                 </div>
                 <div>
                   <dt>Earned today</dt>
-                  <dd className="earned">+{money(state.totals.earnedToday)}</dd>
-                </div>
-                <div>
-                  <dt>Waiting on you</dt>
-                  <dd className={pending ? "kpi-warn" : ""}>{pending}</dd>
+                  <dd className={toCents(state.totals.earnedToday) > 0 ? "amt-in" : ""}>
+                    {toCents(state.totals.earnedToday) > 0 ? "+" : ""}
+                    {money(state.totals.earnedToday)}
+                  </dd>
                 </div>
               </dl>
             </header>
@@ -115,8 +114,8 @@ export default function App() {
                   <h2 className="section-title">
                     Agents <span className="muted">{state.agents.length}</span>
                   </h2>
-                  <button className="btn btn-sm" onClick={() => setSheet({ sheet: "new-agent" })} title="Create an agent and give it money">
-                    <Plus width={15} height={15} /> New agent
+                  <button className="btn btn-sm" onClick={() => setSheet({ sheet: "new-agent" })}>
+                    <Plus width={14} height={14} /> New agent
                   </button>
                 </div>
                 <ul className="agent-list">
@@ -131,7 +130,7 @@ export default function App() {
                       onUnfreeze={() => void actions.unfreeze(a.id)}
                       onAddMoney={() => setSheet({ sheet: "add-money", agent: a.name })}
                       bankAccount={bankLinked ? accountFor(state.bank, a.id) : undefined}
-                      onOpenBank={() => setSheet({ sheet: "agent", agent: a.name })}
+                      onOpen={() => setSheet({ sheet: "agent", agent: a.name })}
                     />
                   ))}
                 </ul>
@@ -161,9 +160,18 @@ export default function App() {
                     bankLinked={bankLinked}
                     onRetryBank={(id) => void retryBank(id)}
                     retrying={retrying}
+                    checkingLast4={state.totals.bank?.checkingLast4}
                   />
                 ) : (
-                  <ReceiptsList receipts={state.receipts} showDetails={state.showDetails} now={now} bankLinked={bankLinked} onRetryBank={(id) => void retryBank(id)} retrying={retrying} />
+                  <ReceiptsList
+                    receipts={state.receipts}
+                    showDetails={state.showDetails}
+                    now={now}
+                    bankLinked={bankLinked}
+                    onRetryBank={(id) => void retryBank(id)}
+                    retrying={retrying}
+                    checkingLast4={state.totals.bank?.checkingLast4}
+                  />
                 )}
               </section>
             </div>
@@ -174,21 +182,19 @@ export default function App() {
       {sheet?.sheet === "new-agent" && (
         <NewAgentSheet adapter={adapter} offline={state.connection === "offline"} embed={false} chatUrl={chatUrl} knownNames={agentNames} onClose={closeSheet} onCreated={actions.refresh} />
       )}
-      {sheet?.sheet === "add-shopify" && (
-        <AddShopifySheet
+      {sheet?.sheet === "add-service" && (
+        <AddServiceSheet
           adapter={adapter}
           offline={state.connection === "offline"}
+          preselect={sheet.agent}
           agents={state.agents}
           directory={state.directory}
           onClose={closeSheet}
-          onAdded={(service) => {
-            actions.serviceAdded(service);
+          onDone={(serviceId, listed) => {
+            if (listed) actions.serviceAdded(listed);
+            else actions.refresh();
             closeSheet();
-            navigate({ view: "services", serviceId: service.id });
-          }}
-          onOpen={(id) => {
-            closeSheet();
-            navigate({ view: "services", serviceId: id });
+            navigate({ view: "services", serviceId });
           }}
         />
       )}
@@ -219,6 +225,7 @@ export default function App() {
           now={now}
           refreshKey={state.bank?.updatedAt}
           retrying={retrying}
+          checkingLast4={state.totals.bank?.checkingLast4}
           onRetry={(id) => void retryBank(id)}
           onAddMoney={() => setSheet({ sheet: "add-money", agent: sheet.agent })}
           onClose={closeSheet}

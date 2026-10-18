@@ -1,5 +1,17 @@
 import { unwrapAdded, unwrapStore } from "../shopify";
-import type { AgentPublic, Approval, BankStatementResponse, BankSummary, CreateAgentResponse, DirectoryService, Receipt, SummaryResponse, WalletEvent } from "../types";
+import type {
+  AddServiceResponse,
+  AgentPublic,
+  Approval,
+  BankStatementResponse,
+  BankSummary,
+  CreateAgentResponse,
+  DirectoryService,
+  Receipt,
+  ServicePreview,
+  SummaryResponse,
+  WalletEvent,
+} from "../types";
 import { EVENT_TYPES } from "../types";
 import { HttpError, type WalletAdapter } from "./adapter";
 
@@ -78,6 +90,8 @@ export function createHttpAdapter(): WalletAdapter {
       const out = unwrapAdded(await post<unknown>("/v1/directory/shopify", body));
       return { service: out.service, ...(out.agents ? { agents: out.agents as AgentPublic[] } : {}) };
     },
+    previewService: (url) => req<ServicePreview>(`/v1/directory/preview?url=${enc(url)}`),
+    addService: (body) => post<AddServiceResponse>("/v1/directory/add", body),
     getBank: () => req<BankSummary>("/v1/bank"),
     getBankStatement: (agentId, limit = 50) => req<BankStatementResponse>(`/v1/bank/statement?${agentId ? `agentId=${enc(agentId)}&` : ""}limit=${limit}`),
     retryBank: (receiptId) => post<{ queued: number }>("/v1/bank/retry", receiptId ? { receiptId } : {}),
