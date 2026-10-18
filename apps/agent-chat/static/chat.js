@@ -30,7 +30,8 @@
   // ================================================================ safe values
   var ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
   function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return ESC[c]; });
+    // A computer-use control token (cut_…, §19.2) is never shown, wherever it turns up (URLs, raw tool output).
+    return String(s == null ? "" : s).replace(/\bcut_[0-9a-fA-F]{8,}/g, "cut_…").replace(/[&<>"']/g, function (c) { return ESC[c]; });
   }
   function str(v) {
     if (typeof v === "string") return v;
@@ -257,6 +258,7 @@
     bag: '<path d="M16 10a4 4 0 0 1-8 0"/><path d="M3.103 6.034h17.794"/><path d="M3.4 5.467a2 2 0 0 0-.4 1.2V20a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6.667a2 2 0 0 0-.4-1.2l-2-2.667A2 2 0 0 0 17 2H7a2 2 0 0 0-1.6.8z"/>',
     coins: '<path d="M13.744 17.736a6 6 0 1 1-7.48-7.48"/><path d="M15 6h1v4"/><path d="m6.134 14.768.866-.5 2 3.464"/><circle cx="16" cy="8" r="6"/>',
     wave: '<path d="M2 12q2.5 2 5 0t5 0 5 0 5 0"/><path d="M2 19q2.5 2 5 0t5 0 5 0 5 0"/><path d="M2 5q2.5 2 5 0t5 0 5 0 5 0"/>',
+    monitor: '<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>',
     bank: '<path d="M10 18v-7"/><path d="M11.119 2.205a2 2 0 0 1 1.762 0l7.84 3.846A.5.5 0 0 1 20.5 7h-17a.5.5 0 0 1-.22-.949z"/><path d="M14 18v-7"/><path d="M18 18v-7"/><path d="M3 22h18"/><path d="M6 18v-7"/>',
   };
   function icon(name, extra) {
@@ -1804,6 +1806,330 @@
     return true;
   }
 
+  // ================================================================ Computer use (ARCHITECTURE §19)
+  // A sandboxed desktop rented by time and by action through {COMPUTER_USE_URL}/computer. Agents
+  // drive it with fetch_url, so the page sees its compact JSON only as tool text. One card per
+  // session shows the live screen (the view-only MJPEG stream from `viewUrl`) with its status and
+  // one meta line; every call is a one-line step inside "Worked for…", and its receipts fold into
+  // the card. When the session ends the card becomes one event line. The control token (cut_…) is
+  // never shown: esc() blanks it everywhere, and only the view token (cuv_…) reaches the DOM.
+  var CU_ID = "(cus_[A-Za-z0-9_-]{4,64})";
+  var CU_PATHS = [
+    [new RegExp("^/computer/sessions/?$"), "create"],
+    [new RegExp("^/computer/sessions/" + CU_ID + "/?$"), "status"],
+    [new RegExp("^/computer/sessions/" + CU_ID + "/time/?$"), "time"],
+    [new RegExp("^/computer/sessions/" + CU_ID + "/end/?$"), "end"],
+    [new RegExp("^/computer/sessions/" + CU_ID + "/snapshot/?$"), "snapshot"],
+    [new RegExp("^/computer/sessions/" + CU_ID + "/screenshot/?$"), "screenshot"],
+    [new RegExp("^/computer/sessions/" + CU_ID + "/actions/([a-z]{2,16})/?$"), "action"],
+  ];
+  /** A computer-use URL (§19.4) → { op, id, kind, minutes }, else null. Any host: the path says what it is. */
+  function cuOf(u) {
+    var full = str(u).trim();
+    if (!full) return null;
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(full)) full = "http://" + full;
+    var x;
+    try { x = new URL(full); } catch (e) { return null; }
+    for (var i = 0; i < CU_PATHS.length; i++) {
+      var m = x.pathname.match(CU_PATHS[i][0]);
+      if (m) return { op: CU_PATHS[i][1], id: m[1] || "", kind: m[2] || "", minutes: Math.max(1, Math.min(5, Math.round(num(x.searchParams.get("minutes")) || 1))) };
+    }
+    return null;
+  }
+  /** A computer answer in this tool entry: { h (parseHttp), q (cuOf), d (body or {}) }, else null. */
+  function cuCall(e) {
+    if (!e || e.result == null || (e.name !== "fetch_url" && e.name !== "check_approval")) return null;
+    var h = parseHttp(e.result);
+    if (!h) return null;
+    var q = cuOf(h.url);
+    return q ? { h: h, q: q, d: h.data || {} } : null;
+  }
+  /** The viewer link from a create answer, only if it is a view-only link (cuv_ token). */
+  function cuViewUrl(u) {
+    var s = safeUrl(str(u));
+    if (!s) return "";
+    try {
+      var x = new URL(s);
+      return /^\/computer\/sessions\/cus_[A-Za-z0-9_-]{4,64}\/view$/.test(x.pathname) && /^cuv_[0-9a-fA-F]{16,64}$/.test(str(x.searchParams.get("token"))) ? x.href : "";
+    } catch (e) {
+      return "";
+    }
+  }
+  /** The live MJPEG stream next to the viewer (same view-only token). */
+  function cuStreamUrl(view) {
+    try {
+      var x = new URL(view);
+      return x.origin + x.pathname.replace(/\/view$/, "/stream") + "?token=" + encodeURIComponent(x.searchParams.get("token"));
+    } catch (e) {
+      return "";
+    }
+  }
+  /** "$0.005", "$0.047", "$0.21": computer prices go below a cent. */
+  function money3(v) {
+    var n = num(v) || 0;
+    var s = Math.abs(n).toFixed(3);
+    if (/\d\.\d\d0$/.test(s)) s = s.slice(0, -1);
+    return "$" + s;
+  }
+  function mmss(sec) {
+    sec = Math.max(0, Math.round(sec));
+    return Math.floor(sec / 60) + ":" + (sec % 60 < 10 ? "0" : "") + (sec % 60);
+  }
+  var cuCache = { ver: -1, by: {} };
+  /**
+   * Every computer session in an agent's log, from its results and receipts: { map: id → session,
+   * order }. A session: { id, viewUrl, status, position, queueLength, wait, waitAt, leaseEndsAt,
+   * page, endReason, minutes, actions, reads, spend, last (entry) }.
+   */
+  function cuSessions(a) {
+    if (cuCache.ver !== state.logVer) cuCache = { ver: state.logVer, by: {} };
+    if (cuCache.by[a.name]) return cuCache.by[a.name];
+    var map = {};
+    var order = [];
+    (a.log || []).forEach(function (e) {
+      var c = cuCall(e);
+      if (!c) return;
+      var d = c.d;
+      var id = c.q.id || (c.q.op === "create" && /^cus_[A-Za-z0-9_-]{4,64}$/.test(str(d.id)) ? str(d.id) : "");
+      if (!id) return;
+      var s = map[id];
+      if (!s) {
+        s = map[id] = { id: id, viewUrl: "", status: "", position: null, queueLength: null, wait: null, waitAt: 0, leaseEndsAt: 0, page: null, endReason: "", minutes: 0, actions: 0, reads: 0, spend: 0, last: null, firstAt: ts(e.at) };
+        order.push(s);
+      }
+      s.last = e;
+      var at = ts(e.at) + (e.ms || 0);
+      var ok = c.h.status >= 200 && c.h.status < 300;
+      var method = (str(objArgs(e).method) || "GET").toUpperCase();
+      if (ok) {
+        if (c.q.op === "create" && cuViewUrl(d.viewUrl)) s.viewUrl = cuViewUrl(d.viewUrl);
+        var stv = str(d.status);
+        if (stv === "queued" || stv === "active" || stv === "ended") s.status = stv;
+        if (stv === "queued") {
+          s.position = num(d.position);
+          s.queueLength = num(d.queueLength);
+          s.wait = num(d.estimatedWaitSeconds);
+          s.waitAt = at;
+        }
+        var L = qcObj(d.lease);
+        if (L) {
+          var left = num(L.secondsLeft);
+          var end = ts(L.endsAt) || (left != null && left > 0 ? at + left * 1000 : 0);
+          if (end) s.leaseEndsAt = end;
+          if (c.q.op !== "status" || stv === "active") s.status = s.status === "ended" ? "ended" : "active";
+        }
+        var pg = qcObj(d.page);
+        if (pg && str(pg.url)) s.page = { url: str(pg.url), title: str(pg.title) };
+        else if ((c.q.op === "action" || c.q.op === "snapshot") && str(d.url)) s.page = { url: str(d.url), title: str(d.title) };
+        if (str(d.endReason)) s.endReason = str(d.endReason).slice(0, 30);
+        if (c.q.op === "end" || (c.q.op === "status" && method === "DELETE")) {
+          s.status = "ended";
+          s.endReason = s.endReason || "ended";
+        }
+      } else {
+        var code = str(d.error);
+        if (c.h.status === 410 || code === "session_ended" || code === "lease_lapsed") {
+          s.status = "ended";
+          s.endReason = code || "ended";
+        }
+      }
+      // Its receipts ("Paid $0.005 to Computer use · click") fold into the card's meta line. From the
+      // whole result: a screenshot's body isn't JSON, so parseHttp keeps no tail for it.
+      var rc = parseReceipt(e.result);
+      if (rc && /^Computer use\b/.test(rc.party)) {
+        s.spend += num(rc.amount) || 0;
+        var mm = rc.party.match(/· (\d+) minutes?$/);
+        if (mm) s.minutes += Number(mm[1]);
+        else if (/· (?:text snapshot|screenshot)$/.test(rc.party)) s.reads++;
+        else s.actions++;
+      }
+    });
+    return (cuCache.by[a.name] = { map: map, order: order });
+  }
+  /** Seen live by this page (its stream answered): session id → true. */
+  var cuLive = {};
+  /**
+   * Where the session is now: { phase: "queued" | "starting" | "live" | "ended", reason }. The log
+   * says most of it; the lease running out, a line spot nobody took up, and the stream answering
+   * say the rest.
+   */
+  function cuPhase(s, a) {
+    var now = Date.now();
+    if (s.status === "ended") return { phase: "ended", reason: s.endReason || "ended" };
+    if (s.leaseEndsAt && now > s.leaseEndsAt + 5000) return { phase: "ended", reason: "lease_lapsed" };
+    if (s.status === "active") return { phase: s.leaseEndsAt || cuLive[s.id] ? "live" : "starting" };
+    if (cuLive[s.id]) return { phase: "live" };
+    if (s.status === "queued" && !a.busy && s.waitAt && now > s.waitAt + ((s.wait || 0) + 150) * 1000) return { phase: "ended", reason: "not_started" };
+    return { phase: s.status === "queued" ? "queued" : "starting" };
+  }
+  function cuMeta(s) {
+    return [s.minutes ? s.minutes + " min" : "", s.actions ? plural(s.actions, "action", "actions") : "", s.reads ? plural(s.reads, "read", "reads") : ""].filter(Boolean);
+  }
+  /** "Used the Computer · 4 min · 23 actions · $0.21". */
+  function cuEndedLine(s, reason) {
+    var used = s.minutes || s.actions || s.reads;
+    var meta = cuMeta(s).map(esc);
+    if (!used) meta.push(reason === "ended" || reason === "cancelled" ? "left the line" : "didn't start");
+    if (reason === "lease_lapsed" && used) meta.push("time ran out");
+    return evHtml({ ic: icon("monitor"), text: used ? "Used the <b>Computer</b>" : "Asked for the <b>Computer</b>", meta: meta, amt: s.spend ? money3(s.spend) : "not charged" });
+  }
+  /** Stable markup (session and theme only): the stream <img> keeps playing across re-renders. Phases are classes. */
+  function cuCardHtml(a, s) {
+    return (
+      '<div class="it them k-card"><div class="card cu" data-cu="' + esc(s.id) + '" data-agent="' + esc(a.name) + '">' +
+      '<div class="cd-h"><span class="cu-ic">' + icon("monitor") + '</span><div class="cd-ht"><div class="cd-t">Computer<span class="cu-st"><i></i><span></span></span></div></div>' +
+      '<span class="chip-s cu-sbx" title="A fresh, isolated browser desktop for this session only. It can\'t reach your computer, your network or other sessions.">' + icon("shield") + "Sandboxed desktop</span>" +
+      (s.viewUrl ? '<button type="button" class="btn-2 sm cu-watch" data-action="cu-watch" data-agent="' + esc(a.name) + '" data-cu="' + esc(s.id) + '">Watch</button>' : "") + "</div>" +
+      '<div class="cu-screen"><img class="cu-img" alt="Live screen of the agent\'s computer" referrerpolicy="no-referrer" hidden><div class="cu-wait"><b></b><span></span></div></div>' +
+      '<div class="cd-f"><span class="cd-fl cu-m"></span></div>' +
+      "</div></div>"
+    );
+  }
+  /** Items for one computer answer: the session's card (or its ended line) at its latest answer, else nothing. */
+  function cuItems(a, e) {
+    var c = cuCall(e);
+    if (!c) return null;
+    var reg = cuSessions(a);
+    var s = reg.map[c.q.id || str(c.d.id)];
+    if (!s || s.last !== e) return [];
+    var key = "cu:" + a.name + ":" + s.id;
+    var ph = cuPhase(s, a);
+    if (ph.phase === "ended") return [{ zone: "event", key: key + ":end", html: cuEndedLine(s, ph.reason) }];
+    return [{ zone: "card", key: key, stable: true, html: cuCardHtml(a, s) }];
+  }
+  var cuTimers = {};
+  /** Patch every computer card in the page: status mark, waiting text, meta line, and the stream. */
+  function applyComputers() {
+    document.querySelectorAll(".card.cu[data-cu]").forEach(function (el) {
+      var a = state.agents[el.getAttribute("data-agent")];
+      var s = a && cuSessions(a).map[el.getAttribute("data-cu")];
+      if (!s) return;
+      var ph = cuPhase(s, a).phase;
+      ["queued", "starting", "live"].forEach(function (p) { el.classList.toggle("phase-" + p, ph === p); });
+      var mark = el.querySelector(".cu-st span");
+      var markText = ph === "live" ? "Live" : ph === "queued" ? "In line" : "Starting";
+      if (mark.textContent !== markText) mark.textContent = markText;
+      var wt = el.querySelector(".cu-wait b");
+      var ws = el.querySelector(".cu-wait span");
+      var w = ph === "queued"
+        ? ["In line" + (s.position ? " · position " + s.position : ""), s.wait ? "about " + (s.wait < 90 ? Math.max(5, Math.round(s.wait / 5) * 5) + " s" : Math.round(s.wait / 60) + " min") + " · waiting is free" : "Waiting is free"]
+        : ph === "starting"
+          ? ["Starting the desktop", s.leaseEndsAt ? "" : "It starts when the first minute is bought"]
+          : [s.viewUrl ? "Connecting to the screen" : "No live view for this session", ""];
+      if (wt.textContent !== w[0]) wt.textContent = w[0];
+      if (ws.textContent !== w[1]) ws.textContent = w[1];
+      var meta = (ph === "live" && s.leaseEndsAt ? ['<span data-left-until="' + s.leaseEndsAt + '">' + esc(mmss((s.leaseEndsAt - Date.now()) / 1000)) + "</span> left"] : []).concat(cuMeta(s).filter(function (x) { return !/min$/.test(x); }).map(esc));
+      meta.push(s.spend ? money3(s.spend) + " spent" : "nothing spent yet");
+      if (s.page && s.page.url && s.page.url !== "about:blank" && ph === "live") meta.push('<span class="cu-page" title="' + esc(s.page.url) + '">' + esc(s.page.title || hostPath(s.page.url)) + "</span>");
+      var m = el.querySelector(".cu-m");
+      var mh = meta.join(" · ");
+      if (m.__html !== mh) { m.innerHTML = mh; m.__html = mh; }
+      // The stream: try it unless the session is in line; it answers once the desktop is up.
+      var img = el.querySelector(".cu-img");
+      var stream = s.viewUrl ? cuStreamUrl(s.viewUrl) : "";
+      if (stream && ph !== "queued" && !img.__wired) {
+        img.__wired = true;
+        var tries = 0;
+        var go = function () { if (img.isConnected) img.src = stream + "&t=" + Date.now(); };
+        img.onload = function () {
+          img.hidden = false;
+          el.classList.add("streaming");
+          if (!cuLive[s.id]) { cuLive[s.id] = true; schedule(); }
+        };
+        img.onerror = function () {
+          img.hidden = true;
+          el.classList.remove("streaming");
+          if (img.isConnected && tries++ < 120) setTimeout(go, 3000);
+        };
+        go();
+      }
+      // Re-render when the lease runs out, so the card becomes its ended line on time.
+      if (ph === "live" && s.leaseEndsAt && cuTimers[s.id] !== s.leaseEndsAt) {
+        cuTimers[s.id] = s.leaseEndsAt;
+        setTimeout(schedule, Math.max(1000, s.leaseEndsAt - Date.now() + 5500));
+      }
+    });
+  }
+  /** One step per computer call: "Clicked [12] “Browse the first website” · $0.005". Returns false when the result isn't an HTTP answer. */
+  function cuStep(s, q, r, e) {
+    var args = objArgs(e);
+    var body = args.body && typeof args.body === "object" ? args.body : {};
+    var method = (str(args.method) || "GET").toUpperCase();
+    var target = function (d) {
+      var t = str(d && (d.clicked || d.hovered || d.into)).match(/^\[(\d+)\] (.{1,80})/);
+      if (t) return "[" + t[1] + "] “" + t[2].trim() + "”";
+      if (num(body.element) != null) return "[" + num(body.element) + "]";
+      return num(body.x) != null ? "the screen at " + num(body.x) + "," + num(body.y) : "";
+    };
+    s.icon = "monitor";
+    var K = { navigate: "Opened ", click: "Clicked ", type: "Typed ", key: "Pressed ", scroll: "Scrolled ", select: "Chose ", hover: "Hovered over ", back: "Went back", forward: "Went forward", reload: "Reloaded the page" };
+    var label = function (d) {
+      if (q.op === "create") return "Asked for a computer";
+      if (q.op === "status") return method === "DELETE" ? "Ended the computer session" : "Checked on the computer";
+      if (q.op === "time") return "Bought " + plural(q.minutes, "minute", "minutes") + " of computer time";
+      if (q.op === "end") return "Ended the computer session";
+      if (q.op === "snapshot") return "Read the screen";
+      if (q.op === "screenshot") return "Took a screenshot";
+      var k = q.kind;
+      if (k === "navigate") return K.navigate + (hostPath(body.url) || "a page");
+      if (k === "type") return K.type + "“" + str(body.text).slice(0, 40) + (str(body.text).length > 40 ? "…" : "") + "”" + (target(d) ? " into " + target(d) : "");
+      if (k === "key") return K.key + (str(body.keys).slice(0, 30) || "a key");
+      if (k === "scroll") return K.scroll + (str(body.direction) || "down");
+      if (k === "select") return K.select + "“" + str(body.value).slice(0, 30) + "”" + (target(d) ? " in " + target(d) : "");
+      if (k === "click" || k === "hover") return K[k] + (target(d) || "the page");
+      return K[k] || "Used the computer (" + k + ")";
+    };
+    s.label = label(null);
+    s.live = q.op === "time" ? "Buying computer time (the desktop starts first)" : q.op === "create" ? "Asking for a computer" : s.label.replace(/^Opened /, "Opening ").replace(/^Clicked /, "Clicking ").replace(/^Typed /, "Typing ").replace(/^Read the screen$/, "Reading the screen");
+    if (r == null) return true;
+    var c = cuCall(e);
+    if (!c) return false;
+    var d = c.d;
+    if (c.h.status >= 400) {
+      var code = str(d.error);
+      var msg = firstLine(str(d.message)).replace(/\s*Nothing was charged\.?$/i, "").replace(/\.$/, "");
+      // Refused before the paywall (§19.3): nothing was charged, so it is a calm line.
+      var free = /^(session_queued|session_ended|lease_lapsed|lease_required|lease_full|session_limit|invalid_minutes|invalid_action|unknown_action|card_number_refused|password_field_refused|not_live|queue_full|computer_unavailable|token_required|wrong_token|view_only|session_not_found)$/.test(code);
+      s.label = label(d);
+      s.detail = (msg || code || "HTTP " + c.h.status) + " · not charged";
+      s.st = free ? "soft" : "err";
+      return true;
+    }
+    var rc = parseReceipt(e.result);
+    s.label = label(d) + (rc && rc.amount ? " · " + rc.amount : "");
+    var L = qcObj(d.lease);
+    var left = L && num(L.secondsLeft) ? mmss(num(L.secondsLeft)) + " left" : "";
+    if (q.op === "create" || q.op === "status") {
+      s.detail = str(d.status) === "queued" ? "In line" + (num(d.position) ? " · position " + num(d.position) : "") + (num(d.estimatedWaitSeconds) ? " · about " + num(d.estimatedWaitSeconds) + " s" : "") : str(d.status) === "ended" ? "Ended" : left || (q.op === "create" ? "Got a seat" : "");
+    } else if (q.op === "snapshot") {
+      s.detail = [Array.isArray(d.elements) ? plural(d.elements.length, "element", "elements") : "", str(d.title).slice(0, 60)].filter(Boolean).join(" · ");
+    } else if (q.op === "action") {
+      s.detail = str(d.title).slice(0, 60) || hostPath(d.url);
+    } else if (q.op === "time") {
+      s.detail = left;
+    } else if (q.op === "end" && qcObj(d.spent)) {
+      s.detail = "spent " + money3(d.spent.total);
+    }
+    return true;
+  }
+  /** The bigger view: the service's own viewer page (its stream, status and page line) in a sheet. */
+  function cuSheetHtml(sh) {
+    return (
+      '<div class="sh-head"><span class="sh-title">Computer <span class="chip-s cu-sbx">' + icon("shield") + "Sandboxed desktop</span></span>" +
+      '<span class="cu-sh-acts"><a class="icon-btn" href="' + esc(sh.view) + '" target="_blank" rel="noopener noreferrer" title="Open in a new tab" aria-label="Open in a new tab">' + icon("external") + "</a>" +
+      '<button class="icon-btn" data-action="sheet-close" aria-label="Close">' + icon("x") + "</button></span></div>" +
+      '<div class="cu-sh-body"><iframe class="cu-frame" title="The agent\'s computer, live" src="' + esc(sh.view + "&embed=1") + '" referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin"></iframe></div>' +
+      '<div class="sh-foot"><button class="btn-1" data-action="sheet-close">Done</button></div>'
+    );
+  }
+  function openCuSheet(agent, id) {
+    var a = state.agents[agent];
+    var s = a && cuSessions(a).map[id];
+    if (!s || !s.viewUrl) return;
+    ui.sheet = { kind: "cu", agent: agent, id: id, view: s.viewUrl };
+    mountSheet();
+  }
+
   // ================================================================ tool result parsing (apps/mcp/src/server.ts, format.ts)
   var REASONS = {
     not_allowlisted: "Not an approved recipient",
@@ -2076,6 +2402,11 @@
             s.detail = "You approved · " + shopName(so.b.handle, confirmationOf(so.d).store) + " · simulated order";
             break;
           }
+          var cua = cuCall(e);
+          if (cua && cuStep(s, cua.q, r, e)) {
+            if (s.st === "ok") s.detail = "You approved" + (s.detail ? " · " + s.detail : "");
+            break;
+          }
           var qa = qcCall(e);
           if (qa && qcStep(s, qa.q, r, e)) {
             if (s.st === "ok") s.detail = "You approved" + (s.detail ? " · " + s.detail : "");
@@ -2118,6 +2449,8 @@
     if (sb && shopStep(s, sb, r, e)) return;
     var qq = qcOf(url);
     if (qq && qcStep(s, qq, r, e)) return;
+    var cq = cuOf(url);
+    if (cq && cuStep(s, cq, r, e)) return;
     if (r == null) return;
     var rc = parseReceipt(r);
     if (rc && rc.prep === "to") {
@@ -2412,6 +2745,9 @@
     // Quantcomm research cards carry their own paid line (§17.4).
     var qcs = qcCards(a, e, key);
     if (qcs) return qcs;
+    // Computer use (§19): one card per session at its latest answer; its receipts fold into it.
+    var cus = cuItems(a, e);
+    if (cus) return cus;
     if (e.name === "fetch_url" || e.name === "check_approval") {
       rc = parseReceipt(r);
       var o = rc && rc.prep === "to" ? parseOrder(r) : null;
@@ -2771,9 +3107,10 @@
     return evHtml({ ic: icon("warn"), tone: "err", text: esc(t) });
   }
   /** One muted line per step: "Searched the directory for “flood” · 1 result". Marks only for waiting or failed. */
-  function stepRow(a, e) {
+  function stepRow(a, e, times) {
     var open = !!ui.openStep[e.id];
     var info = stepOf(a, e);
+    if (times) info.label += " " + times + " times";
     var st = info.st;
     var mark = st === "run" ? '<span class="spin"></span>' : st === "err" ? icon("x") : st === "wait" ? icon("clock") : "";
     var label = st === "run" || (st === "wait" && e.result == null) ? info.live : info.label;
@@ -2821,10 +3158,22 @@
     if (open && hasBody) {
       var rows = [];
       if (t.thoughts.length) rows.push(thoughtRow(a, t));
-      t.entries.forEach(function (e) {
+      // Free polls of a computer session while it waits in line fold into one step, with a count.
+      var pollOf = function (e) {
+        var c = e && e.kind === "tool" ? cuOf(str(objArgs(e).url)) : null;
+        return c && c.op === "status" && (str(objArgs(e).method) || "GET").toUpperCase() === "GET" ? c.id : "";
+      };
+      for (var i = 0; i < t.entries.length; i++) {
+        var e = t.entries[i];
         if (e.kind === "assistant" && t.interim[e.id]) rows.push('<div class="step say">' + md(e.text) + "</div>");
-        else if (e.kind === "tool") rows.push(stepRow(a, e));
-      });
+        else if (e.kind === "tool") {
+          var pid = pollOf(e);
+          var j = i;
+          while (pid && j + 1 < t.entries.length && pollOf(t.entries[j + 1]) === pid) j++;
+          rows.push(stepRow(a, t.entries[j], j > i ? j - i + 1 : 0));
+          i = j;
+        }
+      }
       body = '<div class="steps">' + rows.join("") + "</div>";
     }
     return '<div class="' + cls + '">' + (hasBody ? '<button class="act-head" data-action="act" data-key="' + esc(key) + '" aria-expanded="' + open + '">' + head + "</button>" : '<div class="act-head">' + head + "</div>") + body + "</div>";
@@ -2848,7 +3197,7 @@
               asked[x.id] = 1;
               decide.push(decisionItem(a, x, opts));
             }
-          } else (x.zone === "event" ? events : cards).push({ key: scope + x.key, kind: x.zone, html: x.html });
+          } else (x.zone === "event" ? events : cards).push({ key: scope + x.key, kind: x.zone, html: x.html, stable: !!x.stable });
         });
       } else if (e.kind === "error") tail.push({ key: "e:" + pre + e.id, kind: "event", html: errorLine(a, e) });
     });
@@ -3472,9 +3821,9 @@
   function mountSheet() {
     var s = ui.sheet;
     closeMenu();
-    els.sheet.className = "sheet " + (s.kind === "owner" ? "owner" : "gsheet");
-    els.sheet.innerHTML = s.kind === "owner" ? ownerSheetHtml(s) : groupSheetHtml(s);
-    els.sheet.setAttribute("aria-label", s.kind === "owner" ? ownerTitle(s) : s.mode === "edit" ? "Edit broadcast" : "New broadcast");
+    els.sheet.className = "sheet " + (s.kind === "owner" ? "owner" : s.kind === "cu" ? "cu-sheet" : "gsheet");
+    els.sheet.innerHTML = s.kind === "owner" ? ownerSheetHtml(s) : s.kind === "cu" ? cuSheetHtml(s) : groupSheetHtml(s);
+    els.sheet.setAttribute("aria-label", s.kind === "owner" ? ownerTitle(s) : s.kind === "cu" ? "The agent's computer, live" : s.mode === "edit" ? "Edit broadcast" : "New broadcast");
     els.modal.hidden = false;
     els.modal.classList.remove("show");
     void els.modal.offsetWidth; // restart the entrance transition
@@ -3509,7 +3858,7 @@
     var s = ui.sheet;
     if (!s) return;
     if (s.kind === "owner") updateOwnerSheet(s);
-    else updateGroupSheet(s);
+    else if (s.kind === "group") updateGroupSheet(s);
   }
 
   // ---------------------------------------------------------------- broadcast editor
@@ -3851,6 +4200,7 @@
     if (ui.sheet && ui.sheet.kind === "group" && ui.sheet.mode === "edit" && !groupById(ui.sheet.id)) closeSheet(); // deleted elsewhere
     if (ui.sheet) updateSheet();
     applyApprovals();
+    applyComputers();
     tickTimers();
     ui.holdScroll = false;
     ui.forceBottom = false;
@@ -3875,6 +4225,10 @@
     var now = Date.now();
     document.querySelectorAll("[data-since]").forEach(function (el) {
       var t = dur(now - Number(el.getAttribute("data-since")));
+      if (el.textContent !== t) el.textContent = t;
+    });
+    document.querySelectorAll("[data-left-until]").forEach(function (el) {
+      var t = mmss((Number(el.getAttribute("data-left-until")) - now) / 1000);
       if (el.textContent !== t) el.textContent = t;
     });
     document.querySelectorAll("[data-until]").forEach(function (el) {
@@ -3995,6 +4349,8 @@
       openGroupSheet("");
     } else if (act === "add-money") {
       openOwnerSheet("add-money", t.getAttribute("data-agent"));
+    } else if (act === "cu-watch") {
+      openCuSheet(t.getAttribute("data-agent"), t.getAttribute("data-cu"));
     } else if (act === "add-service") {
       openOwnerSheet(SHEET_ADD_SERVICE, t.getAttribute("data-agent"));
     } else if (act === "bank") {

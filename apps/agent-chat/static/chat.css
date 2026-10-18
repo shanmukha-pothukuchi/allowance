@@ -578,6 +578,31 @@ a.l-link:hover .l-name { text-decoration: underline; text-underline-offset: 2px;
 .qc-why ul { margin: 2px 0 0; padding-left: 16px; }
 .mini .card.qc { width: 100%; }
 
+/* ------------------------------------------------------------------ Computer use (§19): one card per session */
+.card.cu { width: 520px; }
+.cu-ic { width: 20px; height: 20px; border-radius: 5px; display: grid; place-items: center; flex: none; font-size: 12px; color: var(--text-2); background: var(--fill-2); }
+.cu-st { display: inline-flex; align-items: center; gap: 5px; margin-left: 8px; font-size: 12.5px; font-weight: 400; color: var(--text-2); vertical-align: 1px; }
+.cu-st i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); flex: none; }
+.card.cu.phase-live .cu-st i { background: var(--green); animation: pulse 1.6s ease-in-out infinite; }
+.cu .cd-h { flex-wrap: wrap; row-gap: 6px; }
+.cu .cd-ht { flex: 1 1 140px; }
+.cu .cd-h .btn-2 { flex: none; }
+.card.cu:not(.phase-live) .cu-watch { display: none; }
+.cu-screen { position: relative; aspect-ratio: 16 / 10; margin: 10px 12px 0; border-radius: 6px; overflow: hidden; background: var(--fill); border: 1px solid var(--line); }
+.cu-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #0b0c0e; display: block; }
+.cu-wait { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 12px; text-align: center; font-size: 12.5px; color: var(--text-3); }
+.cu-wait b { font-size: 13.5px; font-weight: 500; color: var(--text); }
+.cu-wait span:empty { display: none; }
+.card.cu.streaming .cu-wait { display: none; }
+.card.cu .cd-f { border-top: 0; padding-top: 7px; font-variant-numeric: tabular-nums; }
+.cu-page { color: var(--text-2); }
+.sheet.cu-sheet { width: 1000px; }
+.sh-title .chip-s { margin-left: 8px; vertical-align: 2px; font-weight: 500; }
+.cu-sh-acts { display: flex; align-items: center; gap: 2px; }
+.cu-sh-body { padding: 4px 18px 10px; }
+.cu-frame { display: block; width: 100%; aspect-ratio: 16 / 11.4; border: 0; background: transparent; }
+.mini .card.cu { width: 100%; }
+
 /* ------------------------------------------------------------------ decision card (dashboard approval embed, §13.5) */
 /* The embed draws the decision itself; the chat draws the frame, and a head only while it loads or fails. */
 .approval { width: 420px; max-width: 100%; border-radius: 10px; overflow: hidden; background: var(--card); border: 1px solid var(--card-line); position: relative; }
