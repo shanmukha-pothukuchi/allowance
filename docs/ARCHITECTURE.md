@@ -956,3 +956,119 @@ The §15.3 Shopify endpoints stay for compatibility.
 - **Owner-added x402 APIs:** these have `source: "owner"` and ids `custom-<slug>`. They are connected per agent and are not listed in the directory.
 - **`/v1/directory/add` caps:** a directory match connects on its listed terms (`maxPrice` ignored, except for a listed store). An x402 cap must be ≥ the challenge price and ≤ `MAX_TOPUP`. Re-adding a link raises the cap in place.
 - **Agent x402 requests:** an agent's request uses the challenge amount as `maxPrice`. If that is over the agent's `maxPerTx`, the answer is `400 invalid_request`. An unreachable directory during resolution gives `503 directory_unavailable`.
+
+## 20. Investing, cashing out, and agents that wake themselves (Phase 9, branch feature/invest-scheduler)
+
+Agents can invest part of their allowance in stocks, and bring money back to the owner on request or
+by rule. A scheduler lets an agent (or the owner, for it) set reminders and price watches that wake
+the agent without the owner typing anything, like Muse's self-set reminders. Every action still goes
+through the wallet and its policy.
+
+**Honesty.**
+- **Paper trading.** Investing is paper trading: a simulated brokerage, no real securities, no
+  real broker. Shares are bookkeeping in the brokerage; the money is the agent's USDC (test money).
+- **Prices.** Prices are **real daily closes** (Quantcomm `GET /api/markets/{ticker}`: `dates[]`,
+  `closes[]`, about 10 years for 95 tickers). By default they are **replayed at accelerated speed**
+  from a start date, so value and P/L move during a demo.
+- **Labels.** Every UI and agent text says "Paper trading · replay of real closes from <date>",
+  and "not investment advice".
+
+### 20.1 Brokerage (`apps/brokerage`, port 4110, `BROKERAGE_URL`)
+- **Wallet.** Holds the brokerage wallet (`DATA_DIR/brokerage-key.json`), which is the x402
+  `payTo` for buys and the payer for sell proceeds.
+- **Positions.** Positions per agent wallet address are kept in `DATA_DIR/brokerage.json`.
+- **Price clock.**
+  - `BROKERAGE_PRICES=replay` (default): it starts at `BROKERAGE_REPLAY_FROM` (default about one
+    year before the last close) and advances one trading day every `BROKERAGE_DAY_SECONDS` (default 20).
+  - `live` uses the latest close (no intraday movement).
+  - The clock is shared by all agents, and its date is shown on every quote.
+  - If Quantcomm is down, quotes answer 503 `prices_unavailable` before any paywall.
+
+| Method | Path | Price | Response |
+|---|---|---|---|
+| GET | `/brokerage` | free | `{ mode, clockDate, tickers: [{ ticker, name, group }], fees, note }` |
+| GET | `/brokerage/quotes?tickers=COF,JPM` | free | `{ clockDate, quotes: [{ ticker, name, price, changePct1d, changePctFromStart }] }` |
+| POST | `/brokerage/orders/buy` `{ ticker, amount }` | **x402: `amount`** (dollars; fractional shares) | `{ orderId, ticker, shares, price, amount, clockDate }` |
+| POST | `/brokerage/orders/sell` `{ ticker, shares \| "all" }` | free (it pays out) | `{ orderId, ticker, shares, price, proceeds, costBasis, realizedPnl, payoutTx, clockDate }` |
+| GET | `/brokerage/portfolio` | free | `{ clockDate, cash: null, positions: [{ ticker, shares, avgCost, price, value, unrealizedPnl, unrealizedPct }], totals: { invested, value, unrealizedPnl, realizedPnl } }` |
+
+- **Who.** The agent is identified by the wallet address that paid (buys) or by a signed proof for
+  sell and portfolio. Reuse the agent-work claim pattern: the MCP signs a short challenge with the
+  wallet's `/v1/sign`, or the wallet exposes an attest endpoint. Pick the simplest safe option and
+  document it.
+- **Sells.** A sell pays proceeds in USDC from the brokerage wallet to the agent (mock: facilitator
+  settle). The MCP reports it to the wallet as an **earning** (`/v1/earnings`, kind `earn`,
+  description "Sold 3.2 COF"). The wallet's existing ledger checks apply.
+- **Bank.** Buys show on the Capital One statement as purchases at "Allowance Brokerage (paper)",
+  and sells as deposits, automatically (§16).
+- **Directory.** A static entry `brokerage`, name "Brokerage (paper)", category "finance" (add it to
+  `ServiceCategory`), `maxPrice` = the agent's cap (a buy is one payment of the order amount, so
+  `maxPerTx`, the approval threshold and the daily cap govern trade size).
+
+### 20.2 Cash out to the owner (wallet-service)
+- **Agent.** `POST /v1/cashout { amount | "all" }` moves USDC from the agent's wallet to the
+  **owner vault** (an owner address the wallet creates on first use, `DATA_DIR/owner-vault.json`;
+  in chain mode `OWNER_VAULT_ADDRESS`).
+  - It is always allowed when not frozen, because money only goes back to the owner.
+  - Receipt kind `cashout`; event `cashout`.
+- **Owner.** `POST /v1/agents/:id/cashout { amount | "all" }` works even when the agent is frozen.
+- **Bank mirror (§16).** A transfer on the agent's account ("Cashed out to you · <agent>") plus a
+  deposit on checking ("From <agent>'s allowance account ••5678"), so the owner's checking
+  balance goes up.
+- **MCP.** `cash_out { amount? }`; with no amount it cashes out everything.
+
+### 20.3 Scheduler (`apps/scheduler`, port 4100, `SCHEDULER_URL`)
+- **Schedules.**
+  - `{ id, agentName, kind: "at" | "every" | "price", at?, everyMinutes?, condition?: { ticker, op: ">=" | "<=", price } | { ticker, movePct } | { portfolio: "unrealizedPct", op, value }, message, source: "agent" | "owner", createdAt, nextRunAt?, lastFiredAt?, fired, expiresAt?, active }`.
+  - Persisted in `DATA_DIR/schedules.json`.
+- **Agent API.** Bearer agent token, verified with the wallet's `/v1/me`.
+  - `POST /schedules`, `GET /schedules`, `DELETE /schedules/:id`.
+  - An agent sees and changes only its own schedules.
+- **Owner API (`X-Owner-Key`).**
+  - List all, cancel any, and create rules for an agent.
+  - Rules cover take profit, stop loss, and "cash out profits above $X". Each is stored as a
+    schedule with `source: "owner"` and a fixed message the agent receives.
+  - `POST /pause` and `/resume` are the **autonomy switch**: while paused, nothing fires.
+- **Limits** (bounded autonomy):
+  - at most 10 active schedules per agent;
+  - `every` at least 1 minute;
+  - price checks at most every 10 s;
+  - at most 30 firings per agent per day.
+
+  Over a limit → 400 with a plain message.
+- **Firing.** When a schedule is due, or its condition is true, the scheduler calls the chat server
+  `POST /api/agents/:name/messages { text, source: "scheduler", scheduleId }`, authenticated with
+  an internal token (`DATA_DIR/scheduler-token.json`, sent as `X-Scheduler-Token`).
+  - The text is the schedule's message plus a one-line context, e.g. "COF is $212.40 (≥ $210),
+    replay date 2025-11-03".
+  - A price schedule fires once, then deactivates unless `every` is set.
+  - If the agent is busy, the firing waits until it's idle.
+  - Firing never spends anything by itself: the woken agent acts through its tools and policy.
+- **Chat server.**
+  - Accepts `source: "scheduler"` only with the token; agents can't forge it.
+  - Shows the message in the thread as a system-styled "⏰ Reminder you set" / "📈 Rule: stop loss
+    on COF" line instead of a user bubble.
+  - The agent's system prompt says such messages come from its own schedules or the owner's
+    rules, and that it acts only within them.
+  - Claude Desktop agents have no chat server to wake: their schedules are listed but marked
+    "needs the chat".
+- **MCP.**
+  - `schedule_task { at? | every_minutes? | when?: { ticker, above? | below? | move_pct? }, message }`.
+  - `list_schedules`, `cancel_schedule { id }`.
+  - Plus the brokerage tools `get_quotes { tickers }`, `buy_stock { ticker, amount }`,
+    `sell_stock { ticker, shares? }`, `portfolio`.
+  - Buys pay through the wallet like `fetch_url`; sells report the earning.
+
+### 20.4 UI
+- **Dashboard.**
+  - A **Portfolio** view: per agent positions, value, unrealized and realized P/L, and the replay date.
+  - **Rules** per agent: take profit %, stop loss %, cash out profits above $X.
+  - **Schedules:** every schedule, with source and next run, and Cancel.
+  - The **autonomy switch**.
+  - A **Cash out** action on each agent (to checking).
+  - All of it follows docs/ui-rules.md.
+- **Chat.**
+  - Scheduled firings appear as system lines.
+  - "I set a reminder" shows as one event line ("Watching COF ≥ $210 · fires once").
+  - Trades are compact cards: "Bought 0.47 COF · $100.00"; "Sold · +$6.20 realized".
+  - A cash-out shows as an event line.
