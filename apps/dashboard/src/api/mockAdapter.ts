@@ -41,7 +41,7 @@ import type {
   WalletEvent,
 } from "../types";
 import { HttpError, type WalletAdapter } from "./adapter";
-import { shares as shareText, signedMoney } from "../invest";
+import { normPortfolios, normScheduler } from "../invest";
 import { createMockMarket, type MockMarket } from "./mockInvest";
 
 export interface MockOptions {
@@ -93,7 +93,8 @@ export function mockInvestMode(search: string = typeof location !== "undefined" 
 const BROKERAGE_ORIGIN = "http://localhost:4110";
 const BROKERAGE_ADDRESS = "0xB40c3e2A9d71f8E2c5a6B7C8d9E0F1a2B3c4D5E6" as Address;
 const OWNER_VAULT_ADDRESS = "0x0E7d1C2a3B4c5D6e7F8091a2B3c4D5e6F7a8b9C0" as Address;
-const BROKERAGE_PARTY = { address: BROKERAGE_ADDRESS, origin: BROKERAGE_ORIGIN, name: "Allowance Brokerage (paper)" };
+/** As the wallet records a brokerage payment: the directory entry's name, the brokerage's origin. */
+const BROKERAGE_PARTY = { address: BROKERAGE_ADDRESS, origin: BROKERAGE_ORIGIN, name: "Brokerage (paper)" };
 /** With investing on, researcher has limits that let it buy (a buy is one payment, §20.1). */
 const INVESTOR_POLICY: Partial<Policy> = { maxPerTx: "150.00", dailyCap: "300.00", approvalThreshold: "150.00" };
 
@@ -1035,35 +1036,43 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
   }
   function doBuy(agent: AgentPublic, ticker: string, amount: string, live = true): Receipt {
     const fill = market.buy(agent.name, ticker, amount);
+    // The x402 payment names the service, not the stock (§20.1); the brokerage's order, matched by
+    // tx hash, says what was bought.
     const r = makeReceipt(agent, {
       kind: "spend",
       status: live ? "signed" : "settled",
-      description: `Buy ${shareText(fill.shares)} ${fill.ticker}`,
+      description: "Brokerage (paper)",
       amount: fill.amount,
       counterparty: { ...BROKERAGE_PARTY },
       paymentId: id("pay"),
     });
     agent.spentToday = addDollars(agent.spentToday, fill.amount);
-    if (live) {
-      emit("payment.signed", agent, { receipt: { ...r } });
-      settle(r, agent);
-    } else {
+    const done = () => {
+      r.status = "settled";
       r.txHash = hex(32);
       r.explorerUrl = `http://localhost:4030/tx/${r.txHash}`;
       r.settledAt = iso();
       agent.balance = fromCents(toCents(agent.balance) - toCents(r.amount));
-      bankNow(r, agent);
+      market.recordOrder(agent.name, fill, r.txHash);
+      if (live) postReceipt(r, agent);
+      else bankNow(r, agent);
       emit("payment.settled", agent, { receipt: { ...r } });
-    }
+    };
+    if (live) {
+      emit("payment.signed", agent, { receipt: { ...r } });
+      later(settleDelay, done);
+    } else done();
     return r;
   }
   function doSell(agent: AgentPublic, ticker: string, howMany: number | "all" = "all"): Receipt {
     const fill = market.sell(agent.name, ticker, howMany);
     const tx = hex(32);
+    market.recordOrder(agent.name, fill, tx);
+    // The MCP reports the payout as an earning (§20.1), in the brokerage's words.
     const r = makeReceipt(agent, {
       kind: "earn",
       status: "settled",
-      description: `Sold ${shareText(fill.shares)} ${fill.ticker} · ${signedMoney(fill.realizedPnl)} realized`,
+      description: `Sold ${Math.round(fill.shares * 1e6) / 1e6} ${fill.ticker}`,
       amount: fill.proceeds,
       counterparty: { ...BROKERAGE_PARTY },
       txHash: tx,
@@ -1079,8 +1088,8 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
   }
   function doCashout(agent: AgentPublic, amount: string | "all"): Receipt {
     const cents = amount === "all" ? toCents(agent.balance) : toCents(amount);
-    if (cents < 1) throw new HttpError(`${agent.name} has nothing to cash out.`, 409, "insufficient_balance");
-    if (cents > toCents(agent.balance)) throw new HttpError(`${agent.name} has ${money(agent.balance)}, not ${money(fromCents(cents))}.`, 409, "insufficient_balance");
+    if (cents < 1) throw new HttpError(`${agent.name} has ${money(agent.balance)}, so there is nothing to cash out.`, 400, "nothing_to_cash_out");
+    if (cents > toCents(agent.balance)) throw new HttpError(`${agent.name} has ${money(agent.balance)}, not ${money(fromCents(cents))}.`, 400, "insufficient_balance");
     const tx = hex(32);
     const r = makeReceipt(agent, {
       kind: "cashout",
@@ -1093,10 +1102,10 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
       settledAt: iso(),
     });
     agent.balance = fromCents(toCents(agent.balance) - cents);
-    // Owner money (§20.2): the bank mirrors it right away, like the owner's own top-up.
-    bankNow(r, agent);
-    const to = checking ? ` to Capital One Checking ••${checking.last4}` : " to the owner vault";
-    emit("cashout", agent, { receipt: { ...r }, message: `${agent.name} cashed out ${money(r.amount)}${to}.` });
+    // §20.2: a transfer on the agent's account and a deposit on checking, through the bank's queue.
+    if (back) bankNow(r, agent);
+    else postReceipt(r, agent);
+    emit("cashout", agent, { receipt: { ...r }, message: `Cashed out ${money(r.amount)} from ${agent.name}.`, data: { by: "owner", all: amount === "all", vault: OWNER_VAULT_ADDRESS, receiptId: r.id, balance: agent.balance } });
     return r;
   }
   /** A few replay days before the page opened: trades, a firing, a cash-out, a rule and two schedules. */
@@ -1110,17 +1119,18 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
     at(13.6);
     doBuy(r, "JPM", "50.00", false);
     at(13.2);
-    const watch = market.addSchedule({ agentName: r.name, kind: "price", condition: { ticker: "COF", op: ">=", price: 224 }, message: "COF hit your target. Check it, and take the profit if it held.", source: "agent" });
+    const watch = market.addSchedule({ agentName: r.name, kind: "price", condition: { ticker: "COF", op: ">=", price: 224 }, message: "Check COF. It hit your target; take the profit if it held.", source: "agent" });
     market.advance();
     at(12);
     doBuy(cd, "NVDA", "10.00", false);
     at(11.5);
-    market.addSchedule({ agentName: cd.name, kind: "every", everyMinutes: 60, nextRunAt: new Date(now() + 48 * 60_000).toISOString(), message: "Review the portfolio and tell me how it's doing.", source: "agent", needsChat: true });
+    const hourly = new Date(now() + 48 * 60_000).toISOString();
+    market.addSchedule({ agentName: cd.name, kind: "every", everyMinutes: 60, at: hourly, nextRunAt: hourly, message: "Review the portfolio and tell me how it's doing.", source: "agent", needsChat: true });
     market.advance();
     market.advance();
     at(9);
-    market.recordFiring(watch, iso(), "check COF");
-    watch.active = false;
+    market.recordFiring(watch, iso(), `COF is $${market.price("COF").toFixed(2)} (≥ $224) · paper trading, replay date ${market.clockDate()}.`);
+    market.end(watch, "fired");
     at(8.8);
     doSell(r, "COF");
     at(7);
@@ -1132,7 +1142,8 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
     at(4.5);
     market.setRules(r.name, { stopLossPct: "5" });
     at(3);
-    market.addSchedule({ agentName: r.name, kind: "at", at: new Date(now() + 2 * 3600_000).toISOString(), message: "Check JPM after the close and tell me how it did.", source: "agent" });
+    const later2h = new Date(now() + 2 * 3600_000).toISOString();
+    market.addSchedule({ agentName: r.name, kind: "at", at: later2h, nextRunAt: later2h, message: "Check JPM after the close and tell me how it did.", source: "agent" });
     market.advance();
     back = 0;
     market.setPaused(paused);
@@ -1140,18 +1151,24 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
   if (invest) seedInvesting(opts.paused ?? false);
 
   // The replay clock: one trading day per tick, then whatever is due fires and its agent reacts.
-  const dayMs = opts.marketDayMs ?? 10_000;
+  const dayMs = opts.marketDayMs ?? 8_000;
   let marketTimer: ReturnType<typeof setTimeout> | undefined;
   function marketTick() {
     market.advance();
     for (const f of market.due()) {
       const agent = byName(f.schedule.agentName);
-      if (!agent || agent.frozen) continue;
-      // The woken agent acts through its tools, a moment later (§20.3: firing never spends by itself).
+      const rule = f.schedule.rule;
+      if (!agent || agent.frozen || !rule) continue;
+      // The woken agent acts through its tools, a moment later (§20.3: a firing never spends by itself).
       later(2500, () => {
         try {
-          if ((f.schedule.rule === "stop_loss" || f.schedule.rule === "take_profit") && f.ticker) doSell(agent, f.ticker);
-          else if (f.schedule.rule === "cash_out") doCashout(agent, fromCents(Math.max(0, Math.min(toCents(agent.balance), Math.round(market.realized(agent.name) * 100)))));
+          const held = market.positions(agent.name);
+          if (rule === "stop_loss" || rule === "take_profit") for (const p of held) doSell(agent, p.ticker);
+          else {
+            let profit = 0;
+            for (const p of held.filter((x) => x.pct > 0)) profit += Number(doSell(agent, p.ticker).amount) * (p.pct / (100 + p.pct));
+            if (profit >= 0.01) doCashout(agent, fromCents(Math.min(toCents(agent.balance), Math.round(profit * 100))));
+          }
         } catch {
           /* the position is gone, or nothing to cash out: the agent says so in its chat */
         }
@@ -1167,7 +1184,6 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
       scheduleMarket();
     }, dayMs);
   }
-  const agentDirectory = () => new Map(agents.map((a) => [a.name, { id: a.id, address: a.address }]));
 
   function randomStep(): Step {
     const roll = rand();
@@ -1571,8 +1587,9 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
         if (amount !== "all" && !/^\d+(\.\d{1,2})?$/.test(String(amount))) throw new HttpError("`amount` must be a dollar string or \"all\"", 400, "invalid_request");
         return { ...doCashout(agent, amount) };
       }),
-    getPortfolios: () => delay(() => market.portfolios(agentDirectory())),
-    getScheduler: () => delay(() => market.scheduler()),
+    // The services' own shapes, read by the same normalizers as HTTP.
+    getPortfolios: () => delay(() => normPortfolios(market.portfoliosRaw((name) => byName(name)?.address))),
+    getScheduler: () => delay(() => normScheduler(market.schedulerRaw())),
     cancelSchedule: (scheduleId) => delay(() => market.cancel(scheduleId)),
     setRules: (agent, rules) =>
       delay(() => {

@@ -5,7 +5,7 @@
  * often it has, and Cancel. Done ones sit below, muted.
  */
 import { useState } from "react";
-import { scheduleNext, scheduleTitle, scheduleTrigger, sortSchedules, type Schedule, type SchedulerState } from "../invest";
+import { ruleWatches, scheduleNext, scheduleTitle, scheduleTrigger, sortSchedules, type Schedule, type SchedulerState } from "../invest";
 import { shortAgo } from "../lines";
 import type { Loadable } from "../useInvest";
 import { AgentAvatar } from "./Avatar";
@@ -21,17 +21,24 @@ interface Props {
   onRetry(): void;
 }
 
-/** What a rule watches, without its threshold (the title says that): "each position", "realized P/L". */
+/** A rule says what it watches (its title has the threshold); anything else says its trigger. */
 function trigger(s: Schedule, now: number): string {
-  if (s.rule === "cash_out") return "Realized P/L";
-  if (s.rule) return "Each position";
-  return scheduleTrigger(s, now);
+  return s.rule ? ruleWatches(s) : scheduleTrigger(s, now);
+}
+
+const ENDED: Record<string, string> = { cancelled: "Cancelled", expired: "Expired", replaced: "Replaced", missed: "Missed" };
+
+/** How a done row ended, in a word or two: "Fired 9m ago", "Cancelled", "Replaced". */
+function endedText(s: Schedule, now: number): string {
+  if (s.endedReason && ENDED[s.endedReason]) return ENDED[s.endedReason];
+  if (s.fired > 0 && s.lastFiredAt) return `Fired ${shortAgo(s.lastFiredAt, now)}`;
+  return s.endedReason === "fired" ? "Fired" : "Ended";
 }
 
 function ScheduleRow({ s, now, busy, onCancel }: { s: Schedule; now: number; busy: boolean; onCancel(): void }) {
   const next = scheduleNext(s, now);
   const done = !s.active;
-  const ended = s.fired > 0 && s.lastFiredAt ? `Fired ${shortAgo(s.lastFiredAt, now)}` : "Cancelled";
+  const ended = endedText(s, now);
   return (
     <li className={`sc-row${done ? " sc-done" : ""}`}>
       <AgentAvatar name={s.agentName} size="xs" />
@@ -43,7 +50,7 @@ function ScheduleRow({ s, now, busy, onCancel }: { s: Schedule; now: number; bus
           {s.agentName} · {s.source === "owner" ? "your rule" : "set by the agent"}
         </span>
       </span>
-      <span className="sc-when">
+      <span className="sc-when" title={s.lastObserved ? `Last check: ${s.lastObserved}` : undefined}>
         {trigger(s, now)}
         {!done && next && !s.needsChat && <span className="sc-next"> · {next}</span>}
         {done && <span className="sc-next"> · {ended}</span>}

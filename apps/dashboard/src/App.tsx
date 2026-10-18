@@ -9,7 +9,7 @@ import { BankSheet } from "./components/BankSheet";
 import { CashOutSheet } from "./components/CashOutSheet";
 import { PortfolioView } from "./components/PortfolioView";
 import { SchedulesView } from "./components/SchedulesView";
-import { rulesFor, tradeOf } from "./invest";
+import { ordersByTx, rulesFor, tradeOf, withAgentNames } from "./invest";
 import { dataOf, useInvest } from "./useInvest";
 import { Plus } from "./components/Icons";
 import { NewAgentSheet } from "./components/NewAgentSheet";
@@ -68,13 +68,17 @@ export default function App() {
   // §20: the brokerage and the scheduler, polled fast while something on screen shows them.
   const investOnScreen = route.view === "portfolio" || route.view === "schedules" || sheet?.sheet === "agent" || sheet?.sheet === "cash-out";
   const { invest, investActions } = useInvest(adapter, investOnScreen);
-  const portfolios = dataOf(invest.portfolios);
+  // The brokerage knows wallets; name them after the agents that hold them.
+  const rawPortfolios = dataOf(invest.portfolios);
+  const portfolios = useMemo(() => (rawPortfolios ? withAgentNames(rawPortfolios, state.agents) : undefined), [rawPortfolios, state.agents]);
+  const orders = useMemo(() => ordersByTx(portfolios), [portfolios]);
+  const portfoliosView = useMemo(() => (portfolios && invest.portfolios.state !== "loading" ? { ...invest.portfolios, data: portfolios } : invest.portfolios), [portfolios, invest.portfolios]);
   const scheduler = dataOf(invest.scheduler);
   const portfolioOf = (name: string) => portfolios?.portfolios.find((p) => p.agentName === name);
   // A trade or a cash-out just moved money: the positions changed too.
   const newest = state.events[0];
   const newestId = newest?.id;
-  const moved = !!newest && (newest.type === "cashout" || !!tradeOf(newest.receipt));
+  const moved = !!newest && (newest.type === "cashout" || !!tradeOf(newest.receipt, orders));
   useEffect(() => {
     if (moved) investActions.refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -93,7 +97,7 @@ export default function App() {
           <ServicesView state={state} actions={actions} selectedId={route.serviceId} now={now} onAddService={() => setSheet({ sheet: "add-service" })} />
         ) : route.view === "portfolio" ? (
           <PortfolioView
-            portfolios={invest.portfolios}
+            portfolios={portfoliosView}
             onRetry={investActions.refresh}
             onCashOut={(name) => setSheet({ sheet: "cash-out", agent: name })}
             onOpenAgent={(name) => setSheet({ sheet: "agent", agent: name })}
@@ -191,6 +195,7 @@ export default function App() {
                     retrying={retrying}
                     checkingLast4={state.totals.bank?.checkingLast4}
                     firings={scheduler?.firings}
+                    orders={orders}
                   />
                 ) : (
                   <ReceiptsList
@@ -201,6 +206,7 @@ export default function App() {
                     onRetryBank={(id) => void retryBank(id)}
                     retrying={retrying}
                     checkingLast4={state.totals.bank?.checkingLast4}
+                    orders={orders}
                   />
                 )}
               </section>
@@ -261,6 +267,7 @@ export default function App() {
           onCashOut={() => setSheet({ sheet: "cash-out", agent: sheet.agent })}
           invest={{
             portfolio: portfolioOf(sheet.agent),
+            orders,
             rules: scheduler ? rulesFor(scheduler.schedules, sheet.agent) : undefined,
             rulesUnavailable: invest.scheduler.state === "error" && !scheduler ? "The scheduler isn't answering, so rules can't be changed right now." : undefined,
             onSaveRules: (rules) => investActions.setRules(sheetAgent ?? { id: "", name: sheet.agent }, rules),

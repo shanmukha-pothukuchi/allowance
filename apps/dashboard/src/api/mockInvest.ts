@@ -1,27 +1,32 @@
 /**
  * The mock's paper brokerage and scheduler (§20), for `?mock=1`: a replay clock over made-up daily
- * closes (seeded, so screenshots agree), positions per agent with average cost and realized P/L,
- * schedules and owner rules with the scheduler's limits, and the autonomy switch. Money stays in
- * the mock wallet (mockAdapter.ts): this module only says what a trade or a firing is, and the
- * wallet side emits the receipts and events.
+ * closes (seeded, so screenshots agree), positions per wallet with average cost, realized P/L and
+ * filled orders, schedules and owner rules with the scheduler's semantics, and the autonomy switch.
+ * It answers in the services' own shapes (apps/brokerage `GET /brokerage/portfolios`, apps/scheduler
+ * owner `GET /schedules?all=1`), so the dashboard reads the mock through the same normalizers as HTTP.
+ * Money stays in the mock wallet (mockAdapter.ts): this module says what a trade or a firing is, and
+ * the wallet side emits the receipts and events.
  */
 import { fromCents, toCents } from "../format";
-import type { AgentPortfolio, AgentRules, Firing, Portfolios, RuleKind, Schedule, SchedulerState } from "../invest";
-import { scheduleLabel } from "../invest";
+import type { AgentRules } from "../invest";
 import { HttpError } from "./adapter";
 
 export const MOCK_REPLAY_FROM = "2024-11-01";
 
 /** The tickers the mock quotes, at levels like their real ones (the closes themselves are made up). */
 export const MOCK_TICKERS: { ticker: string; name: string; start: number; drift: number; vol: number }[] = [
-  { ticker: "COF", name: "Capital One", start: 212.4, drift: 0.0006, vol: 0.016 },
-  { ticker: "JPM", name: "JPMorgan Chase", start: 238.1, drift: 0.0005, vol: 0.012 },
+  { ticker: "COF", name: "Capital One Financial", start: 212.4, drift: 0.0006, vol: 0.016 },
+  { ticker: "JPM", name: "JPMorgan Chase", start: 238.1, drift: 0.0002, vol: 0.006 },
   { ticker: "NVDA", name: "NVIDIA", start: 135.4, drift: 0.0012, vol: 0.028 },
   { ticker: "AAPL", name: "Apple", start: 222.9, drift: 0.0004, vol: 0.013 },
   { ticker: "SPY", name: "SPDR S&P 500 ETF", start: 571.0, drift: 0.0004, vol: 0.008 },
 ];
-/** COF's first replay days are fixed so the story reads the same every time: up 6.2% by day 3, then a slide. */
-const COF_PATH = [1, 1.012, 1.034, 1.062, 1.056, 1.048, 1.041, 1.036, 1.03, 1.024, 1.016, 1.006, 0.999, 0.991, 0.985, 0.988];
+/**
+ * COF's first replay days are fixed so the story reads the same every time: up 6.2% by day 3 (the
+ * agent's price watch fires and it sells), bought back on day 5, then a slide that trips the owner's
+ * 5% stop loss on the whole portfolio about a minute after the page opens.
+ */
+const COF_PATH = [1, 1.012, 1.034, 1.062, 1.056, 1.048, 1.041, 1.036, 1.03, 1.022, 1.012, 1.0, 0.988, 0.972, 0.958, 0.947, 0.941, 0.944, 0.951];
 
 function rng(seed: number) {
   let a = seed >>> 0;
@@ -46,7 +51,42 @@ export function tradingDays(from: string, n: number): string[] {
   return out;
 }
 
+/** The scheduler's own schedule shape (apps/scheduler/src/types.ts), the parts the dashboard reads. */
+export interface RawSchedule {
+  id: string;
+  agentName: string;
+  kind: "at" | "every" | "price";
+  at?: string;
+  everyMinutes?: number;
+  condition?: { ticker: string; op: ">=" | "<="; price: number } | { portfolio: "unrealizedPct" | "unrealizedPnl"; op: ">=" | "<="; value: number; ticker?: string };
+  message: string;
+  source: "agent" | "owner";
+  rule?: "take_profit" | "stop_loss" | "cash_out_profits";
+  ruleValue?: number;
+  label: string;
+  createdAt: string;
+  nextRunAt?: string;
+  lastObserved?: string;
+  lastFiredAt?: string;
+  fired: number;
+  active: boolean;
+  endedAt?: string;
+  endedReason?: "fired" | "cancelled" | "expired" | "replaced" | "missed";
+  needsChat?: boolean;
+}
+export interface RawFiring {
+  id: string;
+  scheduleId: string;
+  agentName: string;
+  source: "agent" | "owner";
+  label: string;
+  at: string;
+  context: string;
+  rule?: RawSchedule["rule"];
+}
+
 type Lot = { shares: number; cost: number };
+type RawOrder = { orderId: string; side: "buy" | "sell"; ticker: string; shares: string; price: string; amount: string; costBasis?: string; realizedPnl?: string; clockDate: string; at: string; status: "filled"; txHash: string };
 
 export interface BuyFill {
   ticker: string;
@@ -64,44 +104,58 @@ export interface SellFill {
   realizedPnl: string;
   clockDate: string;
 }
-
-export interface MarketOptions {
-  seed?: number;
-  /** Trading day the clock starts on (index into the replay). */
-  startDay?: number;
-  now?: () => number;
+export interface Due {
+  schedule: RawSchedule;
+  firing: RawFiring;
 }
+type NewSchedule = Omit<RawSchedule, "id" | "createdAt" | "fired" | "active" | "label"> & Partial<Pick<RawSchedule, "label">>;
 
 export interface MockMarket {
   readonly replayFrom: string;
   clockDate(): string;
-  day(): number;
-  /** One trading day forward. */
   advance(): void;
   price(ticker: string): number;
   buy(agentName: string, ticker: string, amount: string): BuyFill;
   sell(agentName: string, ticker: string, shares?: number | "all"): SellFill;
-  portfolios(names?: Map<string, { id: string; address: string }>): Portfolios;
-  portfolioOf(agentName: string): AgentPortfolio;
-  realized(agentName: string): number;
-  scheduler(): SchedulerState;
-  addSchedule(s: Omit<Schedule, "id" | "createdAt" | "fired" | "active"> & Partial<Pick<Schedule, "fired" | "active" | "createdAt" | "lastFiredAt">>): Schedule;
+  /** Book the filled order once its payment settled (the brokerage does the same), by tx hash. */
+  recordOrder(agentName: string, fill: BuyFill | SellFill, txHash: string): void;
+  /** Its open positions and how each is doing (percent). */
+  positions(agentName: string): { ticker: string; pct: number }[];
+  /** `GET /brokerage/portfolios`, by wallet address. */
+  portfoliosRaw(addressOf: (agentName: string) => string | undefined): unknown;
+  /** `GET /schedules?all=1` (owner). */
+  schedulerRaw(): unknown;
+  addSchedule(s: NewSchedule): RawSchedule;
   cancel(id: string): void;
   setRules(agentName: string, rules: AgentRules): void;
   setPaused(paused: boolean): boolean;
   paused(): boolean;
-  /** The schedules that fire now (and their firings recorded). The caller makes the agent react. */
-  due(now?: number): { schedule: Schedule; firing: Firing; ticker?: string }[];
-  recordFiring(s: Schedule, at: string, label?: string): Firing;
+  /** What fires now (firings recorded). The caller makes the agent react. */
+  due(now?: number): Due[];
+  recordFiring(s: RawSchedule, at: string, context: string): RawFiring;
+  end(s: RawSchedule, reason: NonNullable<RawSchedule["endedReason"]>): void;
 }
 
-const RULE_MESSAGE: Record<RuleKind, (v: string) => string> = {
-  take_profit: (v) => `Owner rule (take profit at +${v}%): a position is up ${v}% or more. Sell it.`,
-  stop_loss: (v) => `Owner rule (stop loss at −${v}%): a position is down ${v}% or more from its average cost. Sell it.`,
-  cash_out: (v) => `Owner rule (cash out profits above $${v}): realized profits passed $${v}. Cash them out to the owner.`,
+const usd = (n: number) => `$${Math.abs(n).toFixed(2)}`;
+const signedCents = (dollars: number): string => {
+  const c = Math.round(dollars * 100);
+  return c < 0 ? `-${fromCents(-c)}` : fromCents(c);
+};
+const fmtShares = (n: number) => String(Math.round(n * 1e6) / 1e6);
+
+type RuleType = NonNullable<RawSchedule["rule"]>;
+const RULE_MESSAGE: Record<RuleType, (v: number) => string> = {
+  take_profit: (v) => `Your owner's take-profit rule: when your portfolio is up ${v}% or more, take the profit. It has reached that now. Sell your positions with sell_stock, then tell your owner briefly what you sold and the realized profit.`,
+  stop_loss: (v) => `Your owner's stop-loss rule: when your portfolio is down ${v}% or more, sell to limit the loss. It has reached that now. Sell your positions with sell_stock, then tell your owner briefly what you sold and the realized loss.`,
+  cash_out_profits: (v) => `Your owner's rule: cash out profits above $${v}. Your unrealized profit is above that now. Sell the positions that are up with sell_stock to realize the profit, then send the realized profit to your owner with cash_out.`,
+};
+const RULE_LABEL: Record<RuleType, (v: number) => string> = {
+  take_profit: () => "Rule: take profit",
+  stop_loss: () => "Rule: stop loss",
+  cash_out_profits: (v) => `Rule: cash out profits above $${v}`,
 };
 
-export function createMockMarket(opts: MarketOptions = {}): MockMarket {
+export function createMockMarket(opts: { seed?: number; now?: () => number } = {}): MockMarket {
   const now = opts.now ?? (() => Date.now());
   const rand = rng(opts.seed ?? 7);
   const days = tradingDays(MOCK_REPLAY_FROM, 260);
@@ -118,18 +172,20 @@ export function createMockMarket(opts: MarketOptions = {}): MockMarket {
     }
     closes.set(t.ticker, series.map((p) => Math.round(p * 100) / 100));
   }
-  let day = opts.startDay ?? 0;
+  let day = 0;
   let paused = false;
   let seq = 0;
   const lots = new Map<string, Map<string, Lot>>();
   const realized = new Map<string, number>();
-  const schedules: Schedule[] = [];
-  const firings: Firing[] = [];
-  const iso = () => new Date(now()).toISOString();
+  const orders = new Map<string, RawOrder[]>();
+  const schedules: RawSchedule[] = [];
+  const log: RawFiring[] = [];
+  const iso = (t = now()) => new Date(t).toISOString();
+  const nextId = (p: string) => `${p}_${(++seq).toString(36).padStart(4, "0")}`;
 
   const price = (ticker: string) => {
     const s = closes.get(ticker.toUpperCase());
-    if (!s) throw new HttpError(`No quotes for ${ticker}. The brokerage trades ${MOCK_TICKERS.map((t) => t.ticker).join(", ")}.`, 404, "unknown_ticker");
+    if (!s) throw new HttpError(`Quantcomm has no prices for ${ticker}.`, 404, "ticker_not_found");
     return s[Math.min(day, s.length - 1)];
   };
   const book = (agent: string) => {
@@ -137,52 +193,45 @@ export function createMockMarket(opts: MarketOptions = {}): MockMarket {
     if (!b) lots.set(agent, (b = new Map()));
     return b;
   };
+  const clockDate = () => days[Math.min(day, days.length - 1)];
 
-  function portfolioOf(agentName: string): AgentPortfolio {
-    const positions = [...book(agentName).entries()]
-      .filter(([, l]) => l.shares > 1e-9)
-      .map(([ticker, l]) => {
-        const p = price(ticker);
-        const value = l.shares * p;
-        const pnl = value - l.cost;
-        return {
-          ticker,
-          name: MOCK_TICKERS.find((t) => t.ticker === ticker)?.name,
-          shares: Math.round(l.shares * 1e6) / 1e6,
-          avgCost: fromCents(Math.round((l.cost / l.shares) * 100)),
-          price: fromCents(Math.round(p * 100)),
-          value: fromCents(Math.round(value * 100)),
-          unrealizedPnl: signed(pnl),
-          unrealizedPct: Math.round((pnl / l.cost) * 10000) / 100,
-        };
-      })
-      .sort((a, b) => Number(b.value) - Number(a.value));
-    const invested = positions.reduce((s, p) => s + p.shares * Number(p.avgCost), 0);
-    const value = positions.reduce((s, p) => s + Number(p.value), 0);
-    return {
-      agentName,
-      positions,
-      totals: { invested: fromCents(Math.round(invested * 100)), value: fromCents(Math.round(value * 100)), unrealizedPnl: signed(value - invested), realizedPnl: signed(realized.get(agentName) ?? 0) },
-    };
+  function totals(agent: string) {
+    let invested = 0;
+    let value = 0;
+    for (const [t, l] of book(agent)) {
+      invested += l.cost;
+      value += l.shares * price(t);
+    }
+    return { invested, value, pnl: value - invested, pct: invested > 0 ? ((value - invested) / invested) * 100 : 0 };
   }
 
-  function ruleValueOf(s: Schedule): number {
-    return Number(s.ruleValue ?? 0);
-  }
-
-  function recordFiring(s: Schedule, at: string, label?: string): Firing {
+  function recordFiring(s: RawSchedule, at: string, context: string): RawFiring {
     s.fired += 1;
     s.lastFiredAt = at;
-    const f: Firing = { id: `fire_${(++seq).toString(36)}`, scheduleId: s.id, agentName: s.agentName, source: s.source, at, label: label ?? scheduleLabel(s), ...(s.rule ? { rule: s.rule } : {}) };
-    firings.unshift(f);
-    if (firings.length > 50) firings.length = 50;
+    const f: RawFiring = { id: nextId("fire"), scheduleId: s.id, agentName: s.agentName, source: s.source, label: s.label, at, context, ...(s.rule ? { rule: s.rule } : {}) };
+    log.push(f);
+    if (log.length > 100) log.shift();
     return f;
   }
+  function end(s: RawSchedule, reason: NonNullable<RawSchedule["endedReason"]>) {
+    s.active = false;
+    s.endedReason = reason;
+    s.endedAt = iso();
+    s.nextRunAt = undefined;
+  }
+  function addSchedule(s: NewSchedule): RawSchedule {
+    const active = schedules.filter((x) => x.agentName === s.agentName && x.active && x.source === s.source).length;
+    if (active >= 10) throw new HttpError(`${s.agentName} already has 10 active schedules, the most an agent can have.`, 400, "limit_active");
+    if (s.kind === "every" && (s.everyMinutes ?? 0) < 1) throw new HttpError("A repeating schedule runs at most once a minute.", 400, "limit_every");
+    const label = s.label ?? (s.rule ? RULE_LABEL[s.rule](s.ruleValue ?? 0) : s.kind === "price" ? "Price watch you set" : "Reminder you set");
+    const full: RawSchedule = { ...s, label, id: nextId("sch"), createdAt: iso(), fired: 0, active: true };
+    schedules.push(full);
+    return full;
+  }
 
-  const market: MockMarket = {
+  return {
     replayFrom: MOCK_REPLAY_FROM,
-    clockDate: () => days[Math.min(day, days.length - 1)],
-    day: () => day,
+    clockDate,
     advance: () => {
       if (day < days.length - 1) day++;
     },
@@ -191,71 +240,111 @@ export function createMockMarket(opts: MarketOptions = {}): MockMarket {
       const t = ticker.toUpperCase();
       const p = price(t);
       const cents = toCents(amount);
-      if (cents < 100) throw new HttpError("The smallest order is $1.00.", 400, "invalid_request");
-      const sh = cents / 100 / p;
+      if (cents < 100) throw new HttpError("amount must be dollars and cents between $1.00 and $1,000.00, like 100.00", 400, "invalid_amount");
+      const sh = Math.floor((cents / 100 / p) * 1e6) / 1e6;
       const l = book(agentName).get(t) ?? { shares: 0, cost: 0 };
       book(agentName).set(t, { shares: l.shares + sh, cost: l.cost + cents / 100 });
-      return { ticker: t, shares: sh, price: p, amount: fromCents(cents), clockDate: market.clockDate() };
+      return { ticker: t, shares: sh, price: p, amount: fromCents(cents), clockDate: clockDate() };
     },
     sell(agentName, ticker, shares = "all") {
       const t = ticker.toUpperCase();
       const l = book(agentName).get(t);
-      if (!l || l.shares <= 1e-9) throw new HttpError(`${agentName} holds no ${t}.`, 404, "no_position");
+      if (!l || l.shares <= 1e-9) throw new HttpError(`You hold no ${t}.`, 404, "no_position");
       const sh = shares === "all" ? l.shares : Math.min(shares, l.shares);
       const p = price(t);
       const basis = (l.cost / l.shares) * sh;
-      const proceeds = Math.round(sh * p * 100) / 100;
+      const proceeds = Math.floor(sh * p * 100) / 100;
       const pnl = proceeds - basis;
       l.shares -= sh;
       l.cost -= basis;
       if (l.shares <= 1e-9) book(agentName).delete(t);
       realized.set(agentName, (realized.get(agentName) ?? 0) + pnl);
-      return { ticker: t, shares: sh, price: p, proceeds: fromCents(Math.round(proceeds * 100)), costBasis: fromCents(Math.round(basis * 100)), realizedPnl: signed(pnl), clockDate: market.clockDate() };
+      return { ticker: t, shares: sh, price: p, proceeds: fromCents(Math.round(proceeds * 100)), costBasis: fromCents(Math.round(basis * 100)), realizedPnl: signedCents(pnl), clockDate: clockDate() };
     },
-    portfolios(names) {
-      const agents = new Set([...lots.keys(), ...realized.keys()]);
-      return {
-        brokerage: { mode: "replay", clockDate: market.clockDate(), replayFrom: MOCK_REPLAY_FROM },
-        portfolios: [...agents]
-          .map((n) => {
-            const p = portfolioOf(n);
-            const who = names?.get(n);
-            return who ? { ...p, agentId: who.id, address: who.address } : p;
-          })
-          .filter((p) => p.positions.length > 0 || Math.abs(Number(p.totals.realizedPnl)) >= 0.005),
-      };
+    recordOrder(agentName, fill, txHash) {
+      const list = orders.get(agentName) ?? [];
+      const sell = "proceeds" in fill;
+      list.unshift({
+        orderId: nextId("ord"),
+        side: sell ? "sell" : "buy",
+        ticker: fill.ticker,
+        shares: fmtShares(fill.shares),
+        price: fill.price.toFixed(2),
+        amount: sell ? fill.proceeds : fill.amount,
+        ...(sell ? { costBasis: fill.costBasis, realizedPnl: fill.realizedPnl } : {}),
+        clockDate: fill.clockDate,
+        at: iso(),
+        status: "filled",
+        txHash,
+      });
+      orders.set(agentName, list.slice(0, 10));
     },
-    portfolioOf,
-    realized: (n) => realized.get(n) ?? 0,
-    scheduler: () => ({ paused, schedules: schedules.map((s) => ({ ...s, ...(s.condition ? { condition: { ...s.condition } } : {}) })), firings: firings.map((f) => ({ ...f })) }),
-    addSchedule(s) {
-      const active = schedules.filter((x) => x.agentName === s.agentName && x.active).length;
-      if (active >= 10) throw new HttpError(`${s.agentName} already has 10 active schedules, the most an agent can have.`, 400, "too_many_schedules");
-      if (s.kind === "every" && (s.everyMinutes ?? 0) < 1) throw new HttpError("A repeating schedule runs at most once a minute.", 400, "invalid_request");
-      const full: Schedule = { fired: 0, active: true, createdAt: iso(), ...s, id: `sch_${(++seq).toString(36).padStart(4, "0")}` };
-      schedules.push(full);
-      return full;
+    positions: (agentName) => [...book(agentName).entries()].map(([t, l]) => ({ ticker: t, pct: ((l.shares * price(t) - l.cost) / l.cost) * 100 })),
+    portfoliosRaw(addressOf) {
+      const names = new Set([...lots.keys(), ...realized.keys()]);
+      const portfolios = [...names].map((agentName) => {
+        const positions = [...book(agentName).entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([ticker, l]) => {
+            const p = price(ticker);
+            const value = l.shares * p;
+            return {
+              ticker,
+              name: MOCK_TICKERS.find((x) => x.ticker === ticker)?.name ?? ticker,
+              shares: fmtShares(l.shares),
+              avgCost: (l.cost / l.shares).toFixed(2),
+              price: p.toFixed(2),
+              priceDate: clockDate(),
+              value: value.toFixed(2),
+              costBasis: l.cost.toFixed(2),
+              unrealizedPnl: signedCents(value - l.cost),
+              unrealizedPct: Math.round(((value - l.cost) / l.cost) * 10000) / 100,
+            };
+          });
+        const t = totals(agentName);
+        const r = realized.get(agentName) ?? 0;
+        return {
+          address: addressOf(agentName) ?? "0x0000000000000000000000000000000000000000",
+          mode: "replay",
+          clockDate: clockDate(),
+          startDate: MOCK_REPLAY_FROM,
+          cash: null,
+          positions,
+          totals: { invested: t.invested.toFixed(2), value: t.value.toFixed(2), unrealizedPnl: signedCents(t.pnl), unrealizedPct: Math.round(t.pct * 100) / 100, realizedPnl: signedCents(r), totalPnl: signedCents(t.pnl + r) },
+          orders: orders.get(agentName) ?? [],
+        };
+      });
+      return { mode: "replay", clockDate: clockDate(), startDate: MOCK_REPLAY_FROM, label: `Paper trading · replay of real closes from ${MOCK_REPLAY_FROM}`, portfolios };
     },
+    schedulerRaw: () => ({
+      schedules: [...schedules].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((s) => ({ ...s, ...(s.condition ? { condition: { ...s.condition } } : {}) })),
+      paused,
+      firings: [...log].reverse().map((f) => ({ ...f })),
+    }),
+    addSchedule,
     cancel(id) {
       const s = schedules.find((x) => x.id === id);
-      if (!s) throw new HttpError("No such schedule.", 404, "schedule_not_found");
-      s.active = false;
-      s.nextRunAt = undefined;
+      if (!s) throw new HttpError(`No schedule ${id}.`, 404, "schedule_not_found");
+      if (!s.active) throw new HttpError(`${id} already ended (${s.endedReason ?? "ended"}).`, 409, "schedule_ended");
+      end(s, "cancelled");
     },
     setRules(agentName, rules) {
-      const want: [RuleKind, string | undefined][] = [
+      const want: [RuleType, string | undefined][] = [
         ["take_profit", rules.takeProfitPct],
         ["stop_loss", rules.stopLossPct],
-        ["cash_out", rules.cashOutAbove ? String(Number(rules.cashOutAbove)) : undefined],
+        ["cash_out_profits", rules.cashOutAbove],
       ];
-      for (const [rule, value] of want) {
+      for (const [rule, raw] of want) {
+        const value = raw === undefined || raw === "" ? undefined : Number(raw);
         const cur = schedules.find((x) => x.agentName === agentName && x.source === "owner" && x.rule === rule && x.active);
-        if (cur && (!value || Number(cur.ruleValue) !== Number(value))) cur.active = false;
-        if (!value || (cur && Number(cur.ruleValue) === Number(value))) continue;
-        market.addSchedule({
+        if (cur && value !== undefined && cur.ruleValue === value) continue;
+        if (cur) end(cur, value === undefined ? "cancelled" : "replaced");
+        if (value === undefined) continue;
+        addSchedule({
           agentName,
           kind: "price",
-          condition: rule === "cash_out" ? { portfolio: "realizedPnl", op: ">=", value: Number(value) } : { portfolio: "unrealizedPct", op: rule === "stop_loss" ? "<=" : ">=", value: rule === "stop_loss" ? -Number(value) : Number(value) },
+          everyMinutes: 10,
+          condition: rule === "cash_out_profits" ? { portfolio: "unrealizedPnl", op: ">=", value } : { portfolio: "unrealizedPct", op: rule === "stop_loss" ? "<=" : ">=", value: rule === "stop_loss" ? -value : value },
           message: RULE_MESSAGE[rule](value),
           source: "owner",
           rule,
@@ -267,46 +356,43 @@ export function createMockMarket(opts: MarketOptions = {}): MockMarket {
     paused: () => paused,
     due(at = now()) {
       if (paused) return [];
-      const out: { schedule: Schedule; firing: Firing; ticker?: string }[] = [];
-      const stamp = new Date(at).toISOString();
+      const out: Due[] = [];
+      const stamp = iso(at);
+      const replay = `paper trading, replay date ${clockDate()}`;
       for (const s of schedules) {
         if (!s.active || s.needsChat) continue;
-        let fire = false;
-        let ticker: string | undefined;
-        let label: string | undefined;
+        // A repeating price watch or rule waits out its period after it fired.
+        if (s.kind === "price" && s.nextRunAt && Date.parse(s.nextRunAt) > at) continue;
+        let context = "";
         const c = s.condition;
-        if (s.rule) {
-          const p = portfolioOf(s.agentName);
-          const v = ruleValueOf(s);
-          if (s.rule === "cash_out") fire = (realized.get(s.agentName) ?? 0) >= v;
-          else {
-            const hit = p.positions.find((x) => (s.rule === "stop_loss" ? x.unrealizedPct <= -v : x.unrealizedPct >= v));
-            if (hit) {
-              fire = true;
-              ticker = hit.ticker;
-              label = `${s.rule === "stop_loss" ? "stop loss" : "take profit"} on ${hit.ticker}`;
-            }
-          }
-        } else if (c && "ticker" in c && "price" in c) {
+        if (c && "portfolio" in c) {
+          const t = totals(s.agentName);
+          if (t.invested <= 0) continue;
+          const pnl = c.portfolio === "unrealizedPnl";
+          const v = pnl ? t.pnl : t.pct;
+          s.lastObserved = pnl ? `unrealized ${t.pnl < 0 ? "−" : "+"}${usd(t.pnl)} · ${clockDate()}` : `portfolio ${t.pct < 0 ? "−" : "+"}${Math.abs(t.pct).toFixed(1)}% · ${clockDate()}`;
+          if (!(c.op === ">=" ? v >= c.value : v <= c.value)) continue;
+          context = pnl
+            ? `Your unrealized profit is ${usd(t.pnl)} (≥ ${usd(c.value)}) · ${replay}.`
+            : `Your portfolio is ${t.pct < 0 ? "down" : "up"} ${Math.abs(t.pct).toFixed(1)}% (${c.op === "<=" ? "≤" : "≥"} ${c.value > 0 ? "+" : "−"}${Math.abs(c.value)}%) · ${replay}.`;
+        } else if (c && "price" in c) {
           const p = price(c.ticker);
-          fire = c.op === ">=" ? p >= c.price : p <= c.price;
-          ticker = c.ticker;
-        } else if (s.kind === "every" && s.nextRunAt) fire = Date.parse(s.nextRunAt) <= at;
-        else if (s.kind === "at" && s.at) fire = Date.parse(s.at) <= at;
-        if (!fire) continue;
-        const firing = recordFiring(s, stamp, label);
-        if (s.kind === "every" && s.everyMinutes) s.nextRunAt = new Date(at + s.everyMinutes * 60_000).toISOString();
-        else s.active = false;
-        out.push({ schedule: s, firing, ...(ticker ? { ticker } : {}) });
+          s.lastObserved = `${c.ticker} $${p.toFixed(2)} · ${clockDate()}`;
+          if (!(c.op === ">=" ? p >= c.price : p <= c.price)) continue;
+          context = `${c.ticker} is $${p.toFixed(2)} (${c.op === ">=" ? "≥" : "≤"} $${c.price}) · ${replay}.`;
+        } else {
+          const when = s.kind === "at" ? s.at : s.nextRunAt;
+          if (!when || Date.parse(when) > at) continue;
+          context = `${replay}.`;
+        }
+        const firing = recordFiring(s, stamp, context);
+        if (s.everyMinutes) s.nextRunAt = iso(at + s.everyMinutes * 60_000);
+        else end(s, "fired");
+        out.push({ schedule: s, firing });
       }
       return out;
     },
     recordFiring,
+    end,
   };
-  return market;
-}
-
-function signed(dollars: number): string {
-  const c = Math.round(dollars * 100);
-  return c < 0 ? `-${fromCents(-c)}` : fromCents(c);
 }

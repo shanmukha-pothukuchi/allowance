@@ -17,7 +17,7 @@ import { Chevron, Plus, Snowflake } from "./Icons";
 import { ReceiptRow } from "./ReceiptsList";
 import { Facts, Field, SheetShell } from "./SheetParts";
 import { RulesField } from "./RulesField";
-import { pnlTone, signedMoney, sumPortfolios, type AgentPortfolio, type AgentRules } from "../invest";
+import { pnlTone, signedMoney, sumPortfolios, type AgentPortfolio, type AgentRules, type Order } from "../invest";
 import { CashOut } from "./Icons";
 
 interface Props {
@@ -43,6 +43,8 @@ interface Props {
   /** §20: its paper positions, and its owner rules on the scheduler. */
   invest?: {
     portfolio?: AgentPortfolio;
+    /** Orders by tx hash, so its trade receipts name shares and P/L. */
+    orders?: Map<string, Order>;
     /** undefined while the scheduler hasn't answered. */
     rules?: AgentRules;
     rulesUnavailable?: string;
@@ -189,6 +191,7 @@ export function AgentSheet({ adapter, agent, agentName, account, bankLinked, rec
                   hideAgent
                   bankText
                   checkingLast4={checkingLast4}
+                  orders={invest?.orders}
                   onRetry={onRetry && (() => onRetry(r.id))}
                   busy={retrying.includes(r.id) || retrying.includes("*")}
                 />

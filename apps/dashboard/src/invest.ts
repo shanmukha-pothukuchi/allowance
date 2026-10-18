@@ -28,12 +28,27 @@ export interface PortfolioTotals {
   realizedPnl: string;
 }
 
+/** A filled order (§20.1 `orders`): matched to its wallet receipt by tx hash, it names shares and P/L. */
+export interface Order {
+  id: string;
+  side: "buy" | "sell";
+  ticker: string;
+  shares: number;
+  price: string;
+  amount: string;
+  realizedPnl?: string;
+  clockDate?: string;
+  txHash?: string;
+}
+
 export interface AgentPortfolio {
   agentId?: string;
+  /** The agent's name. The brokerage knows wallets only, so the dashboard fills it from the address. */
   agentName: string;
   address?: string;
   positions: Position[];
   totals: PortfolioTotals;
+  orders?: Order[];
 }
 
 export interface BrokerageInfo {
@@ -54,7 +69,7 @@ export interface Portfolios {
 export type ScheduleKind = "at" | "every" | "price";
 export type PriceCondition = { ticker: string; op: ">=" | "<="; price: number };
 export type MoveCondition = { ticker: string; movePct: number };
-export type PortfolioCondition = { portfolio: string; op: ">=" | "<="; value: number };
+export type PortfolioCondition = { portfolio: string; op: ">=" | "<="; value: number; ticker?: string };
 export type ScheduleCondition = PriceCondition | MoveCondition | PortfolioCondition;
 export type RuleKind = "take_profit" | "stop_loss" | "cash_out";
 
@@ -73,9 +88,17 @@ export interface Schedule {
   fired: number;
   expiresAt?: string;
   active: boolean;
-  /** An owner rule (§20.3): which one, and its number (a percent, or dollars for cash out). */
+  /** An owner rule (§20.3): which one, its number (a percent, or dollars for cash out), and its ticker if it watches one position. */
   rule?: RuleKind;
   ruleValue?: string;
+  ruleTicker?: string;
+  /** The scheduler's short line: "Reminder you set", "Price watch you set", "Rule: stop loss on COF". */
+  label?: string;
+  /** Ended: why ("fired", "cancelled", "expired", "replaced", "missed") and when. */
+  endedReason?: string;
+  endedAt?: string;
+  /** "COF $205.10 · 2025-11-01": what the last check saw. */
+  lastObserved?: string;
   /** Its agent has no chat server to wake (Claude Desktop): listed, but it can't fire. */
   needsChat?: boolean;
 }
@@ -90,6 +113,8 @@ export interface Firing {
   /** What it was about, in a few words: "stop loss on COF", "check COF". */
   label: string;
   rule?: RuleKind;
+  /** The facts it fired on: "COF is $212.40 (≥ $210) · replay date 2025-11-03." */
+  context?: string;
 }
 
 export interface SchedulerState {
@@ -169,24 +194,70 @@ function totalsOf(raw: unknown, positions: Position[]): PortfolioTotals {
 }
 
 /** One agent's portfolio, from `GET /brokerage/portfolio` or one entry of the owner's list. */
+function normOrder(raw: unknown): Order | null {
+  const o = obj(raw);
+  if (!o) return null;
+  const ticker = str(o.ticker).trim().toUpperCase();
+  const side = o.side === "sell" ? "sell" : o.side === "buy" ? "buy" : null;
+  if (!ticker || !side || (o.status !== undefined && o.status !== "filled")) return null;
+  const tx = str(o.txHash ?? o.payoutTx);
+  return {
+    id: str(o.id ?? o.orderId),
+    side,
+    ticker,
+    shares: num(o.shares) ?? 0,
+    price: dollars(o.price),
+    amount: dollars(o.amount ?? o.proceeds),
+    ...(o.realizedPnl !== undefined ? { realizedPnl: dollars(o.realizedPnl) } : {}),
+    ...(ymd(o.clockDate) ? { clockDate: ymd(o.clockDate) } : {}),
+    ...(tx ? { txHash: tx } : {}),
+  };
+}
+
 export function normPortfolio(raw: unknown, fallbackName = ""): AgentPortfolio | null {
   const p = obj(raw);
   if (!p) return null;
   const agent = obj(p.agent);
+  const address = str(p.address ?? p.wallet ?? agent?.address);
   const agentName = str(p.agentName ?? p.name ?? agent?.name).trim() || fallbackName;
-  if (!agentName) return null;
+  if (!agentName && !address) return null;
   const positions = arr(p.positions)
     .map(normPosition)
     .filter((x): x is Position => !!x && x.shares > 0);
   const agentId = str(p.agentId ?? agent?.id);
-  const address = str(p.address ?? p.wallet ?? agent?.address);
+  const orders = arr(p.orders).map(normOrder).filter((x): x is Order => !!x);
   return {
     ...(agentId ? { agentId } : {}),
     agentName,
     ...(address ? { address } : {}),
     positions,
     totals: totalsOf(p.totals, positions),
+    ...(orders.length ? { orders } : {}),
   };
+}
+
+/**
+ * The brokerage keys portfolios by wallet address (§20.1); the dashboard knows which agent has
+ * which address. Fills in names and ids; a wallet no agent has keeps its short address.
+ */
+export function withAgentNames(p: Portfolios, agents: { id: string; name: string; address: string }[]): Portfolios {
+  const byAddr = new Map(agents.map((a) => [a.address.toLowerCase(), a]));
+  const byName = new Map(agents.map((a) => [a.name, a]));
+  return {
+    ...p,
+    portfolios: p.portfolios.map((x) => {
+      const a = (x.address && byAddr.get(x.address.toLowerCase())) || byName.get(x.agentName);
+      if (a) return { ...x, agentName: a.name, agentId: a.id, address: x.address ?? a.address };
+      return x.agentName ? x : { ...x, agentName: x.address ? `${x.address.slice(0, 6)}…${x.address.slice(-4)}` : "unknown" };
+    }),
+  };
+}
+
+/** Orders by tx hash (lowercase), across every portfolio. */
+export function ordersByTx(p: Portfolios | undefined): Map<string, Order> {
+  const m = new Map<string, Order>();
+  for (const x of p?.portfolios ?? []) for (const o of x.orders ?? []) if (o.txHash) m.set(o.txHash.toLowerCase(), o);
+  return m;
 }
 
 /**
@@ -236,7 +307,8 @@ function conditionOf(raw: unknown): ScheduleCondition | undefined {
   const op = (c.op === "<=" || c.op === "below" ? "<=" : ">=") as ">=" | "<=";
   if (str(c.portfolio)) {
     const value = num(c.value);
-    return value === null ? undefined : { portfolio: str(c.portfolio), op, value };
+    const t = str(c.ticker).trim().toUpperCase();
+    return value === null ? undefined : { portfolio: str(c.portfolio), op, value, ...(t ? { ticker: t } : {}) };
   }
   const ticker = str(c.ticker).trim().toUpperCase();
   if (!ticker) return undefined;
@@ -280,6 +352,11 @@ export function normSchedule(raw: unknown): Schedule | null {
     active: s.active !== false,
     ...(rule ? { rule } : {}),
     ...(ruleValue ? { ruleValue } : {}),
+    ...(str(s.ruleTicker) ? { ruleTicker: str(s.ruleTicker).toUpperCase() } : {}),
+    ...(str(s.label) ? { label: str(s.label) } : {}),
+    ...(str(s.endedReason) ? { endedReason: str(s.endedReason) } : {}),
+    ...(str(s.endedAt) ? { endedAt: str(s.endedAt) } : {}),
+    ...(str(s.lastObserved) ? { lastObserved: str(s.lastObserved) } : {}),
     ...(s.needsChat === true || s.reachable === false ? { needsChat: true } : {}),
   };
 }
@@ -292,15 +369,20 @@ function normFiring(raw: unknown, byId: Map<string, Schedule>): Firing | null {
   const at = str(f.at ?? f.firedAt);
   if (!agentName || !at) return null;
   const source = f.source === "owner" || sched?.source === "owner" ? "owner" : "agent";
-  const rule = sched?.rule ?? ruleOf(f, str(f.label ?? f.message));
+  const rule = sched?.rule ?? ruleOf({ ...f, source }, str(f.label ?? f.message));
+  const said = str(f.label).trim();
+  // A rule's label says it ("Rule: stop loss on COF"); a reminder's ("Reminder you set") doesn't, its message does.
+  const label = rule && said ? said.replace(/^Rule:\s*/i, "") : sched ? scheduleLabel(sched) : said && !/you set$/i.test(said) ? said : firstSentence(str(f.message ?? f.text ?? f.context)) || said;
+  const context = str(f.context).trim();
   return {
     id: str(f.id) || `${str(f.scheduleId)}:${at}`,
     ...(str(f.scheduleId) ? { scheduleId: str(f.scheduleId) } : {}),
     agentName,
     source,
     at,
-    label: str(f.label).trim() || (sched ? scheduleLabel(sched) : firstLine(str(f.message ?? f.text))),
+    label,
     ...(rule ? { rule } : {}),
+    ...(context ? { context } : {}),
   };
 }
 
@@ -418,9 +500,9 @@ export function scheduleTrigger(s: Pick<Schedule, "kind" | "condition" | "everyM
   if (c && "ticker" in c && "movePct" in c) return `${c.ticker} moves ${Math.abs(c.movePct)}%`;
   if (c && "portfolio" in c) {
     const v = c.value;
-    const what = /realized/i.test(c.portfolio) && !/unrealized/i.test(c.portfolio) ? "Realized P/L" : "Portfolio";
-    if (what === "Realized P/L") return `${what} ${opSign(c.op)} ${money(v)}`;
-    return `${what} ${v >= 0 ? "up" : "down"} ${Math.abs(v)}%`;
+    const subject = c.ticker ? `${c.ticker} position` : "Portfolio";
+    if (/pnl/i.test(c.portfolio)) return `${c.ticker ? `${c.ticker} unrealized P/L` : "Unrealized profit"} ${opSign(c.op)} ${money(v)}`;
+    return `${subject} ${v >= 0 ? "up" : "down"} ${Math.abs(v)}%`;
   }
   if (s.kind === "every" && s.everyMinutes) return `Every ${everyText(s.everyMinutes)}`;
   if (s.kind === "at" && s.at) return whenText(s.at, now);
@@ -458,7 +540,7 @@ export function whenText(iso: string, now = Date.now()): string {
 export function scheduleNext(s: Pick<Schedule, "kind" | "nextRunAt" | "everyMinutes" | "active" | "needsChat" | "condition">, now = Date.now()): string {
   if (!s.active) return "";
   if (s.needsChat) return "Needs the chat";
-  if (s.kind === "price" || s.condition) return s.everyMinutes ? "repeats" : "fires once";
+  if (s.kind === "price" || s.condition) return s.everyMinutes ? `at most every ${everyText(s.everyMinutes)}` : "fires once";
   if (s.kind === "every") return s.nextRunAt ? `next ${whenText(s.nextRunAt, now)}` : "";
   return "";
 }
@@ -466,11 +548,12 @@ export function scheduleNext(s: Pick<Schedule, "kind" | "nextRunAt" | "everyMinu
 const RULE_LABEL: Record<RuleKind, string> = { take_profit: "Take profit", stop_loss: "Stop loss", cash_out: "Cash out profits" };
 
 /** A rule's name and threshold: "Stop loss at −5%", "Take profit at +10%", "Cash out profits above $25". */
-export function ruleTitle(rule: RuleKind, value?: string): string {
+export function ruleTitle(rule: RuleKind, value?: string, ticker?: string): string {
   const v = num(value ?? "");
-  if (v === null) return RULE_LABEL[rule];
+  const on = ticker && rule !== "cash_out" ? ` on ${ticker}` : "";
+  if (v === null) return `${RULE_LABEL[rule]}${on}`;
   if (rule === "cash_out") return `${RULE_LABEL[rule]} above ${money(v).replace(/\.00$/, "")}`;
-  return `${RULE_LABEL[rule]} at ${rule === "stop_loss" ? "−" : "+"}${Math.abs(v)}%`;
+  return `${RULE_LABEL[rule]}${on} at ${rule === "stop_loss" ? "−" : "+"}${Math.abs(v)}%`;
 }
 
 /** A rule's threshold, from its own field or its condition. */
@@ -483,26 +566,35 @@ function ruleNumber(s: Pick<Schedule, "rule" | "ruleValue" | "condition">): stri
 }
 
 /** The row's title: an owner rule by name, else the agent's own words. */
-export function scheduleTitle(s: Pick<Schedule, "rule" | "ruleValue" | "condition" | "message">): string {
-  if (s.rule) return ruleTitle(s.rule, ruleNumber(s));
+export function scheduleTitle(s: Pick<Schedule, "rule" | "ruleValue" | "ruleTicker" | "condition" | "message">): string {
+  if (s.rule) return ruleTitle(s.rule, ruleNumber(s), s.ruleTicker);
   return firstLine(s.message) || "Reminder";
 }
 
+/** What a rule watches, without its threshold (the title says that): "Whole portfolio", "COF position", "Unrealized profit". */
+export function ruleWatches(s: Pick<Schedule, "rule" | "ruleTicker" | "condition">): string {
+  const c = s.condition;
+  const ticker = s.ruleTicker ?? (c && "ticker" in c ? c.ticker : undefined);
+  if (s.rule === "cash_out") return "Unrealized profit";
+  return ticker ? `${ticker} position` : "Whole portfolio";
+}
+
 /** A few words for a firing line: "stop loss on COF", "check COF". */
-export function scheduleLabel(s: Pick<Schedule, "rule" | "condition" | "message">): string {
+export function scheduleLabel(s: Pick<Schedule, "rule" | "ruleTicker" | "condition" | "message">): string {
   if (s.rule) {
     const c = s.condition;
-    const on = c && "ticker" in c ? ` on ${c.ticker}` : "";
-    return `${RULE_LABEL[s.rule].toLowerCase()}${on}`;
+    const t = s.ruleTicker ?? (c && "ticker" in c ? c.ticker : undefined);
+    return `${RULE_LABEL[s.rule].toLowerCase()}${t && s.rule !== "cash_out" ? ` on ${t}` : ""}`;
   }
-  return firstLine(s.message).replace(/[.!]$/, "") || "a reminder";
+  return firstSentence(s.message) || "a reminder";
 }
 
 /** The owner's rules for one agent, read back from its active owner schedules. */
 export function rulesFor(schedules: Schedule[], agentName: string): AgentRules {
   const out: AgentRules = {};
   for (const s of schedules) {
-    if (s.agentName !== agentName || s.source !== "owner" || !s.active || !s.rule) continue;
+    // The form holds the portfolio-wide rules; a rule on one ticker is listed in Schedules only.
+    if (s.agentName !== agentName || s.source !== "owner" || !s.active || !s.rule || s.ruleTicker) continue;
     const v = ruleNumber(s);
     if (v === undefined) continue;
     if (s.rule === "take_profit") out.takeProfitPct = v;
@@ -556,6 +648,12 @@ function firstLine(s: string): string {
   return (s ?? "").split("\n")[0].trim();
 }
 
+/** "Check COF. It hit your target…" → "check COF" (a line's tail, so lowercase unless it starts with a name like COF). */
+function firstSentence(s: string): string {
+  const one = firstLine(s).split(/(?<=[a-z0-9%)])[.!?](?:\s|$)/i)[0].replace(/[.!?]$/, "").trim();
+  return /^[A-Z][a-z]/.test(one) ? one[0].toLowerCase() + one.slice(1) : one;
+}
+
 /** "**Rule** woke **researcher**: stop loss on COF", "**Reminder** woke **researcher**: check COF". */
 export function firingLine(f: Pick<Firing, "source" | "agentName" | "label" | "rule">): Line {
   return { actor: f.source === "owner" || f.rule ? "Rule" : "Reminder", verb: "woke", object: f.agentName, tail: f.label ? `: ${f.label}` : "" };
@@ -581,9 +679,21 @@ export interface Trade {
   realized?: string;
 }
 
-/** A buy (a spend to the brokerage) or a sell (an earning "Sold 0.47 COF"), from a receipt. */
-export function tradeOf(r: Pick<Receipt, "kind" | "description" | "counterparty"> | undefined): Trade | null {
+/**
+ * A buy (a spend to the brokerage) or a sell (an earning "Sold 0.47 COF"), from a receipt. With the
+ * brokerage's orders, the one with the receipt's tx hash says the shares and the realized P/L.
+ */
+export function tradeOf(r: Pick<Receipt, "kind" | "description" | "counterparty"> & { txHash?: string } | undefined, orders?: Map<string, Order>): Trade | null {
   if (!r) return null;
+  const o = r.txHash ? orders?.get(r.txHash.toLowerCase()) : undefined;
+  if (o && (o.side === "buy" ? r.kind === "spend" : r.kind === "earn" || r.kind === "transfer")) {
+    return {
+      side: o.side,
+      ticker: o.ticker,
+      ...(o.shares > 0 ? { shares: shares(o.shares) } : {}),
+      ...(o.side === "sell" && o.realizedPnl !== undefined ? { realized: signedMoney(o.realizedPnl) } : {}),
+    };
+  }
   const d = (r.description ?? "").trim();
   if (r.kind === "earn" || r.kind === "transfer") {
     const m = d.match(SELL_RE);
@@ -596,14 +706,15 @@ export function tradeOf(r: Pick<Receipt, "kind" | "description" | "counterparty"
   const m = d.match(BUY_RE);
   if (m) return { side: "buy", ticker: m[2], ...(m[1] ? { shares: shares(Number(m[1])) } : {}) };
   if (!isBrokerage(r)) return null;
+  // "Brokerage (paper)": the payment doesn't name the stock; its order (above) would have.
   const t = d.match(/\b([A-Z]{1,5})\b/);
-  return t ? { side: "buy", ticker: t[1] } : null;
+  return { side: "buy", ticker: t ? t[1] : "" };
 }
 
 /** "researcher bought 0.47 COF", "researcher sold COF · +$6.20 realized". The amount sits in its column. */
 export function tradeLine(agent: string, t: Trade, opts: { pending?: boolean } = {}): Line {
-  if (t.side === "sell") return { actor: agent, verb: "sold", object: t.ticker, tail: t.realized ? ` · ${t.realized} realized` : "" };
-  const what = t.shares ? `${t.shares} ${t.ticker}` : t.ticker;
+  if (t.side === "sell") return { actor: agent, verb: "sold", object: t.ticker || "paper shares", tail: t.realized ? ` · ${t.realized} realized` : "" };
+  const what = !t.ticker ? "paper shares" : t.shares ? `${t.shares} ${t.ticker}` : t.ticker;
   return opts.pending ? { actor: agent, verb: "is buying", object: what } : { actor: agent, verb: "bought", object: what };
 }
 

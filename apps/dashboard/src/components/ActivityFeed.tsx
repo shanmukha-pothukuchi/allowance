@@ -5,7 +5,7 @@
  */
 import { bankNote, feedMarker } from "../bank";
 import { shortHex } from "../format";
-import { firingLine, type Firing } from "../invest";
+import { firingLine, type Firing, type Order } from "../invest";
 import { activityLine, eventAmount, shortAgo } from "../lines";
 import type { WalletEvent } from "../types";
 import { AgentAvatar } from "./Avatar";
@@ -27,6 +27,8 @@ interface Props {
   checkingLast4?: string;
   /** §20.3: times a schedule woke an agent. They come from the scheduler, not the wallet, and interleave by time. */
   firings?: Firing[];
+  /** §20.1 orders by tx hash: a trade's line names its shares and P/L. */
+  orders?: Map<string, Order>;
 }
 
 type FeedItem = { kind: "event"; at: number; e: WalletEvent } | { kind: "firing"; at: number; f: Firing };
@@ -40,7 +42,7 @@ function merge(events: WalletEvent[], firings: Firing[]): FeedItem[] {
   return [...ev, ...fi].sort((a, b) => b.at - a.at);
 }
 
-export function ActivityFeed({ events, pendingIds, showDetails, now, bankLinked = false, onRetryBank, retrying = [], checkingLast4, firings = [] }: Props) {
+export function ActivityFeed({ events, pendingIds, showDetails, now, bankLinked = false, onRetryBank, retrying = [], checkingLast4, firings = [], orders }: Props) {
   const items = merge(events, firings);
   return (
     <ol className="ln-list feed-list">
@@ -61,7 +63,9 @@ export function ActivityFeed({ events, pendingIds, showDetails, now, bankLinked 
               line={firingLine(f)}
               time={shortAgo(f.at, now)}
               dateTime={f.at}
-            />
+            >
+              {showDetails && f.context && <p className="ln-details">{f.context}</p>}
+            </LineRow>
           );
         }
         const e = it.e;
@@ -76,7 +80,7 @@ export function ActivityFeed({ events, pendingIds, showDetails, now, bankLinked 
             key={e.id}
             className="feed-row"
             lead={e.agentName ? <AgentAvatar name={e.agentName} size="xs" /> : <span className="ln-icon"><Info width={13} height={13} /></span>}
-            line={activityLine(e, { pending, checkingLast4 })}
+            line={activityLine(e, { pending, checkingLast4, orders })}
             time={shortAgo(e.at, now)}
             dateTime={e.at}
             amount={eventAmount(e)}

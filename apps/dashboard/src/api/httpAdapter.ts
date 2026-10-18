@@ -100,21 +100,17 @@ export function createHttpAdapter(): WalletAdapter {
     getBankStatement: (agentId, limit = 50) => req<BankStatementResponse>(`/v1/bank/statement?${agentId ? `agentId=${enc(agentId)}&` : ""}limit=${limit}`),
     retryBank: (receiptId) => post<{ queued: number }>("/v1/bank/retry", receiptId ? { receiptId } : {}),
     linkBank: () => post<BankSummary>("/v1/bank/link"),
-    // §20.2: `{ receipt }` (or the receipt itself).
+    // §20.2: `{ status: "sent", receipt, vault, balance }`.
     cashout: async (agentId, amount) => {
       const body = await post<{ receipt?: Receipt } & Partial<Receipt>>(`/v1/agents/${enc(agentId)}/cashout`, { amount });
       return (body?.receipt ?? body) as Receipt;
     },
     // §20.1/§20.3 behind the dashboard's own proxy (vite.config.ts): /brokerage → :4110, /scheduler → :4100,
     // with the owner key added server-side for this page's own requests only.
-    getPortfolios: async () => {
-      const [info, list] = await Promise.all([req<unknown>("/brokerage").catch(() => undefined), req<unknown>("/brokerage/portfolios")]);
-      return normPortfolios(list, info);
-    },
-    getScheduler: async () => {
-      const [list, status] = await Promise.all([req<unknown>("/scheduler/schedules"), req<unknown>("/scheduler/status").catch(() => undefined)]);
-      return normScheduler(list, status);
-    },
+    // `{ mode, clockDate, startDate, label, portfolios: [{ address, positions, totals, orders }] }`, by wallet address.
+    getPortfolios: async () => normPortfolios(await req<unknown>("/brokerage/portfolios")),
+    // Owner view: `{ schedules, paused, pausedAt, limits, firingsToday, firings }`; `all=1` keeps ended ones (the Done group).
+    getScheduler: async () => normScheduler(await req<unknown>("/scheduler/schedules?all=1")),
     cancelSchedule: async (id) => {
       await req<unknown>(`/scheduler/schedules/${enc(id)}`, { method: "DELETE" });
     },
