@@ -105,7 +105,7 @@ html.embed.embed-sheet-doc #root {
 .esheet-card {
   background: var(--surface);
   border: 1px solid var(--border-strong);
-  border-radius: 18px;
+  border-radius: 10px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
   overflow: hidden;
 }
@@ -165,14 +165,14 @@ html.embed.embed-sheet-doc #root {
   font-size: 0.75rem;
   font-weight: 500;
   padding: 2px 10px;
-  border-radius: 999px;
+  border-radius: 6px;
   background: var(--accent-dim);
   color: var(--accent);
 }
 .text-input {
   width: 100%;
   padding: 10px 14px;
-  border-radius: 12px;
+  border-radius: 8px;
   border: 1px solid var(--border-strong);
   background: var(--surface);
   color: var(--text);
@@ -233,7 +233,7 @@ html.embed.embed-sheet-doc #root {
   gap: 4px;
   height: 44px;
   padding: 0 12px;
-  border-radius: 12px;
+  border-radius: 8px;
   border: 1px solid var(--border-strong);
   background: var(--surface);
   color: var(--muted);
@@ -294,7 +294,7 @@ html.embed.embed-sheet-doc #root {
   align-items: flex-start;
   gap: 6px;
   padding: 12px 14px;
-  border-radius: 12px;
+  border-radius: 8px;
   border: 1px solid var(--border-strong);
   background: var(--surface);
   text-align: left;
@@ -364,7 +364,7 @@ html.embed.embed-sheet-doc #root {
   align-items: center;
   gap: 10px;
   padding: 9px 12px 9px 9px;
-  border-radius: 12px;
+  border-radius: 8px;
   border: 1px solid var(--border-strong);
   background: var(--surface);
   cursor: pointer;
@@ -440,7 +440,7 @@ html.embed.embed-sheet-doc #root {
   align-items: flex-start;
   gap: 10px;
   padding: 12px 14px;
-  border-radius: 12px;
+  border-radius: 8px;
   background: var(--surface-2);
   color: var(--text);
   line-height: 1.4;
@@ -462,14 +462,14 @@ html.embed.embed-sheet-doc #root {
 }
 .osheet-banner {
   padding: 10px 14px;
-  border-radius: 12px;
+  border-radius: 8px;
   background: var(--warn-dim);
   color: var(--warn);
   font-weight: 500;
 }
 .osheet-details {
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 10px;
   background: var(--surface);
   padding: 0 14px;
 }
@@ -534,7 +534,7 @@ html.embed.embed-sheet-doc #root {
   align-items: center;
   gap: 7px;
   padding: 3px 12px 3px 3px;
-  border-radius: 999px;
+  border-radius: 6px;
   border: 1px solid var(--border);
   background: var(--surface);
   font-weight: 500;
@@ -560,7 +560,7 @@ html.embed.embed-sheet-doc #root {
   flex-direction: column;
   gap: 8px;
   padding: 14px 16px;
-  border-radius: 14px;
+  border-radius: 10px;
   background: var(--warn-dim);
 }
 .token-why {
@@ -618,7 +618,7 @@ html.embed.embed-sheet-doc #root {
   flex-direction: column;
   gap: 6px;
   padding: 12px 14px;
-  border-radius: 14px;
+  border-radius: 10px;
   border: 1px solid var(--border);
   background: var(--surface-2);
 }
@@ -659,7 +659,7 @@ html.embed.embed-sheet-doc #root {
   align-items: center;
   gap: 10px;
   padding: 8px 12px 8px 8px;
-  border-radius: 12px;
+  border-radius: 8px;
   border: 1px solid var(--border-strong);
   background: var(--surface);
   cursor: pointer;

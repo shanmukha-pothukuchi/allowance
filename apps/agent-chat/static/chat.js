@@ -3510,8 +3510,8 @@
     wireInputs();
   }
   function effectiveTheme() {
-    // Light unless the owner picked dark.
-    return ui.theme || "light";
+    // Dark unless the owner picked light.
+    return ui.theme || "dark";
   }
   function applyChrome() {
     if (ui.theme) document.documentElement.setAttribute("data-theme", ui.theme);

@@ -45,7 +45,7 @@ export function renderChatPage(cfg: PageConfig): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light">
+<meta name="color-scheme" content="dark light">
 <title>Allowance Agents</title>
 <link rel="icon" href="${FAVICON}">
 <script>${THEME_BOOT}</script>

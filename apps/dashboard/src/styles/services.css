@@ -99,7 +99,7 @@
 .agent-quote {
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 10px 12px;
 }
 .agent-quote figcaption {
@@ -123,7 +123,7 @@
   gap: 10px;
   align-items: flex-start;
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius: 8px;
   background: var(--custom-dim);
   border: 1px solid color-mix(in srgb, var(--custom) 30%, transparent);
   font-size: 0.9rem;
@@ -180,7 +180,7 @@
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius: 8px;
   font-weight: 500;
   background: var(--surface-3);
 }
@@ -232,7 +232,7 @@
   width: min(420px, 40vw);
   padding: 0 16px;
   height: 42px;
-  border-radius: 999px;
+  border-radius: 6px;
   background: var(--surface);
   border: 1px solid var(--border-strong);
   color: var(--muted);
@@ -260,7 +260,7 @@
 }
 .chip {
   padding: 6px 16px;
-  border-radius: 999px;
+  border-radius: 6px;
   border: 1px solid var(--border-strong);
   background: var(--surface);
   color: var(--text);
@@ -309,7 +309,7 @@
   flex-direction: column;
   gap: 4px;
   padding: 18px 18px 14px;
-  border-radius: 16px;
+  border-radius: 10px;
   background: var(--surface);
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
@@ -342,7 +342,7 @@
 }
 .badge {
   padding: 3px 10px;
-  border-radius: 999px;
+  border-radius: 6px;
   background: var(--surface-3);
   color: var(--text-2);
   font-size: 0.75rem;
@@ -454,7 +454,7 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1px;
-  border-radius: 14px;
+  border-radius: 10px;
   overflow: hidden;
   border: 1px solid var(--border);
   background: var(--border);
@@ -501,7 +501,7 @@
   align-items: center;
   gap: 12px;
   padding: 8px 10px 8px 10px;
-  border-radius: 14px;
+  border-radius: 10px;
   background: var(--surface);
   border: 1px solid var(--border);
   transition: background 200ms, border-color 200ms;
@@ -527,7 +527,7 @@
   width: 44px;
   height: 26px;
   padding: 0;
-  border-radius: 999px;
+  border-radius: 6px;
   border: 0;
   background: var(--surface-hover);
   box-shadow: inset 0 0 0 1px var(--border-strong);
@@ -558,7 +558,7 @@
 }
 .docs {
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 10px;
   background: var(--surface);
 }
 .docs summary {
@@ -639,7 +639,7 @@ html.embed {
 }
 .embed-note {
   padding: 14px 16px;
-  border-radius: 14px;
+  border-radius: 10px;
   background: var(--surface);
   border: 1px solid var(--border-strong);
   color: var(--text-2);
@@ -684,7 +684,7 @@ html.embed {
 /* how paying works: USDC from the wallet, then a single-use card (simulated) */
 .shop-how-block {
   padding: 12px 14px;
-  border-radius: 14px;
+  border-radius: 10px;
   background: var(--surface-2);
   border: 1px solid var(--border);
 }
@@ -754,7 +754,7 @@ html.embed {
 .btn-shopify {
   height: 48px;
   padding: 0 18px;
-  border-radius: 999px;
+  border-radius: 6px;
   background: var(--surface);
   box-shadow: var(--shadow);
 }
@@ -820,7 +820,7 @@ html.embed {
   flex-direction: column;
   gap: 10px;
   padding: 14px;
-  border-radius: 16px;
+  border-radius: 10px;
   background: var(--surface-2);
   border: 1px solid var(--border);
   animation: popIn 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -865,7 +865,7 @@ html.embed {
   display: grid;
   place-items: center;
   aspect-ratio: 1 / 1;
-  border-radius: 12px;
+  border-radius: 8px;
   overflow: hidden;
   background: var(--surface-3);
   color: var(--muted);
@@ -900,7 +900,7 @@ html.embed {
   gap: 6px;
   margin: 0;
   padding: 4px 11px;
-  border-radius: 999px;
+  border-radius: 6px;
   font-size: 0.82rem;
   font-weight: 600;
   background: var(--in-dim);

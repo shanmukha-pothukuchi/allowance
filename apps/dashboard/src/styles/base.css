@@ -1,86 +1,89 @@
-/* Allowance dashboard: tokens, reset, typography. Light by default (matches the agent chat);
-   dark when the owner picks it (data-theme on <html>). */
+/* Allowance dashboard: tokens, reset, typography. Dark by default in the Linear mould: near-black
+   surfaces with a cool tint, a dimmer side rail, hairline borders, one indigo accent for primary
+   actions. Light when the owner picks it (data-theme on <html>). Money in = green, refused = red,
+   waiting on you = amber: soft tints and ink, never a solid fill. */
 :root {
-  --bg: #f7f7f8;
+  --bg: #101114;
+  --bg-sunken: #0b0c0e;
   --bg-glow: transparent;
-  --surface: #ffffff;
-  --surface-2: #f8f8f9;
-  --surface-3: #efeff2;
-  --surface-hover: #e8e8ec;
-  --border: #ebebee;
-  --border-strong: #dcdce1;
+  --surface: #15161a;
+  --surface-2: #1a1b1f;
+  --surface-3: #212227;
+  --surface-hover: #26282d;
+  --border: #22242a;
+  --border-strong: #2e3036;
 
-  --text: #1f1f22;
-  --text-2: #4f4f57;
-  --muted: #6f6f78;
+  --text: #ececee;
+  --text-2: #a4a6ad;
+  --muted: #7e8189;
 
-  /* neutral chrome; blue only for primary actions and focus. Money in = green ink, refused =
-     red ink, waiting on you = amber ink: soft tints and text, never a solid fill. */
-  --accent: #0b57d0;
-  --accent-dim: rgba(11, 87, 208, 0.08);
-  --in: #137333;
-  --in-hover: #0f5c29;
-  --in-dim: #e9f5ec;
-  --on-in: #ffffff;
-  --danger: #b3261e;
-  --danger-dim: #fcefee;
+  --accent: #6e79e0;
+  --accent-fill: #5e6ad2;
+  --on-accent: #ffffff;
+  --accent-dim: rgba(110, 121, 224, 0.14);
+  --in: #4cb782;
+  --in-hover: #5fc592;
+  --in-dim: rgba(76, 183, 130, 0.12);
+  --on-in: #0b2016;
+  --danger: #eb6a6a;
+  --danger-dim: rgba(235, 106, 106, 0.1);
   --danger-glow: transparent;
-  --warn: #9a4f00;
-  --warn-dim: #fef4e6;
-  --warn-fill: #f6d6a8;
-  --on-warn: #5c2f00;
+  --warn: #e5a54b;
+  --warn-dim: rgba(229, 165, 75, 0.12);
+  --warn-fill: rgba(229, 165, 75, 0.3);
+  --on-warn: #e5a54b;
   /* agent-proposed (custom) services: not from the directory */
-  --custom: #b3470c;
-  --custom-dim: #fdf0e8;
-  --live: #1e8e3e;
+  --custom: #e9935a;
+  --custom-dim: rgba(233, 147, 90, 0.12);
+  --live: #4cb782;
 
-  --shadow: 0 1px 2px rgba(15, 15, 20, 0.04);
-  --shadow-pop: 0 16px 48px rgba(15, 15, 20, 0.16), 0 2px 6px rgba(15, 15, 20, 0.06);
-  --backdrop: rgba(20, 20, 25, 0.28);
+  --shadow: none;
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px #2e3036;
+  --backdrop: rgba(0, 0, 0, 0.55);
   --tile-ring: transparent;
 
-  --radius: 16px;
-  --radius-sm: 10px;
+  --radius: 10px;
+  --radius-sm: 6px;
   --gap: 16px;
   --font: "Google Sans", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --emoji: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
   --mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
-  color-scheme: light;
-}
-:root[data-theme="dark"] {
-  --bg: #131314;
-  --bg-glow: transparent;
-  --surface: #1a1a1c;
-  --surface-2: #1f1f22;
-  --surface-3: #2a2a2d;
-  --surface-hover: #323236;
-  --border: #2a2a2d;
-  --border-strong: #38383c;
-  --text: #e8e8ea;
-  --text-2: #b4b4bb;
-  --muted: #8f8f97;
-  --accent: #a8c7fa;
-  --accent-dim: rgba(168, 199, 250, 0.12);
-  --in: #6dd58c;
-  --in-hover: #85dd9e;
-  --in-dim: rgba(109, 213, 140, 0.12);
-  --on-in: #0b2e16;
-  --danger: #f2918a;
-  --danger-dim: rgba(242, 118, 107, 0.1);
-  --danger-glow: transparent;
-  --warn: #f5c27e;
-  --warn-dim: rgba(245, 178, 91, 0.12);
-  --warn-fill: rgba(245, 178, 91, 0.3);
-  --on-warn: #f5c27e;
-  --custom: #f4a56e;
-  --custom-dim: rgba(244, 165, 110, 0.12);
-  --live: #6dd58c;
-  --shadow: none;
-  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px #2e2e32;
-  --backdrop: rgba(0, 0, 0, 0.5);
-  --tile-ring: transparent;
   color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --bg: #fbfbfc;
+  --bg-sunken: #f4f4f6;
+  --surface: #ffffff;
+  --surface-2: #f7f7f9;
+  --surface-3: #eeeef1;
+  --surface-hover: #e7e7eb;
+  --border: #e9e9ed;
+  --border-strong: #dadae0;
+  --text: #1c1d21;
+  --text-2: #4f5059;
+  --muted: #6c6e77;
+  --accent: #5e6ad2;
+  --accent-fill: #5e6ad2;
+  --on-accent: #ffffff;
+  --accent-dim: rgba(94, 106, 210, 0.1);
+  --in: #1f7a4d;
+  --in-hover: #19643f;
+  --in-dim: #e8f4ed;
+  --on-in: #ffffff;
+  --danger: #c43c3c;
+  --danger-dim: #fcefef;
+  --warn: #9a5a00;
+  --warn-dim: #fdf3e5;
+  --warn-fill: #f4d6a6;
+  --on-warn: #5c3500;
+  --custom: #b3470c;
+  --custom-dim: #fdf0e8;
+  --live: #1f8e52;
+  --shadow: 0 1px 2px rgba(15, 15, 20, 0.04);
+  --shadow-pop: 0 16px 48px rgba(15, 15, 20, 0.16), 0 0 0 1px #e9e9ed;
+  --backdrop: rgba(20, 20, 25, 0.3);
+  color-scheme: light;
 }
 
 *,
@@ -97,7 +100,7 @@ body,
 }
 
 html {
-  font-size: 16px;
+  font-size: 14px;
 }
 
 body {
@@ -166,38 +169,36 @@ input {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.4em;
-  height: 36px;
-  padding: 0 16px;
-  border-radius: 999px;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 6px;
   border: 1px solid var(--border-strong);
-  background: var(--surface);
+  background: var(--surface-2);
+  color: var(--text);
   cursor: pointer;
   font-weight: 500;
-  font-size: 0.9rem;
+  font-size: 0.93rem;
   white-space: nowrap;
   transition: background 120ms, transform 80ms, opacity 120ms, border-color 120ms;
 }
 .btn:hover {
-  background: var(--surface-2);
+  background: var(--surface-3);
 }
 .btn:disabled {
   opacity: 0.5;
   cursor: wait;
 }
 .btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-:root[data-theme="dark"] .btn-primary {
-  color: #062e6f;
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+  color: var(--on-accent);
 }
 .btn-primary:hover {
-  background: color-mix(in srgb, var(--accent) 88%, var(--text));
+  background: color-mix(in srgb, var(--accent-fill) 88%, white);
 }
 .btn-danger {
-  background: var(--surface);
+  background: var(--surface-2);
   border-color: var(--border-strong);
   color: var(--danger);
 }
@@ -205,16 +206,16 @@ input {
   background: var(--danger-dim);
 }
 .btn-big {
-  height: 42px;
+  height: 36px;
   font-size: 0.95rem;
-  padding: 0 20px;
+  padding: 0 16px;
 }
 .icon-btn {
   display: inline-grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
   border: 0;
   background: transparent;
   color: var(--text-2);

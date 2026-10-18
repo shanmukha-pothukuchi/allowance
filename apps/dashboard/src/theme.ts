@@ -1,4 +1,4 @@
-/** Theme: light by default (like the agent chat), dark as an explicit choice (toggle / ?theme=). */
+/** Theme: dark by default (like the agent chat), light as an explicit choice (toggle / ?theme=). */
 export type ThemePref = "dark" | "light" | "system";
 const KEY = "allowance.theme";
 
@@ -33,5 +33,5 @@ export function applyTheme(t: ThemePref) {
 
 /** What is actually on screen right now. */
 export function effectiveTheme(t: ThemePref): "dark" | "light" {
-  return t === "dark" ? "dark" : "light";
+  return t === "light" ? "light" : "dark";
 }
