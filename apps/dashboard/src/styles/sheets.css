@@ -34,9 +34,9 @@ a.btn.btn-primary {
   min-width: 0;
 }
 .osheet-name {
-  font-size: 1.6rem;
-  font-weight: 750;
-  letter-spacing: -0.02em;
+  font-size: 1.35rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
   overflow-wrap: anywhere;
   line-height: 1.15;
 }
@@ -63,13 +63,9 @@ a.btn.btn-primary {
 }
 .avatar-empty {
   --tile: var(--surface-3);
-  background: var(--surface-2);
-  border: 2px dashed var(--border-strong);
+  background: var(--surface-3);
   box-shadow: none;
-  color: var(--muted);
-  font-family: var(--font);
-  font-weight: 800;
-  font-size: 1.6rem;
+  color: var(--text-2);
 }
 .osheet .icon-btn:disabled,
 .esheet .icon-btn:disabled {
@@ -147,11 +143,9 @@ html.embed.embed-sheet-doc #root {
 }
 .ofield-label label,
 .ofield-label h3 {
-  font-size: 0.8rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text);
 }
 .ofield-aside {
   font-size: 0.8rem;
@@ -165,26 +159,24 @@ html.embed.embed-sheet-doc #root {
 }
 .count-near {
   color: var(--warn);
-  font-weight: 700;
+  font-weight: 500;
 }
 .test-badge {
-  font-size: 0.68rem;
-  font-weight: 750;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  padding: 3px 9px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 2px 10px;
   border-radius: 999px;
   background: var(--accent-dim);
   color: var(--accent);
 }
 .text-input {
   width: 100%;
-  padding: 11px 14px;
+  padding: 10px 14px;
   border-radius: 12px;
   border: 1px solid var(--border-strong);
-  background: var(--surface-2);
+  background: var(--surface);
   color: var(--text);
-  font-size: 1.05rem;
+  font-size: 1rem;
   outline: none;
   transition: border-color 120ms, box-shadow 120ms;
 }
@@ -197,9 +189,7 @@ html.embed.embed-sheet-doc #root {
   box-shadow: 0 0 0 3px var(--accent-dim);
 }
 .name-input {
-  font-family: var(--mono);
-  font-size: 1.15rem;
-  font-weight: 600;
+  font-weight: 400;
 }
 .purpose-input {
   resize: vertical;
@@ -214,15 +204,15 @@ html.embed.embed-sheet-doc #root {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-weight: 650;
-  font-size: 0.95rem;
+  font-weight: 500;
+  font-size: 0.88rem;
 }
 .name-status svg {
   flex: none;
 }
 .name-idle {
   color: var(--text-2);
-  font-weight: 500;
+  font-weight: 400;
 }
 .name-ok {
   color: var(--in);
@@ -233,7 +223,7 @@ html.embed.embed-sheet-doc #root {
 .field-error {
   color: var(--danger);
   font-size: 0.85rem;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 /* dollar input with a "$" prefix */
@@ -241,14 +231,14 @@ html.embed.embed-sheet-doc #root {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 46px;
+  height: 44px;
   padding: 0 12px;
   border-radius: 12px;
   border: 1px solid var(--border-strong);
-  background: var(--surface-2);
+  background: var(--surface);
   color: var(--muted);
-  font-weight: 700;
-  font-size: 1.05rem;
+  font-weight: 500;
+  font-size: 1rem;
   transition: border-color 120ms, box-shadow 120ms;
 }
 .money-input:focus-within {
@@ -262,8 +252,8 @@ html.embed.embed-sheet-doc #root {
   outline: none;
   background: transparent;
   color: var(--text);
-  font-size: 1.1rem;
-  font-weight: 650;
+  font-size: 1rem;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
@@ -283,8 +273,9 @@ html.embed.embed-sheet-doc #root {
   gap: 10px;
 }
 .amount-chip {
-  min-width: 64px;
-  font-size: 1rem;
+  min-width: 60px;
+  height: 38px;
+  font-size: 0.95rem;
   font-variant-numeric: tabular-nums;
 }
 .amount-picker .money-input {
@@ -302,24 +293,25 @@ html.embed.embed-sheet-doc #root {
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
-  padding: 10px 12px;
-  border-radius: 14px;
-  border: 1.5px solid var(--border-strong);
-  background: var(--surface-2);
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
   text-align: left;
   cursor: pointer;
   transition: border-color 140ms, background 140ms;
 }
 .preset-card:hover {
-  background: var(--surface-3);
+  background: var(--surface-2);
 }
 .preset-on,
 .preset-on:hover {
   border-color: var(--accent);
   background: var(--accent-dim);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 .preset-name {
-  font-weight: 750;
+  font-weight: 500;
   font-size: 1rem;
 }
 .preset-nums {
@@ -347,7 +339,7 @@ html.embed.embed-sheet-doc #root {
 }
 .limit-label {
   font-size: 0.85rem;
-  font-weight: 650;
+  font-weight: 500;
   color: var(--text-2);
 }
 .limit-field .money-input {
@@ -372,14 +364,14 @@ html.embed.embed-sheet-doc #root {
   align-items: center;
   gap: 10px;
   padding: 9px 12px 9px 9px;
-  border-radius: 14px;
-  border: 1.5px solid var(--border-strong);
-  background: var(--surface-2);
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
   cursor: pointer;
   transition: border-color 140ms, background 140ms;
 }
 .svc-pick:hover {
-  background: var(--surface-3);
+  background: var(--surface-2);
 }
 .svc-pick input {
   position: absolute;
@@ -389,19 +381,20 @@ html.embed.embed-sheet-doc #root {
   pointer-events: none;
 }
 .svc-pick:focus-within {
-  outline: 3px solid var(--accent);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 .svc-pick-on,
 .svc-pick-on:hover {
-  border-color: var(--in);
-  background: var(--in-dim);
+  border-color: var(--accent);
+  background: var(--accent-dim);
 }
 .svc-pick-text {
   min-width: 0;
 }
 .svc-pick-text strong {
   display: block;
+  font-weight: 500;
   font-size: 0.95rem;
   white-space: nowrap;
   overflow: hidden;
@@ -418,26 +411,26 @@ html.embed.embed-sheet-doc #root {
 .svc-pick-tick {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
   border: 1.5px solid var(--border-strong);
   color: transparent;
 }
 .svc-pick-on .svc-pick-tick {
-  background: var(--in);
-  border-color: var(--in);
-  color: var(--on-in);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
 .svc-pick-locked,
 .svc-pick-locked:hover {
   cursor: default;
   border-color: var(--border-strong);
-  background: var(--surface-2);
+  background: var(--surface);
 }
 .svc-pick-locked .svc-pick-tick {
   background: var(--surface-3);
-  border-color: var(--border-strong);
+  border-color: var(--surface-3);
   color: var(--text-2);
 }
 
@@ -448,13 +441,13 @@ html.embed.embed-sheet-doc #root {
   gap: 10px;
   padding: 12px 14px;
   border-radius: 12px;
-  background: var(--accent-dim);
+  background: var(--surface-2);
   color: var(--text);
   line-height: 1.4;
 }
 .osheet-info svg {
   flex: none;
-  color: var(--accent);
+  color: var(--text-2);
 }
 .osheet-warn {
   align-items: center;
@@ -470,21 +463,20 @@ html.embed.embed-sheet-doc #root {
 .osheet-banner {
   padding: 10px 14px;
   border-radius: 12px;
-  border: 1px solid var(--warn);
   background: var(--warn-dim);
   color: var(--warn);
-  font-weight: 600;
+  font-weight: 500;
 }
 .osheet-details {
   border: 1px solid var(--border);
   border-radius: 14px;
-  background: var(--surface-2);
+  background: var(--surface);
   padding: 0 14px;
 }
 .osheet-details summary {
   padding: 12px 0;
   cursor: pointer;
-  font-weight: 700;
+  font-weight: 500;
 }
 .osheet-details[open] {
   padding-bottom: 14px;
@@ -507,12 +499,12 @@ html.embed.embed-sheet-doc #root {
   animation: popIn 360ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .created > .avatar-xl {
-  --size: 84px;
+  --size: 72px;
 }
 .created-title {
-  font-size: 1.6rem;
-  font-weight: 800;
-  letter-spacing: -0.02em;
+  font-size: 1.4rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
   overflow-wrap: anywhere;
 }
 .created-balance {
@@ -521,9 +513,9 @@ html.embed.embed-sheet-doc #root {
   gap: 8px;
 }
 .created-amount {
-  font-size: 2.3rem;
-  font-weight: 800;
-  letter-spacing: -0.02em;
+  font-size: 2rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
   color: var(--in);
   font-variant-numeric: tabular-nums;
 }
@@ -544,8 +536,8 @@ html.embed.embed-sheet-doc #root {
   padding: 3px 12px 3px 3px;
   border-radius: 999px;
   border: 1px solid var(--border);
-  background: var(--surface-2);
-  font-weight: 650;
+  background: var(--surface);
+  font-weight: 500;
   font-size: 0.9rem;
 }
 .created-service .svc-tile-sm {
@@ -562,7 +554,6 @@ html.embed.embed-sheet-doc #root {
   border-radius: 50%;
   background: var(--in);
   color: var(--on-in);
-  box-shadow: 0 0 0 8px var(--in-dim);
 }
 .token-box {
   display: flex;
@@ -570,7 +561,6 @@ html.embed.embed-sheet-doc #root {
   gap: 8px;
   padding: 14px 16px;
   border-radius: 14px;
-  border: 1.5px solid var(--warn);
   background: var(--warn-dim);
 }
 .token-why {
@@ -578,23 +568,21 @@ html.embed.embed-sheet-doc #root {
   align-items: flex-start;
   gap: 8px;
   color: var(--warn);
-  font-weight: 650;
+  font-weight: 500;
   line-height: 1.35;
 }
 .token-why svg {
   flex: none;
 }
 .token-label {
-  font-size: 0.72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  font-size: 0.8rem;
+  font-weight: 500;
   color: var(--text-2);
 }
 .token-note {
   font-size: 0.92rem;
   color: var(--text);
-  font-weight: 600;
+  font-weight: 500;
 }
 .copy-field {
   display: flex;
@@ -634,18 +622,19 @@ html.embed.embed-sheet-doc #root {
   border: 1px solid var(--border);
   background: var(--surface-2);
 }
-.receipt-row {
+.receipt-card .receipt-row {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
   gap: 4px 12px;
 }
-.receipt-row strong {
-  font-size: 1.15rem;
+.receipt-card .receipt-row strong {
+  font-size: 1.1rem;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
-.receipt-row.muted {
+.receipt-card .receipt-row.muted {
   font-size: 0.88rem;
 }
 .receipt-ids code,
@@ -669,17 +658,17 @@ html.embed.embed-sheet-doc #root {
   align-items: center;
   gap: 10px;
   padding: 8px 12px 8px 8px;
-  border-radius: 14px;
+  border-radius: 12px;
   border: 1px solid var(--border-strong);
-  background: var(--surface-2);
+  background: var(--surface);
   cursor: pointer;
   text-align: left;
 }
 .agent-pick:hover {
-  background: var(--surface-3);
+  background: var(--surface-2);
 }
 .agent-pick-name {
-  font-weight: 650;
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

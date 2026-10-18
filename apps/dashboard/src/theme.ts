@@ -1,4 +1,4 @@
-/** Theme: dark by default, light when the OS prefers it, and an explicit override (toggle / ?theme=). */
+/** Theme: light by default (like the agent chat), dark as an explicit choice (toggle / ?theme=). */
 export type ThemePref = "dark" | "light" | "system";
 const KEY = "allowance.theme";
 
@@ -33,6 +33,5 @@ export function applyTheme(t: ThemePref) {
 
 /** What is actually on screen right now. */
 export function effectiveTheme(t: ThemePref): "dark" | "light" {
-  if (t !== "system") return t;
-  return typeof matchMedia !== "undefined" && matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  return t === "dark" ? "dark" : "light";
 }

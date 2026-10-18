@@ -15,15 +15,7 @@ import { useNow, useWallet } from "./useWallet";
 
 function useTheme(): ["dark" | "light", () => void] {
   const [pref, setPref] = useState<ThemePref>(() => themeFromSearch(location.search) ?? storedTheme() ?? "system");
-  const [, bump] = useState(0);
   useEffect(() => applyTheme(pref), [pref]);
-  useEffect(() => {
-    // Follow the OS while no explicit choice is made.
-    const mq = matchMedia("(prefers-color-scheme: light)");
-    const on = () => bump((n) => n + 1);
-    mq.addEventListener("change", on);
-    return () => mq.removeEventListener("change", on);
-  }, []);
   const current = effectiveTheme(pref);
   const toggle = useCallback(() => {
     const next = current === "dark" ? "light" : "dark";

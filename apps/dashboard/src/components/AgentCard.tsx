@@ -37,7 +37,7 @@ export function AgentCard({ agent, showDetails, busy, onFreeze, onUnfreeze, onAd
         <div className="frozen-badge" role="status">
           <Snowflake />
           <span>
-            <strong>FROZEN</strong>
+            <strong>Frozen by your wallet</strong>
             {agent.frozenReason && <span className="frozen-reason">{agent.frozenReason}</span>}
           </span>
         </div>

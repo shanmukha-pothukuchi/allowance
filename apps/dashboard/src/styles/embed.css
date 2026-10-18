@@ -1,123 +1,17 @@
 /* The wallet's views as the agent chat embeds them (an approval card, the New agent and Add money
-   sheets). The chat draws the frame around the iframe, so these render flat, in the chat's light
-   palette and type, and keep their own "Allowance wallet" footer line. */
-
-html.embed[data-theme="light"],
-html.embed:not([data-theme]) {
-  --bg: #ffffff;
-  --surface: #ffffff;
-  --surface-2: #f6f6f8;
-  --surface-3: #ececef;
-  --surface-hover: #e6e6ea;
-  --border: #ececef;
-  --border-strong: #dedee3;
-  --text: #1f1f22;
-  --text-2: #5d5d66;
-  --muted: #6f6f78;
-  --accent: #0b57d0;
-  --accent-dim: rgba(11, 87, 208, 0.08);
-  --in: #137333;
-  --in-hover: #0f5c29;
-  --in-dim: #e9f5ec;
-  --on-in: #ffffff;
-  --danger: #b3261e;
-  --danger-dim: #fcefee;
-  --warn: #9a4f00;
-  --warn-dim: #fef4e6;
-  --custom: #b3470c;
-  --custom-dim: #fdf0e8;
-  color-scheme: light;
-}
-html.embed[data-theme="dark"] {
-  --bg: #1a1a1c;
-  --surface: #1a1a1c;
-  --surface-2: #222225;
-  --surface-3: #2a2a2d;
-  --surface-hover: #323236;
-  --border: #2a2a2d;
-  --border-strong: #38383c;
-  --text: #e8e8ea;
-  --text-2: #a9a9b1;
-  --muted: #8f8f97;
-  --accent: #a8c7fa;
-  --accent-dim: rgba(168, 199, 250, 0.12);
-  --in: #6dd58c;
-  --in-dim: rgba(109, 213, 140, 0.12);
-  --on-in: #0b2e16;
-}
+   sheets). The chat draws the frame around the iframe, so these render flat and keep their own
+   "Allowance wallet" footer line. Colors, type and controls come from base.css / sheets.css. */
 
 html.embed body {
-  font-family: var(--font);
   letter-spacing: 0;
-}
-
-/* ---------- shared controls ---------- */
-html.embed .btn {
-  height: 40px;
-  padding: 0 20px;
-  border-radius: 999px;
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
-  font-weight: 500;
-  font-size: 0.92rem;
-}
-html.embed .btn:hover {
-  background: var(--surface-2);
-}
-html.embed .btn:active {
-  transform: none;
-}
-html.embed .btn-primary,
-html.embed a.btn.btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-html.embed[data-theme="dark"] .btn-primary,
-html.embed[data-theme="dark"] a.btn.btn-primary {
-  color: #062e6f;
-}
-html.embed .btn-primary:hover {
-  background: color-mix(in srgb, var(--accent) 88%, var(--text));
-}
-html.embed .btn-primary:disabled {
-  background: var(--surface-3);
-  border-color: var(--surface-3);
-  color: var(--muted);
-  opacity: 1;
-  cursor: default;
-}
-html.embed .btn-danger {
-  border-color: var(--border-strong);
-  color: var(--danger);
-}
-html.embed .btn-danger:hover {
-  background: var(--danger-dim);
-}
-html.embed .icon-btn {
-  width: 36px;
-  height: 36px;
-  border: 0;
-  border-radius: 10px;
-}
-html.embed .icon-btn:hover {
-  background: var(--surface-2);
-}
-html.embed :focus-visible {
-  outline: 2px solid var(--accent);
 }
 html.embed .chip {
   height: 38px;
   padding: 0 16px;
-  font-weight: 500;
-  color: var(--text);
-  border-color: var(--border-strong);
 }
-html.embed .chip-on,
-html.embed .chip-on:hover {
-  background: var(--accent-dim);
-  border-color: var(--accent);
-  color: var(--accent);
+html.embed .btn {
+  height: 40px;
+  padding: 0 20px;
 }
 html.embed .embed-foot {
   gap: 6px;
@@ -140,16 +34,11 @@ html.embed .esheet .osheet-head {
   padding: 20px 14px 14px 24px;
   border-bottom: 0;
 }
-html.embed .esheet .osheet-title {
-  gap: 14px;
-}
 html.embed .esheet .osheet-title .avatar-xl {
   --size: 44px;
 }
 html.embed .esheet .osheet-name {
   font-size: 1.25rem;
-  font-weight: 500;
-  letter-spacing: -0.01em;
 }
 html.embed .osheet-titles .muted {
   font-size: 0.9rem;
@@ -162,153 +51,8 @@ html.embed .esheet .osheet-foot {
   padding: 14px 20px 16px;
   background: transparent;
 }
-html.embed .esheet + .embed-foot,
 html.embed .esheet .embed-foot {
   padding: 0 0 14px;
-}
-html.embed .avatar-empty {
-  border: 0;
-  background: var(--surface-3);
-  color: var(--text-2);
-}
-
-html.embed .ofield {
-  gap: 8px;
-}
-html.embed .ofield-label label,
-html.embed .ofield-label h3 {
-  font-size: 0.88rem;
-  font-weight: 500;
-  text-transform: none;
-  letter-spacing: 0;
-  color: var(--text);
-}
-html.embed .ofield-hint {
-  font-size: 0.82rem;
-}
-html.embed .test-badge {
-  font-size: 0.75rem;
-  font-weight: 500;
-  text-transform: none;
-  letter-spacing: 0;
-  padding: 2px 10px;
-}
-html.embed .text-input,
-html.embed .money-input {
-  border-radius: 12px;
-  background: var(--surface);
-  font-size: 1rem;
-}
-html.embed .text-input:focus,
-html.embed .money-input:focus-within {
-  box-shadow: 0 0 0 3px var(--accent-dim);
-}
-html.embed .name-input {
-  font-family: var(--font);
-  font-size: 1rem;
-  font-weight: 400;
-}
-html.embed .name-status {
-  font-size: 0.88rem;
-  font-weight: 500;
-}
-html.embed .name-idle {
-  font-weight: 400;
-}
-html.embed .money-input {
-  font-weight: 500;
-}
-html.embed .money-input input {
-  font-weight: 500;
-}
-
-html.embed .preset-card {
-  border-width: 1px;
-  border-radius: 12px;
-  background: var(--surface);
-  padding: 12px 14px;
-}
-html.embed .preset-card:hover {
-  background: var(--surface-2);
-}
-html.embed .preset-on,
-html.embed .preset-on:hover {
-  border-color: var(--accent);
-  background: var(--accent-dim);
-  box-shadow: inset 0 0 0 1px var(--accent);
-}
-html.embed .preset-name {
-  font-weight: 500;
-}
-html.embed .limit-label {
-  font-weight: 500;
-}
-
-html.embed .svc-pick {
-  border-width: 1px;
-  border-radius: 12px;
-  background: var(--surface);
-}
-html.embed .svc-pick:hover {
-  background: var(--surface-2);
-}
-html.embed .svc-pick-on,
-html.embed .svc-pick-on:hover {
-  border-color: var(--accent);
-  background: var(--accent-dim);
-}
-html.embed .svc-pick-tick {
-  border-radius: 6px;
-  width: 20px;
-  height: 20px;
-}
-html.embed .svc-pick-on .svc-pick-tick {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-html.embed .svc-pick-text strong {
-  font-weight: 500;
-}
-html.embed .svc-pick-locked .svc-pick-tick {
-  background: var(--surface-3);
-  border-color: var(--surface-3);
-}
-
-html.embed .osheet-info {
-  background: var(--surface-2);
-}
-html.embed .osheet-info svg {
-  color: var(--text-2);
-}
-html.embed .osheet-details {
-  background: var(--surface);
-}
-html.embed .osheet-details summary {
-  font-weight: 500;
-}
-html.embed .created-title {
-  font-size: 1.35rem;
-  font-weight: 500;
-}
-html.embed .created-amount {
-  font-size: 2rem;
-  font-weight: 500;
-}
-html.embed .created-service {
-  font-weight: 500;
-}
-html.embed .done-check {
-  box-shadow: none;
-}
-html.embed .token-label {
-  text-transform: none;
-  letter-spacing: 0;
-  font-size: 0.8rem;
-  font-weight: 500;
-}
-html.embed .receipt-row strong {
-  font-weight: 500;
 }
 
 /* ---------- approval card ---------- */
@@ -327,17 +71,10 @@ html.embed .approval-embed.approval-done {
 }
 html.embed .approval-embed .approval-amount {
   font-size: 2rem;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-}
-html.embed .approval-embed .approval-service-name .svc-name {
-  font-weight: 500;
 }
 html.embed .approval-embed .btn-big {
   flex: 1;
   height: 42px;
-  font-size: 0.95rem;
-  padding: 0 16px;
 }
 html.embed .embed-note {
   border: 0;
@@ -346,29 +83,4 @@ html.embed .embed-note {
 }
 html.embed .embed > .embed-foot {
   padding: 0 0 12px;
-}
-html.embed .stat-label {
-  font-size: 0.82rem;
-  font-weight: 400;
-  text-transform: none;
-  letter-spacing: 0;
-}
-html.embed .price-cap {
-  font-weight: 500;
-}
-html.embed .agent-quote {
-  border-left: 0;
-  border-radius: 12px;
-  background: var(--surface-2);
-  padding: 10px 12px;
-}
-html.embed .agent-quote figcaption {
-  font-size: 0.78rem;
-  font-weight: 400;
-  text-transform: none;
-  letter-spacing: 0;
-}
-html.embed .agent-quote blockquote {
-  margin-top: 2px;
-  font-style: normal;
 }

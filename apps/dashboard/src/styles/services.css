@@ -2,8 +2,8 @@
 
 /* ---------- approval card ---------- */
 .approval-card {
-  background: var(--surface-2);
-  border: 1.5px solid var(--warn);
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--warn) 30%, var(--border));
   border-radius: var(--radius);
   padding: 14px 16px 16px;
   display: flex;
@@ -18,11 +18,12 @@
   gap: 10px;
 }
 .approval-who {
-  font-size: 1.05rem;
+  font-size: 0.98rem;
   color: var(--text-2);
 }
 .approval-who strong {
   color: var(--text);
+  font-weight: 500;
 }
 .approval-time {
   font-size: 0.78rem;
@@ -35,14 +36,14 @@
   gap: 4px;
 }
 .approval-amount {
-  font-size: 2.7rem;
-  font-weight: 750;
-  line-height: 1;
-  letter-spacing: -0.03em;
+  font-size: 2.1rem;
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
 }
 .approval-to {
-  font-size: 1.05rem;
+  font-size: 0.98rem;
 }
 .approval-desc {
   color: var(--muted);
@@ -59,8 +60,8 @@
   min-width: 0;
 }
 .approval-service-name .svc-name {
-  font-size: 1.4rem;
-  font-weight: 750;
+  font-size: 1.2rem;
+  font-weight: 500;
   letter-spacing: -0.01em;
   line-height: 1.15;
 }
@@ -71,7 +72,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 0.95rem;
+  font-size: 0.92rem;
   color: var(--text-2);
 }
 .perm-list li {
@@ -85,32 +86,28 @@
   top: 0.32em;
   width: 9px;
   height: 5px;
-  border-left: 2.5px solid var(--accent);
-  border-bottom: 2.5px solid var(--accent);
+  border-left: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
   transform: rotate(-45deg);
 }
 .price-cap {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  font-weight: 650;
+  font-weight: 500;
 }
 .agent-quote {
-  border-left: 3px solid var(--border-strong);
-  background: var(--surface-3);
-  border-radius: 4px 12px 12px 4px;
-  padding: 8px 12px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
 }
 .agent-quote figcaption {
-  font-size: 0.68rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
+  font-size: 0.78rem;
   color: var(--muted);
 }
 .agent-quote blockquote {
-  margin-top: 4px;
-  font-style: italic;
+  margin-top: 2px;
   color: var(--text-2);
   quotes: "\201C" "\201D";
   overflow-wrap: anywhere;
@@ -128,8 +125,8 @@
   padding: 10px 12px;
   border-radius: 12px;
   background: var(--custom-dim);
-  border: 1px solid var(--custom);
-  font-size: 0.92rem;
+  border: 1px solid color-mix(in srgb, var(--custom) 30%, transparent);
+  font-size: 0.9rem;
   color: var(--text);
 }
 .custom-warning > svg {
@@ -151,8 +148,7 @@
   word-break: break-all;
 }
 .approval-custom {
-  border-color: var(--custom);
-  background: linear-gradient(180deg, var(--custom-dim), transparent 120px), var(--surface-2);
+  border-color: color-mix(in srgb, var(--custom) 35%, var(--border));
 }
 .approval-actions {
   display: flex;
@@ -171,7 +167,7 @@
   z-index: 1;
   margin: 0 -16px -16px;
   padding: 10px 16px 16px;
-  background: var(--surface-2);
+  background: var(--surface);
   border-top: 1px solid var(--border);
   border-radius: 0 0 var(--radius) var(--radius);
 }
@@ -185,7 +181,7 @@
   gap: 8px;
   padding: 10px 12px;
   border-radius: 12px;
-  font-weight: 700;
+  font-weight: 500;
   background: var(--surface-3);
 }
 .approval-outcome svg {
@@ -211,8 +207,8 @@
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   min-height: 0;
-  padding: 18px 24px 0;
-  gap: 14px;
+  padding: 28px 32px 0;
+  gap: 18px;
 }
 .services-head {
   display: flex;
@@ -221,9 +217,9 @@
   gap: 24px;
 }
 .services-title h1 {
-  font-size: 2rem;
-  font-weight: 750;
-  letter-spacing: -0.02em;
+  font-size: 1.75rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
 }
 .services-title p {
   margin-top: 2px;
@@ -234,12 +230,11 @@
   gap: 10px;
   width: min(420px, 40vw);
   padding: 0 16px;
-  height: 48px;
+  height: 42px;
   border-radius: 999px;
   background: var(--surface);
   border: 1px solid var(--border-strong);
   color: var(--muted);
-  box-shadow: var(--shadow);
 }
 .search:focus-within {
   border-color: var(--accent);
@@ -263,24 +258,24 @@
   flex-wrap: wrap;
 }
 .chip {
-  padding: 7px 18px;
+  padding: 6px 16px;
   border-radius: 999px;
   border: 1px solid var(--border-strong);
   background: var(--surface);
-  color: var(--text-2);
-  font-weight: 600;
-  font-size: 0.92rem;
+  color: var(--text);
+  font-weight: 500;
+  font-size: 0.9rem;
   cursor: pointer;
   transition: background 140ms, color 140ms, border-color 140ms;
 }
 .chip:hover {
-  background: var(--surface-3);
+  background: var(--surface-2);
 }
 .chip-on,
 .chip-on:hover {
-  background: var(--text);
-  border-color: var(--text);
-  color: var(--bg);
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .services-scroll {
   overflow-y: auto;
@@ -296,7 +291,6 @@
   border-radius: var(--radius);
   background: var(--warn-dim);
   color: var(--warn);
-  border: 1px solid var(--warn);
 }
 .directory-error span {
   flex: 1;
@@ -314,7 +308,7 @@
   flex-direction: column;
   gap: 4px;
   padding: 18px 18px 14px;
-  border-radius: 20px;
+  border-radius: 16px;
   background: var(--surface);
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
@@ -323,16 +317,14 @@
   animation: rowIn 360ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .svc-card:hover {
-  transform: translateY(-3px);
   border-color: var(--border-strong);
+  box-shadow: 0 4px 16px rgba(15, 15, 20, 0.06);
 }
 .svc-card-custom {
-  border-color: color-mix(in srgb, var(--custom) 55%, transparent);
-  background: linear-gradient(180deg, var(--custom-dim), transparent 90px), var(--surface);
+  border-color: color-mix(in srgb, var(--custom) 35%, var(--border));
 }
 .svc-card-waiting {
-  border-color: var(--warn);
-  box-shadow: 0 0 0 3px var(--warn-dim), var(--shadow);
+  border-color: color-mix(in srgb, var(--warn) 35%, var(--border));
 }
 .svc-card-top {
   display: flex;
@@ -352,22 +344,21 @@
   border-radius: 999px;
   background: var(--surface-3);
   color: var(--text-2);
-  font-size: 0.72rem;
-  font-weight: 700;
+  font-size: 0.75rem;
+  font-weight: 500;
   white-space: nowrap;
 }
 .badge-warn {
-  background: var(--warn-fill);
-  color: var(--on-warn);
+  background: var(--warn-dim);
+  color: var(--warn);
 }
 .badge-custom {
   background: var(--custom-dim);
   color: var(--custom);
-  box-shadow: inset 0 0 0 1px var(--custom);
 }
 .svc-card .svc-name {
-  font-size: 1.25rem;
-  font-weight: 750;
+  font-size: 1.1rem;
+  font-weight: 500;
   letter-spacing: -0.01em;
 }
 .svc-provider {
@@ -396,7 +387,7 @@
   min-height: 42px;
 }
 .svc-price {
-  font-weight: 700;
+  font-weight: 500;
   font-size: 0.92rem;
 }
 .svc-conn {
@@ -434,9 +425,9 @@
   border-bottom: 1px solid var(--border);
 }
 .sheet-title h2 {
-  font-size: 1.7rem;
-  font-weight: 750;
-  letter-spacing: -0.02em;
+  font-size: 1.4rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
 }
 .sheet-close {
   align-self: start;
@@ -452,7 +443,7 @@
   flex-shrink: 0;
 }
 .sheet-desc {
-  font-size: 1.05rem;
+  font-size: 0.98rem;
   line-height: 1.5;
   color: var(--text-2);
 }
@@ -467,20 +458,17 @@
 }
 .sheet-facts > div {
   padding: 10px 14px;
-  background: var(--surface-2);
+  background: var(--surface);
 }
 .sheet-facts .fact-wide {
   grid-column: 1 / -1;
 }
 .sheet-facts dt {
-  font-size: 0.68rem;
+  font-size: 0.8rem;
   color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-weight: 700;
 }
 .sheet-facts dd {
-  font-weight: 650;
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 .sheet-facts code {
@@ -492,11 +480,9 @@
   gap: 10px;
 }
 .sheet-section h3 {
-  font-size: 0.8rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text);
 }
 .sheet-note {
   font-size: 0.85rem;
@@ -513,23 +499,20 @@
   gap: 12px;
   padding: 8px 10px 8px 10px;
   border-radius: 14px;
-  background: var(--surface-2);
+  background: var(--surface);
   border: 1px solid var(--border);
   transition: background 200ms, border-color 200ms;
 }
-.switch-row-on {
-  border-color: color-mix(in srgb, var(--in) 40%, transparent);
-}
 .switch-name {
-  font-weight: 650;
+  font-weight: 500;
 }
 .switch-meta {
   font-size: 0.82rem;
   white-space: nowrap;
 }
 .by-approval {
-  background: var(--in-dim);
-  color: var(--in);
+  background: var(--surface-3);
+  color: var(--text-2);
 }
 .by-default {
   background: var(--surface-3);
@@ -538,8 +521,8 @@
 .switch {
   position: relative;
   flex: none;
-  width: 54px;
-  height: 32px;
+  width: 44px;
+  height: 26px;
   padding: 0;
   border-radius: 999px;
   border: 0;
@@ -552,19 +535,19 @@
   position: absolute;
   top: 3px;
   left: 3px;
-  width: 26px;
-  height: 26px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
   transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .switch-on {
-  background: var(--in);
+  background: var(--accent);
   box-shadow: none;
 }
 .switch-on .switch-knob {
-  transform: translateX(22px);
+  transform: translateX(18px);
 }
 .switch:disabled {
   cursor: wait;
@@ -573,12 +556,12 @@
 .docs {
   border: 1px solid var(--border);
   border-radius: 14px;
-  background: var(--surface-2);
+  background: var(--surface);
 }
 .docs summary {
   padding: 12px 14px;
   cursor: pointer;
-  font-weight: 700;
+  font-weight: 500;
 }
 .docs summary .muted {
   font-weight: 500;

@@ -1,42 +1,43 @@
-/* Allowance dashboard: tokens, reset, typography. Dark by default, projector-first.
-   Light when the OS prefers it, or when the owner picks it (data-theme on <html>). */
+/* Allowance dashboard: tokens, reset, typography. Light by default (matches the agent chat);
+   dark when the owner picks it (data-theme on <html>). */
 :root {
-  --bg: #0a0d13;
-  --bg-glow: rgba(91, 124, 250, 0.09);
-  --surface: #11151e;
-  --surface-2: #171c27;
-  --surface-3: #202634;
-  --surface-hover: #283043;
-  --border: rgba(255, 255, 255, 0.075);
-  --border-strong: rgba(255, 255, 255, 0.14);
+  --bg: #f7f7f8;
+  --bg-glow: transparent;
+  --surface: #ffffff;
+  --surface-2: #f8f8f9;
+  --surface-3: #efeff2;
+  --surface-hover: #e8e8ec;
+  --border: #ebebee;
+  --border-strong: #dcdce1;
 
-  --text: #f2f5fa;
-  --text-2: #bac2d0;
-  --muted: #7f899c;
+  --text: #1f1f22;
+  --text-2: #4f4f57;
+  --muted: #6f6f78;
 
-  /* blue for UI chrome; green = money in / yes; red = danger; amber only for "waiting on you" */
-  --accent: #0a84ff;
-  --accent-dim: rgba(10, 132, 255, 0.16);
-  --in: #34d27b;
-  --in-hover: #52e092;
-  --in-dim: rgba(52, 210, 123, 0.14);
-  --on-in: #04240f;
-  --danger: #ff5a5f;
-  --danger-dim: rgba(255, 90, 95, 0.14);
-  --danger-glow: rgba(255, 90, 95, 0.45);
-  --warn: #f5b041;
-  --warn-dim: rgba(245, 176, 65, 0.13);
-  --warn-fill: #f5b041;
-  --on-warn: #2b1d00;
+  /* neutral chrome; blue only for primary actions and focus. Money in = green ink, refused =
+     red ink, waiting on you = amber ink: soft tints and text, never a solid fill. */
+  --accent: #0b57d0;
+  --accent-dim: rgba(11, 87, 208, 0.08);
+  --in: #137333;
+  --in-hover: #0f5c29;
+  --in-dim: #e9f5ec;
+  --on-in: #ffffff;
+  --danger: #b3261e;
+  --danger-dim: #fcefee;
+  --danger-glow: transparent;
+  --warn: #9a4f00;
+  --warn-dim: #fef4e6;
+  --warn-fill: #f6d6a8;
+  --on-warn: #5c2f00;
   /* agent-proposed (custom) services: not from the directory */
-  --custom: #ff8a3d;
-  --custom-dim: rgba(255, 138, 61, 0.13);
-  --live: #34d27b;
+  --custom: #b3470c;
+  --custom-dim: #fdf0e8;
+  --live: #1e8e3e;
 
-  --shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 10px 30px rgba(0, 0, 0, 0.28);
-  --shadow-pop: 0 24px 80px rgba(0, 0, 0, 0.55);
-  --backdrop: rgba(3, 5, 10, 0.55);
-  --tile-ring: rgba(255, 255, 255, 0.16);
+  --shadow: 0 1px 2px rgba(15, 15, 20, 0.04);
+  --shadow-pop: 0 16px 48px rgba(15, 15, 20, 0.16), 0 2px 6px rgba(15, 15, 20, 0.06);
+  --backdrop: rgba(20, 20, 25, 0.28);
+  --tile-ring: transparent;
 
   --radius: 16px;
   --radius-sm: 10px;
@@ -45,76 +46,41 @@
   --emoji: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
   --mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
-  color-scheme: dark;
-}
-
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) {
-    --bg: #f2f3f7;
-    --bg-glow: rgba(0, 122, 255, 0.06);
-    --surface: #ffffff;
-    --surface-2: #f6f7fa;
-    --surface-3: #eaedf2;
-    --surface-hover: #e1e5ec;
-    --border: rgba(16, 24, 40, 0.09);
-    --border-strong: rgba(16, 24, 40, 0.17);
-    --text: #0e1525;
-    --text-2: #384255;
-    --muted: #677084;
-    --accent: #007aff;
-    --accent-dim: rgba(0, 122, 255, 0.1);
-    --in: #12904b;
-    --in-hover: #0f7d41;
-    --in-dim: rgba(18, 144, 75, 0.1);
-    --on-in: #ffffff;
-    --danger: #d82c38;
-    --danger-dim: rgba(216, 44, 56, 0.08);
-    --danger-glow: rgba(216, 44, 56, 0.28);
-    --warn: #a86400;
-    --warn-dim: rgba(245, 166, 35, 0.13);
-    --warn-fill: #f5a623;
-    --custom: #c2410c;
-    --custom-dim: rgba(234, 88, 12, 0.09);
-    --live: #12904b;
-    --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 8px 24px rgba(16, 24, 40, 0.06);
-    --shadow-pop: 0 24px 80px rgba(16, 24, 40, 0.22);
-    --backdrop: rgba(15, 23, 42, 0.28);
-    --tile-ring: rgba(255, 255, 255, 0.35);
-    color-scheme: light;
-  }
-}
-:root[data-theme="light"] {
-  --bg: #f2f3f7;
-  --bg-glow: rgba(0, 122, 255, 0.06);
-  --surface: #ffffff;
-  --surface-2: #f6f7fa;
-  --surface-3: #eaedf2;
-  --surface-hover: #e1e5ec;
-  --border: rgba(16, 24, 40, 0.09);
-  --border-strong: rgba(16, 24, 40, 0.17);
-  --text: #0e1525;
-  --text-2: #384255;
-  --muted: #677084;
-  --accent: #007aff;
-  --accent-dim: rgba(0, 122, 255, 0.1);
-  --in: #12904b;
-  --in-hover: #0f7d41;
-  --in-dim: rgba(18, 144, 75, 0.1);
-  --on-in: #ffffff;
-  --danger: #d82c38;
-  --danger-dim: rgba(216, 44, 56, 0.08);
-  --danger-glow: rgba(216, 44, 56, 0.28);
-  --warn: #a86400;
-  --warn-dim: rgba(245, 166, 35, 0.13);
-  --warn-fill: #f5a623;
-  --custom: #c2410c;
-  --custom-dim: rgba(234, 88, 12, 0.09);
-  --live: #12904b;
-  --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 8px 24px rgba(16, 24, 40, 0.06);
-  --shadow-pop: 0 24px 80px rgba(16, 24, 40, 0.22);
-  --backdrop: rgba(15, 23, 42, 0.28);
-  --tile-ring: rgba(255, 255, 255, 0.35);
   color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --bg: #131314;
+  --bg-glow: transparent;
+  --surface: #1a1a1c;
+  --surface-2: #1f1f22;
+  --surface-3: #2a2a2d;
+  --surface-hover: #323236;
+  --border: #2a2a2d;
+  --border-strong: #38383c;
+  --text: #e8e8ea;
+  --text-2: #b4b4bb;
+  --muted: #8f8f97;
+  --accent: #a8c7fa;
+  --accent-dim: rgba(168, 199, 250, 0.12);
+  --in: #6dd58c;
+  --in-hover: #85dd9e;
+  --in-dim: rgba(109, 213, 140, 0.12);
+  --on-in: #0b2e16;
+  --danger: #f2918a;
+  --danger-dim: rgba(242, 118, 107, 0.1);
+  --danger-glow: transparent;
+  --warn: #f5c27e;
+  --warn-dim: rgba(245, 178, 91, 0.12);
+  --warn-fill: rgba(245, 178, 91, 0.3);
+  --on-warn: #f5c27e;
+  --custom: #f4a56e;
+  --custom-dim: rgba(244, 165, 110, 0.12);
+  --live: #6dd58c;
+  --shadow: none;
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px #2e2e32;
+  --backdrop: rgba(0, 0, 0, 0.5);
+  --tile-ring: transparent;
+  color-scheme: dark;
 }
 
 *,
@@ -131,14 +97,14 @@ body,
 }
 
 html {
-  font-size: 18px;
+  font-size: 16px;
 }
 
 body {
-  background: radial-gradient(1400px 700px at 15% -20%, var(--bg-glow), transparent 60%), var(--bg);
+  background: var(--bg);
   color: var(--text);
   font-family: var(--font);
-  line-height: 1.35;
+  line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
@@ -183,7 +149,7 @@ input {
 }
 
 :focus-visible {
-  outline: 3px solid var(--accent);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -199,54 +165,57 @@ input {
 .btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.4em;
-  padding: 0.45em 0.9em;
-  border-radius: var(--radius-sm);
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 999px;
   border: 1px solid var(--border-strong);
-  background: var(--surface-3);
+  background: var(--surface);
   cursor: pointer;
-  font-weight: 600;
+  font-weight: 500;
   font-size: 0.9rem;
   white-space: nowrap;
   transition: background 120ms, transform 80ms, opacity 120ms, border-color 120ms;
 }
 .btn:hover {
-  background: var(--surface-hover);
-}
-.btn:active {
-  transform: translateY(1px);
+  background: var(--surface-2);
 }
 .btn:disabled {
   opacity: 0.5;
   cursor: wait;
 }
 .btn-primary {
-  background: var(--in);
-  border-color: var(--in);
-  color: var(--on-in);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+:root[data-theme="dark"] .btn-primary {
+  color: #062e6f;
 }
 .btn-primary:hover {
-  background: var(--in-hover);
+  background: color-mix(in srgb, var(--accent) 88%, var(--text));
 }
 .btn-danger {
-  background: transparent;
-  border-color: var(--danger);
+  background: var(--surface);
+  border-color: var(--border-strong);
   color: var(--danger);
 }
 .btn-danger:hover {
   background: var(--danger-dim);
 }
 .btn-big {
-  font-size: 1.05rem;
-  padding: 0.6em 1.2em;
+  height: 42px;
+  font-size: 0.95rem;
+  padding: 0 20px;
 }
 .icon-btn {
   display: inline-grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 999px;
-  border: 1px solid var(--border-strong);
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 0;
   background: transparent;
   color: var(--text-2);
   cursor: pointer;
