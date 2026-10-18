@@ -55,7 +55,7 @@ const PAYMENT_ID_HEADER = "x-allowance-payment-id";
  * the dashboard (its dev proxy adds the owner key), the agent chat server, and the facilitator's
  * admin routes. Entries are URL prefixes; localhost aliases are treated as the same host.
  */
-export const DEFAULT_BLOCKED_URLS = ["http://localhost:4040", "http://localhost:4050", "http://localhost:4030/admin"];
+export const DEFAULT_BLOCKED_URLS = ["http://localhost:4040", "http://localhost:4050", "http://localhost:4030/admin", "http://localhost:4070/stores"];
 
 interface BlockedTarget {
   protocol: string;

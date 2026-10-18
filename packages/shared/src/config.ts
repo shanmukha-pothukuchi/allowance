@@ -71,6 +71,11 @@ export interface AppConfig {
   /** Service directory (apps/directory): the catalog of services agents can connect. */
   directoryPort: number;
   directoryUrl: string;
+  /** Shopify bridge (apps/shopify-bridge): turns Shopify stores into x402 services. */
+  shopifyBridgePort: number;
+  shopifyBridgeUrl: string;
+  /** Admin API access for the owner's own store (Dev Dashboard app, client credentials grant). */
+  shopify: { adminShop?: string; clientId?: string; clientSecret?: string; apiVersion: string };
   /** Agent chat server (apps/agent-chat). Binds to localhost by default: whoever can reach it can instruct agents. */
   agentChatPort: number;
   agentChatHost: string;
@@ -129,6 +134,14 @@ export function loadConfig(): AppConfig {
       chainMode === "mock" ? facilitatorUrl : (env.X402_FACILITATOR_URL ?? "https://x402.org/facilitator"),
     merchantPrivateKey: (env.MERCHANT_PRIVATE_KEY as `0x${string}` | undefined) || undefined,
     ownerApiKey: env.OWNER_API_KEY || readOwnerKeyFile(resolve(repoRoot, env.DATA_DIR ?? ".data")),
+    shopifyBridgePort: Number(env.SHOPIFY_BRIDGE_PORT ?? 4070),
+    shopifyBridgeUrl: env.SHOPIFY_BRIDGE_URL ?? `http://localhost:${Number(env.SHOPIFY_BRIDGE_PORT ?? 4070)}`,
+    shopify: {
+      adminShop: env.SHOPIFY_ADMIN_SHOP || undefined,
+      clientId: env.SHOPIFY_CLIENT_ID || undefined,
+      clientSecret: env.SHOPIFY_CLIENT_SECRET || undefined,
+      apiVersion: env.SHOPIFY_API_VERSION || "2026-10",
+    },
     directoryPort: Number(env.DIRECTORY_PORT ?? 4060),
     directoryUrl: env.DIRECTORY_URL ?? `http://localhost:${Number(env.DIRECTORY_PORT ?? 4060)}`,
     agentChatPort: Number(env.AGENT_CHAT_PORT ?? 4050),

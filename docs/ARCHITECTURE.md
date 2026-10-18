@@ -576,3 +576,88 @@ owner is done with this sheet" (cancel, done, or saved the token). The wallet's 
 event carries `data.agent` (`AgentPublic`), and `initialBalance` is range-checked like a top-up.
 `{ type: "allowance:sheet-size", sheet, height }`, `{ type: "allowance:agent-created", name }`,
 `{ type: "allowance:money-added", name, amount }`, `{ type: "allowance:sheet-close", sheet }`.
+
+## 15. Shopify stores (Phase 6 contract)
+
+A Shopify store becomes a **service** in the directory. Two modes (`ShopifyMode`):
+
+- **`agent_checkout`** — the owner's own store, with Admin API credentials (`SHOPIFY_ADMIN_SHOP`,
+  `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`; a Dev Dashboard app installed on the store with
+  `read_products`, `write_orders`, `read_orders`; token via the client credentials grant
+  `POST https://{shop}/admin/oauth/access_token`, valid 24 h, cached and refreshed). The agent pays
+  the order total in USDC over x402 through its wallet (normal policy, caps and approvals); the
+  bridge then creates a **real order** in the store with the Admin API, marked paid ("Allowance USDC
+  (x402)", tx hash in the note). This is what an "accept USDC from agents" Shopify payment app does.
+- **`handoff`** — any other store. Agents browse and build a cart, and get Shopify's own checkout
+  link for the owner to finish paying. No agent payment. (This matches UCP's guidance when a store
+  advertises no agent payment handlers.)
+
+Catalog source: Admin GraphQL when the store has credentials; otherwise the Storefront API
+without a token (products, search, cart; fails on password-protected stores with "Online Store
+channel is locked") and, if that fails, UCP `search_catalog` at `https://{shop}/api/ucp/mcp` (needs a
+public HTTPS agent profile, `UCP_AGENT_PROFILE_URL`; optional). Currency must be USD (1 USD = 1 USDC).
+
+### 15.1 Shopify bridge (`apps/shopify-bridge`, port 4070, `SHOPIFY_BRIDGE_URL`)
+
+The bridge holds one merchant wallet (`DATA_DIR/shopify-bridge-key.json`, never logged) as the
+x402 `payTo` for every store, and a store registry (`DATA_DIR/shopify-stores.json`).
+
+| Method | Path | Auth | Body → Response |
+|---|---|---|---|
+| GET | `/stores/discover?url=` | none | Normalize (`https://x.myshopify.com`, `x.myshopify.com`, or a storefront URL whose `/.well-known/ucp` names a `*.myshopify.com` endpoint) → `ShopifyStore` preview (name, currency, mode, productCount). No side effects. 400 `invalid_store_url`, 404 `store_not_found`, 422 `store_unsupported` (non-USD / unreachable catalog). |
+| POST | `/stores` | `X-Owner-Key` | `{ url }` → `201 { store }` (registered) · 409 `store_exists` (returns it) |
+| GET | `/stores` · `/stores/:handle` | none | `{ stores }` · `{ store }` |
+| GET | `/shops/:handle/products?q=&limit=` | none (free) | `{ store: {name, currency, mode}, products: [{ id, handle, title, description (≤ 300 chars), image, url, priceMin, priceMax, currency, available, variants: [{ id, title, price, available }] }] }` |
+| GET | `/shops/:handle/products/:productHandle` | none | `{ product }` (same shape, full variant list ≤ 50) |
+| POST | `/shops/:handle/carts` | none | `{ lines: [{ variantId, quantity }], email?, shippingAddress? { name, address1, city, province, zip, country } , note? }` → `201 { cartId, store, lines: [{ variantId, title, variantTitle, quantity, unitPrice, lineTotal, image }], subtotal, shipping: "0.00", total, currency, expiresAt, mode, checkoutUrl }` where `checkoutUrl` is `{BRIDGE}/shops/:handle/carts/:cartId/checkout` (agent_checkout) or Shopify's checkout link (handoff). Prices are re-read from Shopify; quantity 1–20, ≤ 20 lines; 30-minute carts kept in memory. |
+| POST | `/shops/:handle/carts/:cartId/checkout` | **x402** | agent_checkout only. Dynamic price = cart total; `payTo` = bridge wallet; resource description "{Shop name} order". After payment verifies, create the Shopify order (`orderCreate`, financial status PAID, a SALE transaction with gateway "Allowance USDC (x402)", note "Paid by an Allowance agent with USDC · tx …", tags `allowance, x402`, `email` if given); only then let the payment settle. → `200 { status: "placed", orderId, orderName, adminUrl, store, total, currency, items, txHash? }`. A cart can be paid once (second call → `409 cart_already_paid` with the order). Handoff stores → `409 agent_checkout_unavailable { handoffUrl }`. If order creation fails → error status so the x402 middleware does **not** settle. |
+| GET | `/health` | none | `{ ok, stores, adminShop, adminConfigured }` |
+
+### 15.2 Directory additions
+
+Dynamic entries persisted in `DATA_DIR/directory-extra.json` and listed with the catalog.
+
+| Method | Path | Auth | Body → Response |
+|---|---|---|---|
+| POST | `/services/shopify` | `X-Owner-Key` | `{ url, maxPrice? }` → registers with the bridge (`POST /stores`) and adds manifest `shopify-<handle>` → `201 { service }` · 409 `service_exists` |
+| DELETE | `/services/:id` | `X-Owner-Key` | dynamic entries only → `{ ok }` |
+
+Shopify manifest: `id: "shopify-<handle>"`, `name: <shop name>`, `provider: "Shopify"`,
+`icon: "🛍️"`, `color: "#95BF47"`, `category: "shopping"`, `kind: "x402"`,
+`baseUrl: {BRIDGE}/shops/<handle>`, `maxPrice` (owner's cap, default `"100.00"`, ≤ `MAX_TOPUP`),
+`pricing: "Varies by item · up to $<cap> per order"` (handoff: `"Browse only · you pay at Shopify checkout"`),
+`permissions` (agent_checkout: browse catalog, pay up to $cap per order, place orders on your behalf;
+handoff: browse catalog, build carts for you to check out), `docs` generated from §15.1 with the
+store's name, and `shopify: { handle, domain, mode }`.
+
+### 15.3 Wallet additions
+
+- Owner: `GET /v1/directory/shopify/preview?url=` → bridge discover; `POST /v1/directory/shopify
+  { url, maxPrice? }` → directory `POST /services/shopify` (owner key) → `{ service }`; optional
+  `connectTo: agentId[]` connects it right away (`connectedBy: "owner"`).
+- Agent: `POST /v1/services/requests { shopifyStoreUrl, maxPrice?, reason }` → discover via the
+  bridge; if the directory already has `shopify-<handle>` it is a normal service request; otherwise a
+  service approval whose grant is the proposed Shopify manifest (`source: "agent"`, with `shopify`).
+  On approval the wallet adds it to the directory (owner key) and connects it. `maxPrice` defaults
+  to the agent's `maxPerTx` and may not exceed it.
+- Payments to `{BRIDGE}/shops/<handle>/…` follow the normal rules: connected-service prefix,
+  `service_cap` (order total ≤ the store's cap), approval threshold, daily cap.
+- The bridge's `POST /stores` is owner-only and in the MCP `fetch_url` blocklist.
+
+### 15.4 MCP
+
+`request_service` gains `shopify_store_url` (and optional `max_price`): "To shop at a Shopify store
+that isn't in the directory, pass its link". `search_services` shows Shopify stores like other
+services; `get_service` returns the generated docs. Agents shop with `fetch_url` per the docs:
+search products, create a cart, then `POST …/checkout` (402, paid by the wallet). A handoff store's
+cart returns a Shopify checkout link the agent passes to the owner.
+
+### 15.5 UI
+
+- **Chat:** product results (`…/products`) as product cards (image, title, price, variants);
+  cart summary card; Shopify order card on a placed order (order name, store, items, total, "View in
+  Shopify admin"); handoff card ("Finish checkout at Shopify" link); connection request cards for
+  Shopify stores show the store domain and mode.
+- **Dashboard:** Services gets "Add a Shopify store": paste a link → live preview (name, products,
+  currency, agent checkout or browse-only) → cap → Add, then per-agent connect switches. Shopify
+  services show a Shopify badge and mode; service approvals for Shopify stores show the domain.

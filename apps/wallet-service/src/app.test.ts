@@ -69,6 +69,9 @@ beforeAll(async () => {
     agentChatHost: "127.0.0.1",
     agentChatUrl: "",
     llm: { baseUrl: "http://127.0.0.1:1", model: "test" },
+    shopifyBridgePort: 0,
+    shopifyBridgeUrl: "http://127.0.0.1:1",
+    shopify: { apiVersion: "2026-10" },
   });
   for (const level of ["log", "warn", "error"] as const) {
     vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {

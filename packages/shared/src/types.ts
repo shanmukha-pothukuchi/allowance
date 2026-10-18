@@ -193,10 +193,36 @@ export interface ServiceManifest {
   docs: string;
   /** "directory" for catalog entries, "agent" for custom services an agent proposed and the owner approved. */
   source?: "directory" | "agent";
+  /** Shopify stores only (see docs/ARCHITECTURE.md §15). */
+  shopify?: ShopifyStoreRef;
+}
+
+/** How agents can buy from a Shopify store through the bridge. */
+export type ShopifyMode =
+  /** The owner's own store with Admin API credentials: the agent pays in USDC (x402) and the bridge creates a paid order. */
+  | "agent_checkout"
+  /** Any other store: browse and build a cart; the owner finishes payment at Shopify's checkout link. */
+  | "handoff";
+
+export interface ShopifyStoreRef {
+  /** Subdomain of *.myshopify.com, e.g. "crypto-app-test". */
+  handle: string;
+  /** e.g. "crypto-app-test.myshopify.com" */
+  domain: string;
+  mode: ShopifyMode;
+}
+
+/** A store the bridge knows about. */
+export interface ShopifyStore extends ShopifyStoreRef {
+  name: string;
+  currency: string;
+  /** Rough catalog size at discovery time, if known. */
+  productCount?: number;
+  addedAt?: IsoDate;
 }
 
 /** Shown on approval cards and stored on the connection. */
-export type ServiceGrant = Pick<ServiceManifest, "id" | "name" | "provider" | "icon" | "color" | "kind" | "summary" | "baseUrl" | "pricing" | "maxPrice" | "permissions" | "source"> & {
+export type ServiceGrant = Pick<ServiceManifest, "id" | "name" | "provider" | "icon" | "color" | "kind" | "summary" | "baseUrl" | "pricing" | "maxPrice" | "permissions" | "source" | "shopify"> & {
   /** Directory category; custom (agent-proposed) services default to "tools". */
   category?: ServiceCategory;
 };
@@ -215,6 +241,10 @@ export interface ServiceRequest {
   serviceId?: string;
   /** Custom service not in the directory (Muse-style "write a connector"). Owner sees it flagged as agent-proposed. */
   custom?: { name: string; baseUrl: string; summary: string; maxPrice: string; docs?: string };
+  /** A Shopify store to add (e.g. "https://crypto-app-test.myshopify.com"); discovered via the bridge. */
+  shopifyStoreUrl?: string;
+  /** Shopify only: per-order cap the agent asks for (dollars). Defaults to the agent's max per payment. */
+  maxPrice?: string;
   /** The agent's reason, shown to the owner verbatim (untrusted). */
   reason?: string;
 }
