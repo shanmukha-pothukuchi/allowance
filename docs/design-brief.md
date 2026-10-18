@@ -25,6 +25,10 @@ The agents are real LLM agents. They do nothing until the owner asks. They can:
   directory and asks the owner to connect it. It can also propose a service that isn't in the
   directory.
 
+The owner builds their own team. They can **create new agents** (a name, a purpose, spending
+limits, the services it starts with, and starting money), **add money** to any agent, and put agents
+into **broadcast groups** to message several at once, like a WhatsApp broadcast list.
+
 If an agent is told to send money somewhere it shouldn't, by a person or by malicious text on a
 website, it may try. The wallet refuses, freezes the agent, and alerts the owner. The core promise:
 **whatever the model was told, the money only moves within the owner's rules.**
@@ -60,12 +64,20 @@ website, it may try. The wallet refuses, freezes the agent, and alerts the owner
    sent.* Then the owner unfreezes it.
 5. **The owner's overview.** All agents and their balances, spent and earned today, everything that
    happened, what's waiting on the owner, and which services each agent can use.
+6. **Build the team.** The owner creates a new agent: they name it ("travel-planner"), describe what
+   it's for in a sentence, give it $20, choose how careful it should be with money, and pick the
+   services it starts with. It appears ready to chat. They top up an agent that's running low, and
+   make a broadcast group ("Research team") of a few agents, then send one message to all of them.
 
 ## Surfaces
 
 You decide how many surfaces there are and how they relate. These needs must be covered:
 
-- **Talking to agents:** one agent at a time, or several at once (the race).
+- **Talking to agents:** one agent at a time, or a broadcast group at once. The race in moment 2
+  is one group; the owner can make, rename, re-member and remove others.
+- **Creating an agent and adding money:** these mint a new credential and move money, so they
+  belong to the owner's wallet surface (see the trust boundary). They should still be reachable at
+  the moment the owner needs them, including while talking to agents.
 - **The owner's console:** money, agents, activity, rules, services.
 - **Approvals:** phone first, but also usable at the moment the agent is asking. Two kinds: a
   payment, and connecting a service.
@@ -98,6 +110,29 @@ Each agent has a balance (all start at $20.00), spent today, earned today, a wal
 - waiting for the owner's approval (payment or service)
 - the model is busy and retrying
 - frozen, with the reason
+
+**Creating an agent** takes:
+
+- **Name:** lowercase letters, digits and dashes, 2–32 characters (e.g. `travel-planner`). Must be
+  unique. Each agent gets a generated avatar from its name.
+- **Purpose:** a sentence or two in the owner's words; it becomes the agent's instructions.
+- **Starting money:** e.g. $5, $10, $20, $50 or a custom amount up to $1,000. It's test money on a
+  mock ledger in the demo, and that should be clear.
+- **How careful it is with money:** max per payment, daily cap and the "ask me above" threshold.
+  Sensible presets help: careful ($1 / $5 a day / ask above $1), everyday ($5 / $25 / $5), shopper
+  ($20 / $50 / $10) or custom.
+- **Services to start with:** chosen from the directory. It can always ask for more later.
+- **Result:** the agent exists in the wallet and is ready to chat. If the chat can't be reached,
+  the agent's one-time credential is shown once so it can be handed to another app (e.g. Claude
+  Desktop).
+
+**Adding money:** pick an amount (quick choices or custom, up to $1,000). The balance updates and a
+receipt is recorded. On a real network this isn't possible; the owner funds the wallet address
+instead.
+
+**Broadcast groups:** a name, an emoji and a set of member agents. A default "All workers" group
+exists and can be edited but not deleted. One message goes to every member at the same moment, and
+each member answers for itself. A group can have two members or ten.
 
 **A turn with an agent** contains the owner's message, the agent's reply (short, markdown-ish text),
 and the steps it took. Each step has an input, an output, a duration and success or failure. The
@@ -187,13 +222,18 @@ payouts with transaction ids, and a link to the machine-readable version of the 
 - What is simulated and what is real.
 - That an agent is frozen, why, and how to undo it.
 - During the race, who got a slot and who didn't, while it's happening.
+- In a group conversation, which agent said what, and that one message went to all of them.
+- Creating an agent and adding money are owner actions with real consequences (a new credential, money
+  moving), even though they're quick.
 
 ## Hard constraints
 
 - **Trust boundary.** The surface where the owner talks to agents is run by the agent side. It
-  must not be able to approve anything or change rules. Approval controls are served by the
+  must not be able to approve anything, change rules, create agents or add money; broadcast groups
+  are fine there because they carry no authority. Approval controls are served by the
   owner's wallet surface, a separate web origin. If approvals appear inside a conversation, they
   must be an embedded piece of the owner's wallet that visibly belongs to the wallet, not the agent.
+  The same applies to creating an agent and adding money.
   Design it so a convincing fake inside agent text would still look wrong.
 - **Projector-readable** at 1280×720 and 1920×1080 from the back of a room. **Phone** approvals at
   about 390×844.
@@ -226,9 +266,10 @@ crypto exchange.
    reasoning.
 2. **A visual system.** Type, color, spacing, iconography, and how money in, money out, refused,
    waiting and agent-authored content are encoded.
-3. **Screens for each of the five moments**, including in-progress, waiting-for-approval, success,
+3. **Screens for each of the six moments**, including in-progress, waiting-for-approval, success,
    blocked, frozen, expired, offline and empty states, for laptop and projector, plus the phone
-   approval flow.
+   approval flow. Include creating an agent, adding money, and creating and editing a broadcast
+   group.
 4. **A component inventory** with states.
 5. **Motion notes** for live updates, the race, and the moment of a block.
 6. **A short rationale** for the key decisions, especially how the trust boundary and "whose words
