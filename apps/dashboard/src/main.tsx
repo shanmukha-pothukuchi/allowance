@@ -6,10 +6,16 @@ import { EmbedApproval } from "./Embed";
 import { EmbedSheet } from "./EmbedSheet";
 import { embedSheet } from "./sheets";
 import { applyTheme, themeFromSearch } from "./theme";
+// Google Sans (OFL), bundled by Vite so nothing loads from a font CDN.
+import "@fontsource/google-sans/latin-400.css";
+import "@fontsource/google-sans/latin-500.css";
+import "@fontsource/google-sans/latin-600.css";
+import "@fontsource/google-sans/latin-700.css";
 import "./styles/base.css";
 import "./styles/app.css";
 import "./styles/services.css";
 import "./styles/sheets.css";
+import "./styles/embed.css";
 
 const embedId = embedApprovalId();
 const sheet = embedId ? null : embedSheet(location.search);

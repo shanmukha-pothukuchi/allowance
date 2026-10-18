@@ -42,7 +42,7 @@ export function ApprovalCard({ approval: a, now, busy = false, showDetails = fal
       {service ? (
         <>
           <div className="approval-service-row">
-            <ServiceTile icon={service.icon} color={service.color} size={variant === "embed" ? "md" : "lg"} />
+            <ServiceTile name={service.name} color={service.color} size={variant === "embed" ? "md" : "lg"} />
             <div className="approval-service-name">
               <span className="svc-name">{service.name}</span>
               <span className="svc-provider">

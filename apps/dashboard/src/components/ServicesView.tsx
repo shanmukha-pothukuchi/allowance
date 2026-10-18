@@ -77,7 +77,7 @@ function ServiceCardView({ entry, waiting, onOpen }: { entry: CatalogEntry; wait
   return (
     <button className={`svc-card${entry.custom ? " svc-card-custom" : ""}${waiting ? " svc-card-waiting" : ""}`} onClick={onOpen}>
       <div className="svc-card-top">
-        <ServiceTile icon={s.icon} color={s.color} size="xl" />
+        <ServiceTile name={s.name} color={s.color} size="xl" />
         <div className="svc-badges">
           {waiting > 0 && <span className="badge badge-warn">{waiting} waiting for you</span>}
           {entry.custom && <span className="badge badge-custom">Proposed by {entry.proposedBy.map((a) => a.name).join(", ") || "an agent"}</span>}

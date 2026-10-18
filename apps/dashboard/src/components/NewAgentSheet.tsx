@@ -31,7 +31,7 @@ import {
 } from "../sheets";
 import type { AgentPublic, DirectoryService, SummaryResponse } from "../types";
 import { AgentAvatar, ServiceTile } from "./Avatar";
-import { ArrowOut, Check, Cross, Info, Warn } from "./Icons";
+import { ArrowOut, Check, Cross, Info, Plus, Warn } from "./Icons";
 import { AmountPicker, CopyField, CUSTOM, Field, SheetShell } from "./SheetParts";
 
 type Phase = "form" | "creating" | "registering" | "done";
@@ -201,7 +201,13 @@ export function NewAgentSheet({ adapter, offline = false, embed, chatUrl, knownN
 
   const head = (
     <div className="osheet-title">
-      {name ? <AgentAvatar name={result?.agent.name ?? name} size="xl" /> : <span className="avatar avatar-xl avatar-empty" aria-hidden>?</span>}
+      {name ? (
+        <AgentAvatar name={result?.agent.name ?? name} size="xl" />
+      ) : (
+        <span className="avatar avatar-xl avatar-empty" aria-hidden>
+          <Plus width={22} height={22} />
+        </span>
+      )}
       <div className="osheet-titles">
         <h2 className="osheet-name">{result ? result.agent.name : name || "New agent"}</h2>
         <p className="muted">{result ? "New agent" : "Its own wallet, limits and services"}</p>
@@ -254,7 +260,7 @@ export function NewAgentSheet({ adapter, offline = false, embed, chatUrl, knownN
             <div className="created-services" aria-label="Connected services">
               {agent.services.map((s) => (
                 <span key={s.id} className="created-service">
-                  <ServiceTile icon={s.icon} color={s.color} size="sm" /> {s.name}
+                  <ServiceTile name={s.name} color={s.color} size="sm" /> {s.name}
                 </span>
               ))}
             </div>
@@ -429,7 +435,7 @@ export function NewAgentSheet({ adapter, offline = false, embed, chatUrl, knownN
             <li>
               <label className="svc-pick svc-pick-on svc-pick-locked" title="Every agent always has the directory">
                 <input type="checkbox" checked disabled readOnly />
-                <ServiceTile icon={dirEntry?.icon ?? "🧭"} color={dirEntry?.color ?? "#5B7CFA"} size="sm" />
+                <ServiceTile name={dirEntry?.name ?? "Service Directory"} color={dirEntry?.color ?? "#5B7CFA"} size="sm" />
                 <span className="svc-pick-text">
                   <strong>{dirEntry?.name ?? "Service Directory"}</strong>
                   <small>Always included</small>
@@ -445,7 +451,7 @@ export function NewAgentSheet({ adapter, offline = false, embed, chatUrl, knownN
                 <li key={s.id}>
                   <label className={`svc-pick${on ? " svc-pick-on" : ""}`} title={s.summary}>
                     <input type="checkbox" checked={on} onChange={() => toggleService(s.id)} />
-                    <ServiceTile icon={s.icon} color={s.color} size="sm" />
+                    <ServiceTile name={s.name} color={s.color} size="sm" />
                     <span className="svc-pick-text">
                       <strong>{s.name}</strong>
                       <small>{s.pricing}</small>

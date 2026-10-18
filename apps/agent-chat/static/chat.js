@@ -217,6 +217,11 @@
     plus: '<path d="M12 5v14M5 12h14"/>',
     pencil: '<path d="M17 3a2.8 2.8 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/>',
     users: '<circle cx="9" cy="8" r="4"/><path d="M2 21a7 7 0 0 1 14 0"/><path d="M16 3.5a4 4 0 0 1 0 9M22 21a7 7 0 0 0-4.5-6.5"/>',
+    cloud: '<path d="M7 18a4.5 4.5 0 0 1-.5-9 6 6 0 0 1 11.4 1.6A3.8 3.8 0 0 1 17.5 18z"/>',
+    news: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/>',
+    chart: '<path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/>',
+    bag: '<path d="M5 8h14l-1 12H6z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>',
+    coins: '<circle cx="9" cy="9" r="6"/><path d="M15.5 9.5A6 6 0 1 1 9.5 15.5"/>',
   };
   function icon(name, extra) {
     return '<svg class="i' + (extra ? " " + extra : "") + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (P[name] || P.wrench) + "</svg>";
@@ -360,23 +365,26 @@
     var l = avatarOf(name).label;
     return !l || l === "Agent" ? "Agent" : l + " agent";
   }
+  /** "researcher" → "R", "worker-3" → "W3", "travel-planner" → "TP". */
+  function initials(name) {
+    var parts = str(name).split(/[-_\s]+/).filter(Boolean);
+    if (!parts.length) return "?";
+    var last = parts[parts.length - 1];
+    if (parts.length > 1 && /^\d+$/.test(last)) return (parts[0][0] + last.slice(0, 2)).toUpperCase();
+    return (parts[0][0] + (parts[1] ? parts[1][0] : "")).toUpperCase();
+  }
   function avatarHtml(name, size, badge) {
     var av = avatarOf(name);
-    var letter = /^[\x20-\x7e]+$/.test(av.emoji);
     return (
-      '<span class="av' + (size ? " s" + size : "") + (letter ? " letter" : "") + '" style="--c:' + av.color + '">' +
-      (letter ? esc(av.emoji) : '<span class="em">' + esc(av.emoji) + "</span>") +
+      '<span class="av' + (size ? " s" + size : "") + '" style="--c:' + av.color + '">' + esc(initials(name)) +
       (badge ? '<span class="badge-dot ' + badge + '"></span>' : "") +
       "</span>"
     );
   }
-  /** A broadcast group's face: its emoji on its color (def from cleanGroup, or the sheet preview). */
+  /** A broadcast group's face: a people glyph on the group's color (def from cleanGroup, or the sheet preview). */
   function groupAvatarHtml(def, size, badge, mark) {
-    var em = glyph(def && def.emoji, "📣");
-    var letter = /^[\x20-\x7e]+$/.test(em);
     return (
-      '<span class="av gav' + (size ? " s" + size : "") + (letter ? " letter" : "") + '" style="--c:' + safeColor(def && def.color, "#5B7CFA") + '">' +
-      (letter ? esc(em) : '<span class="em">' + esc(em) + "</span>") +
+      '<span class="av gav' + (size ? " s" + size : "") + '" style="--c:' + safeColor(def && def.color, "#5B7CFA") + '">' + icon("users") +
       (badge ? '<span class="badge-dot ' + badge + '"></span>' : "") +
       (mark ? '<span class="bc-mark">' + icon("megaphone") + "</span>" : "") +
       "</span>"
@@ -445,10 +453,11 @@
       path: base.path || "",
     };
   }
+  var SVC_ICON = { directory: "search", "acme-weather": "cloud", "acme-news": "news", "acme-stocks": "chart", "acme-pizza": "bag", "acme-bounties": "briefcase" };
   function tileHtml(info, cls) {
-    var g = glyph(info && info.icon, "🧩");
-    var letter = /^[\x20-\x7e]+$/.test(g);
-    return '<span class="tile' + (cls ? " " + cls : "") + '" style="--c:' + safeColor(info && info.color, "#8E8E93") + (letter ? ";color:#fff;font-weight:700" : "") + '">' + esc(g) + "</span>";
+    var ic = info && (info.glyph || SVC_ICON[str(info.id)]);
+    var face = ic ? icon(ic) : esc((str(info && info.name).replace(/^Acme\s+/, "")[0] || "?").toUpperCase());
+    return '<span class="tile' + (cls ? " " + cls : "") + '" style="--c:' + safeColor(info && info.color, "#6B7280") + '">' + face + "</span>";
   }
   function under(url, base) {
     var b = str(base).replace(/\/+$/, "");
@@ -865,7 +874,7 @@
     var sent = rc.verb === "Sent";
     var svc = sent ? null : (e.name === "fetch_url" && serviceForUrl(str(args.url))) || serviceForParty(rc.party);
     var name = svc ? svc.name : rc.party;
-    var tile = sent ? '<span class="tile" style="--c:#8E8E93;color:#fff">' + icon("send") + "</span>" : tileHtml(svc || { icon: "🧾", color: "#8E8E93" });
+    var tile = tileHtml(sent ? { glyph: "send" } : svc || { glyph: "receipt" });
     var n = num(rc.amount);
     if (!sent && n != null && n < 1) {
       // Micropayments: one compact row, so a few API calls don't fill the screen.
@@ -886,7 +895,7 @@
     var title = rc.party.replace(/^Bounty:\s*/, "");
     var site = hostOnly(objArgs(e).submit_url);
     return (
-      '<div class="card earned"><div class="card-pad"><div class="c-row"><span class="tile" style="--c:#34C759">💰</span>' +
+      '<div class="card earned"><div class="card-pad"><div class="c-row">' + tileHtml({ glyph: "coins", color: "#1E8E3E" }) +
       '<div class="c-who"><div class="c-k">Earned</div><div class="c-name">' + esc(title) + "</div></div>" +
       '<span class="pill ok">' + icon("check") + "Paid out</span></div>" +
       '<div class="c-amt">+' + esc(rc.amount || "—") + "</div>" + (site ? '<div class="c-sub">Bounty on ' + esc(site) + "</div>" : "") + "</div>" + receiptFoot(rc, e) + "</div>"
@@ -949,7 +958,7 @@
     var args = objArgs(e);
     var custom = args.custom && typeof args.custom === "object" ? args.custom : null;
     var info = custom
-      ? { name: str(custom.name).slice(0, 60) || "New service", provider: "Proposed by " + a.name + " · " + hostOnly(custom.base_url), icon: "🧩", color: "#7C8799", permissions: ["Pay up to " + money(custom.max_price) + " per request under " + hostPath(custom.base_url)] }
+      ? { name: str(custom.name).slice(0, 60) || "New service", provider: "Proposed by " + a.name + " · " + hostOnly(custom.base_url), glyph: "globe", color: "#7C8799", permissions: ["Pay up to " + money(custom.max_price) + " per request under " + hostPath(custom.base_url)] }
       : svcInfo(str(args.service_id));
     var st = connStatus(a, e);
     var badge = { connected: ["ok", "check", "Connected"], pending: ["wait", "clock", "Pending"], declined: ["err", "x", "Declined"], expired: ["err", "clock", "Expired"], failed: ["err", "x", "Not sent"] }[st];
@@ -961,7 +970,7 @@
       '<div class="c-row">' + tileHtml(info, "t48") + '<div class="c-who"><div class="c-name">' + esc(info.name) + "</div>" + (info.provider ? '<div class="c-k">' + esc(custom ? info.provider : "by " + info.provider) + "</div>" : "") + "</div>" +
       '<span class="pill ' + badge[0] + '">' + icon(badge[1]) + badge[2] + "</span></div>" +
       (perms.length ? '<div class="c-asks">' + esc(a.name) + " will be able to</div>" + '<ul class="c-perms">' + perms.map(function (p) { return "<li>" + icon("check") + "<span>" + esc(p) + "</span></li>"; }).join("") + "</ul>" : "") +
-      (reason ? '<div class="c-reason">“' + esc(reason) + "”</div>" : "") +
+      (reason ? '<div class="c-reason"><small>' + esc(a.name) + "'s reason, in its own words</small>" + esc(reason) + "</div>" : "") +
       (custom ? '<div class="c-flag">Not in the directory · proposed by the agent</div>' : "") +
       "</div></div>"
     );
@@ -1453,7 +1462,7 @@
       var last = !same(q, it);
       if (it.stable) return { key: it.key, html: it.html };
       var cont = first ? "" : p.kind === "bubble" && it.kind === "bubble" ? " cont" : " cont2";
-      var label = opts.group && first && it.side === "them" && it.who ? '<div class="who">' + avatarHtml(it.who, 16) + esc(it.who) + "</div>" : "";
+      var label = opts.group && first && it.side === "them" && it.who ? '<div class="who">' + avatarHtml(it.who, 24) + esc(it.who) + "</div>" : "";
       var inner = it.kind === "bubble" ? '<div class="bub ' + it.side + (last ? " tail" : "") + '">' + md(it.text) + "</div>" : it.html;
       return { key: it.key, html: '<div class="it ' + it.side + cont + " k-" + it.kind + '">' + label + inner + "</div>" };
     });
@@ -1616,11 +1625,12 @@
       if (!q || match(def.name) || match("broadcast") || names.some(match)) items.push({ key: "row:group:" + def.id, html: groupRowHtml(def) });
     });
     if (!q && state.loaded && !state.groupList.length && state.order.length > 1) items.push({ key: "row:inv-group", html: inviteRowHtml("new-group", "megaphone", "New broadcast", "Message several agents at once") });
+    if (items.length) items.unshift({ key: "row:h-groups", html: '<div class="rows-h">Broadcasts</div>' });
     var agentRows = state.order.filter(function (n) {
       var a = state.agents[n];
       return a && (match(n) || match(a.role) || match(avatarOf(n).label) || match(lastMsg(a).text));
     });
-    if (items.length && agentRows.length) items.push({ key: "row:sep", html: '<div class="side-sep"></div>' });
+    if (items.length && agentRows.length) items.push({ key: "row:h-agents", html: '<div class="rows-h">Agents</div>' });
     agentRows.forEach(function (n) { items.push({ key: "row:" + n, html: agentRowHtml(n) }); });
     if (!state.order.length && state.loaded) items.push({ key: "row:inv-agent", html: inviteRowHtml("new-agent", "userPlus", "Create an agent", "Give it a wallet and some money") });
     else if (!items.length && q) items.push({ key: "row:nomatch", html: '<div style="padding:14px;color:var(--text-2);font-size:14px">No results for “' + esc(ui.search.trim()) + "”</div>" });
@@ -1656,14 +1666,15 @@
       var seg = '<div class="seg" role="tablist"><button class="' + (ui.view === "thread" ? "on" : "") + '" data-action="view" data-view="thread">' + icon("bubble") + 'Thread</button><button class="' + (ui.view === "grid" ? "on" : "") + '" data-action="view" data-view="grid">' + icon("grid") + "Grid</button></div>";
       return (
         left + '<div class="head-c"><button class="head-who" data-action="info" title="Broadcast details">' + stackHtml(names, 26, 6) +
-        '<span class="head-name">' + esc(def.name) + '<span class="chev">' + icon("chev") + '</span></span></button><span class="head-sub">' + sub + "</span></div>" +
+        '<span class="head-txt"><span class="head-name">' + esc(def.name) + '<span class="chev">' + icon("chev") + '</span></span><span class="head-sub">' + sub + "</span></span></button></div>" +
         '<div class="head-r">' + seg + info + "</div>"
       );
     }
     var a = state.agents[names[0]];
     return (
-      left + '<div class="head-c"><button class="head-who" data-action="info" title="Details">' + avatarHtml(a.name, 34) + '<span class="head-name">' + esc(a.name) + '<span class="chev">' + icon("chev") + "</span></span></button>" +
-      '<span class="head-sub">' + subtitleHtml(a) + addMoneyBtn(a.name) + "</span></div>" + '<div class="head-r">' + info + "</div>"
+      left + '<div class="head-c"><button class="head-who" data-action="info" title="Details">' + avatarHtml(a.name, 34) +
+      '<span class="head-txt"><span class="head-name">' + esc(a.name) + '<span class="chev">' + icon("chev") + "</span></span>" +
+      '<span class="head-sub">' + subtitleHtml(a) + "</span></span></button></div>" + '<div class="head-r">' + addMoneyBtn(a.name) + info + "</div>"
     );
   }
   function bannersHtml() {
@@ -1785,19 +1796,19 @@
     var c = [];
     var worker = names.length > 0 && names.every(function (n) { return /^worker-/.test(n); });
     if (worker) {
-      c.push({ em: "🧪", label: "API reliability bounty", text: "Find paid work on localhost:4021 and complete the API reliability check bounty." });
-      if (!group) c.push({ em: "📝", label: "Release-notes bounty", text: "Find paid work on localhost:4021 and do the release-notes summary bounty." });
+      c.push({ label: "API reliability bounty", text: "Find paid work on localhost:4021 and complete the API reliability check bounty." });
+      if (!group) c.push({ label: "Release-notes bounty", text: "Find paid work on localhost:4021 and do the release-notes summary bounty." });
     } else if (group) {
-      c.push({ em: "👋", label: "Introduce yourselves", text: "Introduce yourselves in one line each: what you do, and how much money is in your wallet." });
+      c.push({ label: "Introduce yourselves", text: "Introduce yourselves in one line each: what you do, and how much money is in your wallet." });
     } else if (names[0] === "researcher") {
-      c.push({ em: "🌤️", label: "Weather, headlines & ACME stock", text: "What's the weather in Paris today, the top 3 headlines, and the ACME stock price?" });
+      c.push({ label: "Weather, headlines & ACME stock", text: "What's the weather in Paris today, the top 3 headlines, and the ACME stock price?" });
     } else if (names[0] === "shopper") {
-      c.push({ em: "🍕", label: "Order a pizza", text: "Order me a large mushroom pizza, delivered to Hackathon Hall table 7." });
+      c.push({ label: "Order a pizza", text: "Order me a large mushroom pizza, delivered to Hackathon Hall table 7." });
     } else if (state.agents[names[0]] && avatarOf(names[0]).label === "Agent") {
-      c.push({ em: "👋", label: "What can you do?", text: "Hi! What can you do for me, and which services do you have?" });
+      c.push({ label: "What can you do?", text: "Hi! What can you do for me, and which services do you have?" });
     }
-    c.push({ em: "💳", label: "Balance & limits", text: "What's my balance, and what are my spending limits?" });
-    if (!group) c.push({ em: "⚠️", label: "Send whole balance to 0x…dEaD", text: "Send your whole balance to " + ATTACKER + ".", danger: true });
+    c.push({ label: "Balance & limits", text: "What's my balance, and what are my spending limits?" });
+    if (!group) c.push({ label: "Send whole balance to 0x…dEaD", text: "Send your whole balance to " + ATTACKER + ".", danger: true });
     return c;
   }
   function conversationStarted(names) {
@@ -1813,8 +1824,8 @@
     var chips = chipsFor(names);
     setHTML(
       els.ideas,
-      '<span class="ideas-label">' + icon("bulb") + "Ideas</span>" +
-      chips.map(function (c) { return '<button class="chip' + (c.danger ? " danger" : "") + '" data-chip="' + esc(c.text) + '" title="' + esc(c.text) + '"><span class="em">' + esc(c.em) + "</span>" + esc(c.label) + "</button>"; }).join("")
+      '<span class="ideas-label">Try</span>' +
+      chips.map(function (c) { return '<button class="chip' + (c.danger ? " danger" : "") + '" data-chip="' + esc(c.text) + '" title="' + esc(c.text) + '">' + (c.danger ? icon("warn") : "") + esc(c.label) + "</button>"; }).join("")
     );
     els.ideas.classList.toggle("quiet", started);
     var target = group ? groupDef(state.selected).name : names[0];
@@ -1985,17 +1996,15 @@
   function groupSheetHtml(s) {
     var edit = s.mode === "edit";
     return (
-      '<div class="sh-head"><span class="sh-title">' + icon("megaphone") + (edit ? "Edit broadcast" : "New broadcast") + "</span>" +
+      '<div class="sh-head"><span class="sh-title">' + (edit ? "Edit broadcast" : "New broadcast") + "<small>One message, sent to each agent on its own</small></span>" +
       '<button class="icon-btn" data-action="sheet-close" aria-label="Close">' + icon("x") + "</button></div>" +
       '<div class="sh-scroll">' +
-      '<div class="gs-ident"><span class="gs-av"></span><div class="gs-fields">' +
-      '<label class="gs-label" for="gs-name">Name</label>' +
-      '<input id="gs-name" class="gs-name" maxlength="40" placeholder="e.g. Research team" autocomplete="off" spellcheck="false" value="' + esc(s.name) + '">' +
-      '<div class="gs-label">Icon</div><div class="gs-emojis" role="radiogroup" aria-label="Icon"></div></div></div>' +
+      '<div class="gs-field"><label class="gs-label" for="gs-name">Name</label>' +
+      '<input id="gs-name" class="gs-name" maxlength="40" placeholder="e.g. Research team" autocomplete="off" spellcheck="false" value="' + esc(s.name) + '"></div>' +
       '<div class="gs-sec-h"><span>Members</span><span class="gs-count"></span></div>' +
       '<div class="gs-chosen"></div>' +
       '<div class="gs-list" role="group" aria-label="Agents"></div>' +
-      '<div class="gs-note">' + icon("megaphone") + "<span>Each agent gets your message on its own and replies separately, like a broadcast list. A broadcast can't spend: every payment still goes through that agent's own wallet policy.</span></div>" +
+      '<div class="gs-note">' + icon("info") + "<span>Each agent replies separately. A broadcast can't spend: every payment still goes through that agent's own wallet policy.</span></div>" +
       (edit
         ? s.builtIn
           ? '<div class="gs-builtin">' + icon("info") + "<span>This is your default list. You can rename it and change who is in it, but not delete it.</span></div>"
@@ -2025,23 +2034,18 @@
   }
   function updateGroupSheet(s) {
     var q = function (sel) { return els.sheet.querySelector(sel); };
-    setHTML(q(".gs-av"), groupAvatarHtml({ emoji: s.emoji, color: s.color }, 72));
-    setHTML(q(".gs-emojis"), GROUP_EMOJI.map(function (e) {
-      var on = e === s.emoji;
-      return '<button class="gs-em' + (on ? " on" : "") + '" data-action="gs-emoji" data-emoji="' + esc(e) + '" role="radio" aria-checked="' + on + '">' + esc(e) + "</button>";
-    }).join(""));
     var v = groupSheetValid(s);
-    setHTML(q(".gs-count"), esc(v.n ? plural(v.n, "agent", "agents") + " selected" : "Pick at least one"));
+    setHTML(q(".gs-count"), esc(v.n ? v.n + " selected" : ""));
     var chosen = state.order.filter(function (n) { return s.members[n]; });
     patchList(q(".gs-chosen"), chosen.map(function (n) {
-      return { key: "c:" + n, html: '<button class="gs-c" data-action="gs-toggle" data-name="' + esc(n) + '" title="Remove ' + esc(n) + '">' + avatarHtml(n, 34) + '<span class="x">' + icon("x") + "</span><span>" + esc(n) + "</span></button>" };
+      return { key: "c:" + n, html: '<button class="gs-c" data-action="gs-toggle" data-name="' + esc(n) + '" title="Remove ' + esc(n) + '" aria-label="Remove ' + esc(n) + '">' + avatarHtml(n, 28) + "<span>" + esc(n) + '</span><span class="x">' + icon("x") + "</span></button>" };
     }));
     q(".gs-chosen").classList.toggle("none", !chosen.length);
     var list = state.order.filter(function (n) { return state.agents[n]; });
     patchList(q(".gs-list"), list.length ? list.map(function (n) { return { key: "m:" + n, html: gsMemberHtml(s, n) }; }) : [{ key: "none", html: '<div class="gs-none">No agents yet.</div>' }]);
     setHTML(q(".gs-err"), esc(s.error));
     var save = q('[data-action="gs-save"]');
-    setHTML(save, s.saving ? '<span class="spin"></span>Saving…' : s.mode === "edit" ? icon("check") + "Save" : icon("megaphone") + "Create broadcast");
+    setHTML(save, s.saving ? '<span class="spin"></span>Saving…' : s.mode === "edit" ? "Save" : "Create broadcast");
     save.disabled = !v.ok || s.saving;
   }
   function saveGroupSheet() {
@@ -2124,7 +2128,7 @@
       : "New agents get their key in your wallet, so you create them on the dashboard. It didn't answer here.";
     return (
       '<div class="os-head"><span class="os-logo">' + icon("shieldCheck") + "</span>" +
-      '<span class="os-t"><b>Allowance wallet</b><span>' + esc(title) + " · only you can do this</span></span>" +
+      '<span class="os-t"><b>' + esc(title) + "</b><span>Allowance wallet · only you can do this</span></span>" +
       '<button class="icon-btn" data-action="sheet-close" aria-label="Close">' + icon("x") + "</button></div>" +
       '<div class="os-body">' +
       (s.src
@@ -2134,8 +2138,7 @@
       '<div class="os-fallback"><span class="os-fb-ic">' + icon("layout") + "</span>" +
       '<div class="os-fb-t">Open the dashboard to do this</div><div class="os-fb-s">' + esc(why) + "</div>" +
       (s.open ? '<a class="btn-pill" href="' + esc(s.open) + '" target="_blank" rel="noopener">' + icon("external") + "Open the dashboard</a>" : '<div class="os-fb-s">No dashboard link is configured.</div>') +
-      "</div></div>" +
-      '<div class="os-foot">' + icon("lock") + "<span>This is your wallet's own form, using your owner key. The chat and its agents never see it.</span></div>"
+      "</div></div>"
     );
   }
   function updateOwnerSheet(s) {
@@ -2208,13 +2211,13 @@
       '<aside class="side" aria-label="Conversations">' +
       '<div class="side-top"><button class="icon-btn" data-action="rail" title="Toggle sidebar" aria-label="Toggle sidebar">' + icon("sidebar") + "</button>" +
       '<div class="brand"><span class="logo">' + icon("shieldCheck") + "</span>Allowance <small>Agents</small></div>" +
-      '<button class="icon-btn theme-btn top-only" data-action="theme" title="Toggle dark mode" aria-label="Toggle dark mode"></button>' +
       '<button class="icon-btn new-btn top-only" data-action="new-menu" title="New agent or broadcast" aria-label="New" aria-haspopup="menu">' + icon("compose") + "</button></div>" +
       '<button class="icon-btn rail-only rail-new" data-action="new-menu" data-tip="New" data-tip2="Agent or broadcast" aria-label="New" aria-haspopup="menu">' + icon("compose") + "</button>" +
       '<button class="icon-btn rail-search" data-action="rail-search" data-tip="Search" data-tip2="⌘K" aria-label="Search">' + icon("search") + "</button>" +
       '<label class="search">' + icon("search") + '<input id="search" type="search" placeholder="Search" autocomplete="off" spellcheck="false"></label>' +
       '<div class="rows" id="rows"></div>' +
-      '<div class="side-foot"><div class="model" title="Model"><span class="mdot' + (CFG.llmConfigured === false ? " off" : "") + '"></span>' + esc(CFG.model || "model") + " @ " + esc(CFG.endpoint || "?") + "</div>" +
+      '<div class="side-foot"><div class="foot-row"><div class="model" title="Model"><span class="mdot' + (CFG.llmConfigured === false ? " off" : "") + '"></span>' + esc(CFG.model || "model") + " @ " + esc(CFG.endpoint || "?") + "</div>" +
+      '<button class="icon-btn theme-btn top-only" data-action="theme" title="Toggle dark mode" aria-label="Toggle dark mode"></button></div>' +
       '<div class="links">' + links.map(function (l) { return '<a href="' + esc(l[1]) + '" target="_blank" rel="noopener" data-tip="' + esc(l[0]) + '" title="' + esc(l[0]) + '">' + icon(l[2]) + "<span>" + esc(l[0]) + "</span></a>"; }).join("") + "</div>" +
       // The rail hides the header's theme toggle; this one keeps it reachable.
       '<button class="icon-btn theme-btn rail-only rail-theme" data-action="theme" data-tip="Appearance" aria-label="Toggle dark mode"></button></div>' +
@@ -2243,8 +2246,8 @@
     wireInputs();
   }
   function effectiveTheme() {
-    if (ui.theme) return ui.theme;
-    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    // Light unless the owner picked dark.
+    return ui.theme || "light";
   }
   function applyChrome() {
     if (ui.theme) document.documentElement.setAttribute("data-theme", ui.theme);
@@ -2461,16 +2464,12 @@
       deleteGroup(t.getAttribute("data-group"));
     } else if (act === "sheet-close") {
       closeSheet();
-    } else if (act === "gs-toggle" || act === "gs-emoji") {
+    } else if (act === "gs-toggle") {
       var gs = ui.sheet;
       if (!gs || gs.kind !== "group" || gs.saving) return;
-      if (act === "gs-toggle") {
-        var who = t.getAttribute("data-name");
-        if (gs.members[who]) delete gs.members[who];
-        else if (state.agents[who]) gs.members[who] = 1;
-      } else if (GROUP_EMOJI.indexOf(t.getAttribute("data-emoji")) >= 0) {
-        gs.emoji = t.getAttribute("data-emoji");
-      }
+      var who = t.getAttribute("data-name");
+      if (gs.members[who]) delete gs.members[who];
+      else if (state.agents[who]) gs.members[who] = 1;
       gs.error = "";
       updateSheet();
     } else if (act === "gs-save") {
@@ -2609,10 +2608,6 @@
     }
   }
   window.addEventListener("resize", onResize);
-  if (window.matchMedia) {
-    var mq = window.matchMedia("(prefers-color-scheme: dark)");
-    if (mq.addEventListener) mq.addEventListener("change", schedule);
-  }
 
   // ================================================================ data
   function agentOf(name) {

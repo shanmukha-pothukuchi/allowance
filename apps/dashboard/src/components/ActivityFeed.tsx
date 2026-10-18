@@ -126,7 +126,7 @@ export function ActivityFeed({ events, pendingIds, busyApprovals, showDetails, n
                   </div>
                 )}
               </div>
-              {svc && <ServiceTile icon={svc.icon} color={svc.color} size="md" title={svc.name} />}
+              {svc && <ServiceTile name={svc.name} color={svc.color} size="md" title={svc.name} />}
             </li>
           );
         })}

@@ -42,7 +42,7 @@ export function ServiceSheet({ entry, state, actions, now, onClose }: Props) {
       <div className="sheet-backdrop" onClick={onClose} aria-hidden />
       <aside className={`sheet${entry.custom ? " sheet-custom" : ""}`} role="dialog" aria-modal="true" aria-label={s.name}>
         <header className="sheet-head">
-          <ServiceTile icon={s.icon} color={s.color} size="xl" />
+          <ServiceTile name={s.name} color={s.color} size="xl" />
           <div className="sheet-title">
             <h2>{s.name}</h2>
             <p className="muted">

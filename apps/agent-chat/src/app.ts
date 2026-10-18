@@ -14,7 +14,7 @@ import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "
 import { dirname } from "node:path";
 import { AGENT_NAME_RE } from "@allowance/shared";
 import type { LlmConfig } from "./llm.js";
-import { renderChatPage, staticDir } from "./ui.js";
+import { fontsDir, renderChatPage, staticDir } from "./ui.js";
 
 export interface WalletView {
   address?: string;
@@ -191,6 +191,7 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
   const app = express();
   app.disable("x-powered-by");
   app.use(express.json({ limit: "64kb" }));
+  app.use("/static/fonts", express.static(fontsDir, { maxAge: "30d", immutable: true }));
   app.use("/static", express.static(staticDir, { maxAge: 0 }));
 
   app.get("/", (_req, res) => {

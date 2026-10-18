@@ -22,6 +22,15 @@ const FALLBACK = ["#6E7BF2", "#E36464", "#3BA889", "#C08B2E", "#8E62D9"];
 /** Friendly faces for agents the owner creates (picked by name hash; the chat page mirrors this list). */
 const FRIENDLY = ["🐼", "🦁", "🐯", "🐨", "🐸", "🐧", "🦄", "🐳", "🦋", "🐞", "🦔", "🦩", "🐬", "🐻", "🦜", "🐿️"];
 
+/** Monogram for an agent's avatar: "researcher" → "R", "worker-3" → "W3", "travel-planner" → "TP". */
+export function initialsFor(name: string): string {
+  const parts = name.split(/[-_\s]+/).filter(Boolean);
+  if (!parts.length) return "?";
+  const last = parts[parts.length - 1];
+  if (parts.length > 1 && /^\d+$/.test(last)) return (parts[0][0] + last.slice(0, 2)).toUpperCase();
+  return (parts[0][0] + (parts[1]?.[0] ?? "")).toUpperCase();
+}
+
 export function avatarFor(name: string): Avatar {
   if (KNOWN[name]) return KNOWN[name];
   const m = name.match(/^worker-(\d+)$/);

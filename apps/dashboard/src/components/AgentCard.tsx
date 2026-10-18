@@ -66,7 +66,7 @@ export function AgentCard({ agent, showDetails, busy, onFreeze, onUnfreeze, onAd
           <span className="agent-service-tiles">
             {services.map((s) => (
               <button key={s.id} className="tile-btn" title={`${s.name} (${s.pricing})`} onClick={() => navigate({ view: "services", serviceId: s.id })}>
-                <ServiceTile icon={s.icon} color={s.color} size="sm" />
+                <ServiceTile name={s.name} color={s.color} size="sm" />
               </button>
             ))}
           </span>
