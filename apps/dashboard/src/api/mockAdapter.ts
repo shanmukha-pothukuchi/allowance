@@ -3,17 +3,22 @@
  * services (§13.2) and the six directory services (§13.1), and emits a believable live stream:
  * a scripted opening that mirrors the demo acts (bounty race, small payments, a pizza that needs
  * approval, a poisoned-bounty block + freeze, shopper asking to connect Acme Pizza, an
- * agent-proposed custom service), then a steady random mix. Deterministic given a seed; timers
+ * agent-proposed custom service, the owner creating a new agent), then a steady random mix. It
+ * also creates agents and adds money with the wallet's validation and error codes (§14.2), so both
+ * owner sheets work against it. Deterministic given a seed; timers
  * are plain setTimeout so tests can drive it with fake timers or call `tick()` directly.
  */
 import { addDollars, describeEvent, fromCents, toCents } from "../format";
 import { matchService } from "../services";
+import { AGENT_NAME_RE, MAX_TOPUP } from "../sheets";
 import type {
   Address,
   AgentPublic,
   Approval,
   ConnectedService,
   ConnectionStatus,
+  CreateAgentRequest,
+  CreateAgentResponse,
   DirectoryService,
   EventType,
   Hex,
@@ -24,7 +29,7 @@ import type {
   SummaryResponse,
   WalletEvent,
 } from "../types";
-import type { WalletAdapter } from "./adapter";
+import { HttpError, type WalletAdapter } from "./adapter";
 
 export interface MockOptions {
   seed?: number;
@@ -36,6 +41,8 @@ export interface MockOptions {
   settleDelayMs?: number;
   /** Simulated request latency for owner actions. */
   latencyMs?: number;
+  /** Settlement mode to report. "base-sepolia" makes top-ups answer 501 like the real wallet. */
+  chainMode?: SummaryResponse["chainMode"];
 }
 
 export interface MockAdapter extends WalletAdapter {
@@ -51,6 +58,11 @@ const DIRECTORY_URL = "http://localhost:4060";
 const MERCHANT_ADDRESS = "0x9A3c0F1b7D2e4C5a6B7C8d9E0F1a2B3c4D5E6F70" as Address;
 const ATTACKER_ADDRESS = "0x000000000000000000000000000000000000dEaD" as Address;
 const NETWORK = "eip155:84532";
+
+/** `?mock=1&chain=base-sepolia` shows the chain-mode screens (no top-ups) against the mock. */
+export function mockChainMode(search: string = typeof location !== "undefined" ? location.search : ""): SummaryResponse["chainMode"] {
+  return new URLSearchParams(search).get("chain") === "base-sepolia" ? "base-sepolia" : "mock";
+}
 
 function rngFrom(seed: number): () => number {
   // mulberry32
@@ -243,7 +255,8 @@ type Step =
   | { kind: "needs_approval"; agent: string; description: string; amount: string; approvalId?: string }
   | { kind: "blocked"; agent: string; amount?: string }
   | { kind: "service_request"; agent: string; serviceId: string; reason: string; approvalId: string }
-  | { kind: "custom_request"; agent: string; custom: CustomProposal; reason: string; approvalId: string };
+  | { kind: "custom_request"; agent: string; custom: CustomProposal; reason: string; approvalId: string }
+  | { kind: "create_agent"; agent: string; policy: Partial<Policy>; services: string[]; initialBalance: string };
 
 /** Fixed ids for the scripted approvals, so `/?approval=<id>&embed=1&mock=1` can find them. */
 export const MOCK_APPROVAL_IDS = { pizza: "apr_demo_pizza", connect: "apr_demo_connect", custom: "apr_demo_custom" } as const;
@@ -280,6 +293,8 @@ const OPENING: Step[] = [
     reason: "The directory has no tech-news source. I found this one while researching; it charges $0.25 per request.",
     approvalId: MOCK_APPROVAL_IDS.custom,
   },
+  // The owner adds an agent from the chat's "New agent" sheet (§14.3): created, connected, funded.
+  { kind: "create_agent", agent: "translator", policy: { maxPerTx: "5.00", dailyCap: "25.00", approvalThreshold: "5.00" }, services: ["acme-news"], initialBalance: "10.00" },
 ];
 
 export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
@@ -289,6 +304,7 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
   const maxI = opts.maxIntervalMs ?? 4000;
   const settleDelay = opts.settleDelayMs ?? 900;
   const latency = opts.latencyMs ?? 120;
+  const chainMode = opts.chainMode ?? "mock";
 
   let seq = 0;
   const id = (prefix: string) => `${prefix}_${(++seq).toString(36).padStart(6, "0")}`;
@@ -308,9 +324,9 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
     ...(docs ? { docs } : {}),
   });
 
-  const agents: AgentPublic[] = AGENT_SEEDS.map((s) => ({
+  const newAgent = (name: string, policy: Partial<Policy>, services: ConnectedService[], balance: string): AgentPublic => ({
     id: id("agt"),
-    name: s.name,
+    name,
     address: hex(20) as Address,
     policy: {
       maxPerTx: "5.00",
@@ -319,15 +335,16 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
       approvalThreshold: "10.00",
       frozen: false,
       freezeOnViolation: true,
-      ...s.policy,
+      ...policy,
     },
-    services: s.services.map((sid) => connection(manifest(sid)!, "default")),
+    services,
     createdAt: iso(),
-    balance: "20.00",
+    balance,
     spentToday: "0.00",
     earnedToday: "0.00",
     frozen: false,
-  }));
+  });
+  const agents: AgentPublic[] = AGENT_SEEDS.map((s) => newAgent(s.name, s.policy, s.services.map((sid) => connection(manifest(sid)!, "default")), "20.00"));
   const receipts: Receipt[] = [];
   const approvals: Approval[] = [];
   const events: WalletEvent[] = [];
@@ -339,7 +356,7 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
   let blockedOnce = false;
   let ticker: ReturnType<typeof setTimeout> | undefined;
 
-  const byName = (name: string) => agents.find((a) => a.name === name)!;
+  const byName = (name: string) => agents.find((a) => a.name === name);
   const byId = (agentId: string) => agents.find((a) => a.id === agentId);
 
   function emit(type: EventType, agent: AgentPublic | undefined, extra: Partial<WalletEvent> = {}): WalletEvent {
@@ -516,14 +533,14 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
     return out;
   }
 
-  function doTopup(agent: AgentPublic, amount: string): Receipt {
+  function doTopup(agent: AgentPublic, amount: string, description = "Top-up"): Receipt {
     const tx = hex(32);
     const r = makeReceipt(agent, {
       kind: "topup",
       status: "settled",
-      description: "Added with card (demo)",
+      description,
       amount,
-      counterparty: { address: agent.address, name: "Card top-up" },
+      counterparty: { address: "0x0000000000000000000000000000000000000000" as Address, name: "Mock USDC faucet" },
       txHash: tx,
       explorerUrl: `http://localhost:4030/tx/${tx}`,
       settledAt: iso(),
@@ -531,6 +548,42 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
     agent.balance = addDollars(agent.balance, amount);
     emit("topup", agent, { receipt: { ...r } });
     return r;
+  }
+
+  /** `POST /v1/agents` with the wallet's checks and order: name, services, then create, connect, fund. */
+  function doCreateAgent(req: CreateAgentRequest): CreateAgentResponse {
+    const name = typeof req?.name === "string" ? req.name : "";
+    if (!name) throw new HttpError("`name` is required", 400, "invalid_request");
+    if (!AGENT_NAME_RE.test(name)) {
+      throw new HttpError("Agent names use lowercase letters, digits and dashes (2–32 characters), e.g. travel-planner", 400, "invalid_request");
+    }
+    if (byName(name)) throw new HttpError(`An agent named "${name}" already exists`, 409, "agent_exists");
+    const ids = [...new Set((req.services ?? []).filter((x) => x && x !== "directory"))];
+    const manifests = ids.map((sid) => {
+      const m = manifest(sid);
+      if (!m) throw new HttpError(`No service "${sid}" in the directory.`, 404, "service_not_found");
+      return m;
+    });
+    const p = req.policy ?? {};
+    for (const k of ["maxPerTx", "dailyCap", "approvalThreshold"] as const) {
+      if (p[k] !== undefined && !/^\d+(\.\d{1,2})?$/.test(String(p[k]))) throw new HttpError(`${k} must be a dollar amount`, 400, "invalid_request");
+    }
+    const start = req.initialBalance ?? "0.00";
+    if (!/^\d+(\.\d{1,2})?$/.test(start)) throw new HttpError("initialBalance must be a dollar amount", 400, "invalid_request");
+    const policy: Partial<Policy> = {};
+    for (const k of ["maxPerTx", "dailyCap", "approvalThreshold"] as const) if (p[k] !== undefined) policy[k] = fromCents(toCents(p[k]));
+    policy.allowlist = p.allowlist === undefined ? { ...NO_ALLOWLIST } : p.allowlist;
+    const agent = newAgent(name, policy, [], "0.00");
+    agents.push(agent);
+    emit("agent.created", agent, { data: { agent: copyAgent(agent) } });
+    for (const m of manifests) {
+      if (m.kind === "directory") continue;
+      const svc = connection(m, "owner");
+      agent.services = [...agent.services, svc];
+      emitConnected(agent, svc);
+    }
+    if (chainMode === "mock" && toCents(start) > 0) doTopup(agent, fromCents(toCents(start)), "Starting balance");
+    return { agent: copyAgent(agent), token: `aw_${hex(24).slice(2)}`, tokenId: id("tok") };
   }
 
   function randomStep(): Step {
@@ -549,7 +602,15 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
   }
 
   function runStep(step: Step): WalletEvent[] {
+    if (step.kind === "create_agent") {
+      if (byName(step.agent)) return []; // the owner already made one with that name
+      const before = events.length ? events[0].id : undefined;
+      doCreateAgent({ name: step.agent, policy: step.policy, services: step.services, initialBalance: step.initialBalance });
+      const idx = events.findIndex((e) => e.id === before);
+      return events.slice(0, idx < 0 ? events.length : idx).reverse();
+    }
     const agent = byName(step.agent);
+    if (!agent) return [];
     switch (step.kind) {
       case "earn":
         return doEarn(agent, BOUNTIES[step.bounty]);
@@ -628,7 +689,7 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
     earnedToday: agents.reduce((s, a) => addDollars(s, a.earnedToday), "0.00"),
     agents: agents.map(copyAgent),
     pendingApprovals: approvals.filter((a) => a.status === "pending").map((a) => ({ ...a })),
-    chainMode: "mock",
+    chainMode,
     telegramConnected: false,
   });
 
@@ -744,9 +805,13 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
     topup: (agentId, amount) =>
       delay(() => {
         const agent = byId(agentId);
-        if (!agent) throw new Error("No such agent.");
-        return { ...doTopup(agent, amount) };
+        if (!agent) throw new HttpError(`No agent ${agentId}`, 404, "agent_not_found");
+        if (chainMode !== "mock") throw new HttpError("Top-ups are only available in mock mode; fund the address on Base Sepolia instead.", 501, "not_supported");
+        const ok = /^\d+(\.\d{1,2})?$/.test(String(amount)) && toCents(amount) > 0 && toCents(amount) <= toCents(MAX_TOPUP);
+        if (!ok) throw new HttpError(`\`amount\` must be a dollar string between $0.01 and $${MAX_TOPUP}`, 400, "invalid_request");
+        return { ...doTopup(agent, fromCents(toCents(amount))) };
       }),
+    createAgent: (req) => delay(() => doCreateAgent(req)),
     subscribe(onEvent, onStatus) {
       listeners.add(onEvent);
       if (onStatus) {

@@ -1465,6 +1465,15 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     // Resolve requested services before creating anything, so a bad id doesn't leave a half-made agent.
     const requested = Array.isArray(body.services) ? [...new Set(body.services.filter((x): x is string => typeof x === "string" && !!x.trim()).map((x) => x.trim()))] : [];
     if (body.services !== undefined && !Array.isArray(body.services)) throw new HttpError(400, "invalid_request", "`services` must be an array of service ids");
+    if (body.initialBalance !== undefined) {
+      let units: bigint;
+      try {
+        units = toBaseUnits(String(body.initialBalance));
+      } catch {
+        throw new HttpError(400, "invalid_request", "`initialBalance` must be a dollar string");
+      }
+      if (units < 0n || units > toBaseUnits(MAX_TOPUP)) throw new HttpError(400, "invalid_request", `\`initialBalance\` must be between $0.00 and $${MAX_TOPUP}`);
+    }
     const manifests = [];
     for (const id of requested) {
       if (id === "directory") continue;
@@ -1477,7 +1486,8 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
       throw new HttpError(400, "invalid_request", (err as Error).message);
     }
     const { stored, token, tokenId } = created;
-    emit("agent.created", { agentId: stored.id, agentName: stored.name, message: `Agent ${stored.name} created.` });
+    // Created first, then its services, so the owner's feed reads in the order things happened.
+    emit("agent.created", { agentId: stored.id, agentName: stored.name, message: `Agent ${stored.name} created.`, data: { agent: await agentPublic(stored) } });
     for (const manifest of manifests) {
       if (manifest.kind !== "directory") connectService(stored, toGrant({ ...manifest, source: "directory" }), "owner");
     }

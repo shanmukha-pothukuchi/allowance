@@ -288,6 +288,11 @@ describe("services: reducer", () => {
     expect(refreshesSummary("payment.settled")).toBe(true);
   });
 
+  it("refetches the summary on agent.created (the wallet may send no data.agent)", () => {
+    expect(refreshesSummary("agent.created")).toBe(true);
+    expect(refreshesSummary("topup")).toBe(true);
+  });
+
   it("keeps a directory it already has when a refetch fails", () => {
     let s = reducer(initialState, { type: "directoryLoading" });
     expect(s.directoryStatus).toBe("loading");

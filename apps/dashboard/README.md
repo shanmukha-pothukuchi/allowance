@@ -2,7 +2,8 @@
 
 The owner's second screen. A projector-first web dashboard that shows, in dollars only,
 what every agent is doing with its allowance, and lets the owner approve, deny, freeze,
-unfreeze and top up. It talks to the wallet-service only.
+unfreeze, create new agents and add money. It talks to the wallet-service (and, after creating an
+agent, hands its token to the agent chat server).
 
 ## Run
 
@@ -24,14 +25,22 @@ proxy unbuffered.
 | default | HTTP adapter against the wallet-service. If `/v1/health` fails it says **offline** and retries every 2 s. It never falls back to demo data (§12). |
 | `http://localhost:4040/?mock=1` | Mock adapter, always, behind a "Demo data" banner. |
 | `VITE_MOCK=1 npm run dev --workspace apps/dashboard` | Same, via env. `?mock=0` overrides back to HTTP. |
+| `?mock=1&chain=base-sepolia` | The mock reports chain mode: top-ups answer 501, so you can see the "fund this address" screens. |
+
+`VITE_AGENT_CHAT_URL` (default `http://localhost:4050`) is the chat server: new agents are
+registered there, embedded sheets post to its origin (and its `localhost`/`127.0.0.1` twin), and
+the dev server's `frame-ancestors` follows it.
 
 The mock (`src/api/mockAdapter.ts`) seeds the eight demo agents (`claude-desktop`,
 `researcher`, `shopper`, `naive-worker`, `worker-1..4`, $20 each) with the default connected
 services of §13.2, serves the six directory services of §13.1, and emits an event every 2–4 s:
 a scripted opening (bounty earnings, small API payments, a $18.50 pizza that waits for your
 approval, one poisoned-bounty block that freezes `naive-worker`, **shopper asking to connect Acme
-Pizza**, researcher proposing a custom "Hacker News Digest" service), then a steady random mix
-(agents only pay services they have connected). Deterministic for a given seed. Scripted
+Pizza**, researcher proposing a custom "Hacker News Digest" service, then the owner creating
+`translator` with $10 and Acme News), then a steady random mix (agents only pay services they have
+connected). It also creates agents and tops up with the wallet's rules and error codes (§14.2:
+`409 agent_exists`, `400 invalid_request`, `404 service_not_found`, $0.01–$1000 top-ups), so both
+owner sheets work against it. Deterministic for a given seed. Scripted
 approvals have fixed ids (`apr_demo_pizza`, `apr_demo_connect`, `apr_demo_custom`) so the embed
 works against the mock too.
 
@@ -74,6 +83,9 @@ sun/moon toggle (remembered) or `?theme=light|dark`.
   was connected ("by approval", "by you", "default"), and the usage docs. Agent-proposed services
   come from agents' `services` (`source:"agent"`), never the directory, and are flagged in orange.
 - "details" in the top bar reveals addresses, tx hashes, receipt and approval ids.
+- **New agent** (agents column header) and **Add money** (each agent card) open the owner sheets
+  below as right-hand sheets (`?sheet=new-agent`, `?sheet=add-money&agent=<name>`; Back closes).
+  New agents appear live (`agent.created` + a summary refetch).
 
 ## What each demo act looks like
 
@@ -103,6 +115,30 @@ id shows "not found" and posts no status. It follows `prefers-color-scheme` like
 from the OS). Add `&mock=1` to try it against the mock. The dev server sends
 `Content-Security-Policy: frame-ancestors 'self' http://localhost:4050 http://127.0.0.1:4050`.
 
+## Owner sheets (§14.3)
+
+| URL | What |
+|---|---|
+| `/?sheet=new-agent` | Name (live check against `AGENT_NAME_RE`, the rule in words, "is it taken"), purpose (≤ 600 chars, becomes the chat role), avatar preview, starting money ($5/$10/$20/$50/custom ≤ $1000, test money), limits presets with editable numbers (Careful $1/$5/ask >$1 · Everyday $5/$25/$5 · Shopper $20/$50/$10 · Custom), services to connect (directory always included). `POST /v1/agents { name, policy:{ maxPerTx, dailyCap, approvalThreshold, allowlist:{addresses:[],origins:[]} }, initialBalance?, services }`, then `POST {chat}/api/agents { name, token, role? }`. Success: "travel-planner is ready" + balance + Open chat (`{chat}/?agent=<name>`). If the chat server can't take it, the token is shown **once** with Copy (clipboard API; the chat's iframe has `allow="clipboard-write"`, with a select-and-copy fallback), and the sheet can only be left with "Done, I saved the token". The token lives only in component state: never logged, stored, put in a URL or posted. |
+| `/?sheet=add-money&agent=<name>` | Avatar + balance, chips + custom (≤ $1000), "Add $20 test money" → `POST /v1/agents/:id/topup`; shows the new balance and the receipt. No/unknown agent → pick one. Base Sepolia → "top-ups aren't available", the address to fund behind a details. |
+
+Add `&embed=1` for the chat: no app chrome, transparent page, a card that scrolls inside the iframe
+if it is given less height than it asked for, `&theme=light|dark`. Embedded, the sheet posts to
+`window.parent` at one `targetOrigin`, never `*` and never a token: the parent's real origin when
+it is allowed (the chat on `localhost` or `127.0.0.1`, or the dashboard's own origin), learned from
+`location.ancestorOrigins` or `document.referrer` (the chat's iframe sends
+`referrerpolicy="origin"`), else the `VITE_AGENT_CHAT_URL` origin.
+
+| Message | When |
+|---|---|
+| `{ type: "allowance:sheet-size", sheet, height }` | on load and every resize |
+| `{ type: "allowance:agent-created", name }` | once the chat server hosts the new agent, or, if registration failed, when the owner presses "Done, I saved the token". Never while the token is on screen: the chat closes the sheet on this message |
+| `{ type: "allowance:money-added", name, amount }` | after a top-up (`amount` = `"20.00"`) |
+| `{ type: "allowance:sheet-close", sheet }` | Cancel, the close button, Escape, "Start chatting", Done (after `agent-created` on the token screen) |
+
+Typical heights at 390 px wide: New agent ≈ 1480 (form), 470 (ready), 760 (token); Add money ≈ 330
+(form), 580 (done). Try them against the mock: `/?sheet=new-agent&embed=1&mock=1&theme=dark`.
+
 ## State flow
 
 `src/useWallet.ts` picks the adapter, loads `summary + events/recent + receipts +
@@ -123,17 +159,23 @@ src/
   state.ts              reducer + applyEvent + collapseFeed (pure)
   services.ts           catalog merge, search, labels (pure)
   format.ts             money / relative time / friendly sentences (pure)
-  embed.ts              embed postMessage contract (pure)
-  route.ts, theme.ts    hash routes, theme preference
-  useWallet.ts          the one stateful hook (+ useNow)
-  Embed.tsx             the approval embed
+  embed.ts              approval embed postMessage contract (pure)
+  sheets.ts             owner sheets: name/amount/limits checks, presets → policy, sheet URLs, chat
+                        registration, sheet postMessage contract (pure)
+  route.ts, theme.ts    hash routes (+ ?sheet= hook), theme preference
+  useWallet.ts          the one stateful hook (+ useNow); useAdapter.ts for standalone embeds
+  Embed.tsx             the approval embed; EmbedSheet.tsx the embedded owner sheets
   components/           TopBar, AgentCard, ActivityFeed, ApprovalCard, ApprovalsPanel, ReceiptsList,
-                        ServicesView, ServiceSheet, Switch, Avatar, Icons
+                        ServicesView, ServiceSheet, NewAgentSheet, AddMoneySheet, SheetParts,
+                        Switch, Avatar, Icons
   styles/base.css       tokens (dark + light), reset, buttons
   styles/app.css        layout + overview + motion
   styles/services.css   approval cards, gallery, sheet, embed
-  *.test.ts             vitest (node): format, state, services, embed, mockAdapter
+  styles/sheets.css     owner sheets (dashboard sheet + chat embed)
+  *.test.ts             vitest (node): format, state, services, embed, sheets, mockAdapter
 ```
 
-Agent avatars come from `@allowance/shared/avatars` (the only runtime import from the shared
-package; it is pure), so every UI shows the same face and color per agent.
+Agent avatars come from `@allowance/shared/avatars` (pure), so every UI shows the same face and
+color per agent. The only other runtime import from the shared package is `AGENT_NAME_RE` /
+`MAX_TOPUP`, taken from its pure `src/types.ts` by relative path (the main entry pulls in a
+`node:fs` config loader; a test pins them to the package's exports).

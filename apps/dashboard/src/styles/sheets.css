@@ -1,0 +1,765 @@
+/* Owner sheets (§14.3): New agent and Add money. A right-hand sheet in the dashboard, a card in the
+   chat embed. Tokens come from base.css, so light/dark follow it. */
+
+textarea {
+  font: inherit;
+  color: inherit;
+}
+a.btn {
+  color: var(--text);
+  text-decoration: none;
+}
+a.btn.btn-primary {
+  color: var(--on-in);
+}
+
+/* ---------- frame ---------- */
+.sheet.osheet {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(640px, 96vw);
+}
+.osheet-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+}
+.osheet-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+.osheet-titles {
+  min-width: 0;
+}
+.osheet-name {
+  font-size: 1.6rem;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+  line-height: 1.15;
+}
+.osheet-balance {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.osheet-body {
+  gap: 22px;
+}
+.osheet-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 24px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.osheet-error {
+  flex-basis: 100%;
+  text-align: right;
+}
+.avatar-empty {
+  --tile: var(--surface-3);
+  background: var(--surface-2);
+  border: 2px dashed var(--border-strong);
+  box-shadow: none;
+  color: var(--muted);
+  font-family: var(--font);
+  font-weight: 800;
+  font-size: 1.6rem;
+}
+.osheet .icon-btn:disabled,
+.esheet .icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.btn-new-agent {
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.85rem;
+  padding: 0.35em 0.8em;
+  color: var(--text);
+}
+
+/* embedded in the chat: a card on a transparent page. Unlike the approval card it may be taller
+   than the iframe the chat gives it, so the page scrolls instead of clipping. */
+html.embed.embed-sheet-doc {
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* no visible scrollbar: one that takes width would re-wrap the text, change the height we
+     report, and make the chat resize us in a loop */
+  scrollbar-width: none;
+}
+html.embed.embed-sheet-doc::-webkit-scrollbar {
+  display: none;
+}
+html.embed.embed-sheet-doc body,
+html.embed.embed-sheet-doc #root {
+  overflow: visible;
+}
+.esheet {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.esheet-card {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 18px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+}
+.esheet .osheet-head {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.esheet .osheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 16px;
+}
+.esheet .osheet-foot {
+  padding: 12px 16px 14px;
+}
+.esheet .osheet-title .avatar-xl {
+  --size: 56px;
+}
+.esheet .osheet-name {
+  font-size: 1.35rem;
+}
+
+/* ---------- fields ---------- */
+.ofield {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ofield-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.ofield-label label,
+.ofield-label h3 {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.ofield-aside {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.ofield-hint {
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.count-near {
+  color: var(--warn);
+  font-weight: 700;
+}
+.test-badge {
+  font-size: 0.68rem;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+.text-input {
+  width: 100%;
+  padding: 11px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 1.05rem;
+  outline: none;
+  transition: border-color 120ms, box-shadow 120ms;
+}
+.text-input::placeholder {
+  color: var(--muted);
+  opacity: 0.8;
+}
+.text-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+.name-input {
+  font-family: var(--mono);
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+.purpose-input {
+  resize: vertical;
+  min-height: 84px;
+  line-height: 1.45;
+}
+.input-ok {
+  border-color: color-mix(in srgb, var(--in) 65%, transparent);
+}
+
+.name-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 650;
+  font-size: 0.95rem;
+}
+.name-status svg {
+  flex: none;
+}
+.name-idle {
+  color: var(--text-2);
+  font-weight: 500;
+}
+.name-ok {
+  color: var(--in);
+}
+.name-bad {
+  color: var(--danger);
+}
+.field-error {
+  color: var(--danger);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+/* dollar input with a "$" prefix */
+.money-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 46px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 1.05rem;
+  transition: border-color 120ms, box-shadow 120ms;
+}
+.money-input:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+.money-input input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 1.1rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+/* after .money-input so a bad value stays red while focused */
+.text-input.input-bad,
+.text-input.input-bad:focus,
+.money-input.input-bad,
+.money-input.input-bad:focus-within {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-dim);
+}
+
+/* ---------- amounts ---------- */
+.amount-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.amount-chip {
+  min-width: 64px;
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+}
+.amount-picker .money-input {
+  width: 180px;
+}
+
+/* ---------- limits ---------- */
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.preset-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1.5px solid var(--border-strong);
+  background: var(--surface-2);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms, background 140ms;
+}
+.preset-card:hover {
+  background: var(--surface-3);
+}
+.preset-on,
+.preset-on:hover {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.preset-name {
+  font-weight: 750;
+  font-size: 1rem;
+}
+.preset-nums {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.preset-blurb {
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+.limit-inputs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.limit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.limit-label {
+  font-size: 0.85rem;
+  font-weight: 650;
+  color: var(--text-2);
+}
+.limit-field .money-input {
+  width: 100%;
+}
+.limits-meaning {
+  font-size: 0.92rem;
+  color: var(--text-2);
+  line-height: 1.4;
+}
+
+/* ---------- services ---------- */
+.svc-picks {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 8px;
+}
+.svc-pick {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px 9px 9px;
+  border-radius: 14px;
+  border: 1.5px solid var(--border-strong);
+  background: var(--surface-2);
+  cursor: pointer;
+  transition: border-color 140ms, background 140ms;
+}
+.svc-pick:hover {
+  background: var(--surface-3);
+}
+.svc-pick input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.svc-pick:focus-within {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+.svc-pick-on,
+.svc-pick-on:hover {
+  border-color: var(--in);
+  background: var(--in-dim);
+}
+.svc-pick-text {
+  min-width: 0;
+}
+.svc-pick-text strong {
+  display: block;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.svc-pick-text small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.svc-pick-tick {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  color: transparent;
+}
+.svc-pick-on .svc-pick-tick {
+  background: var(--in);
+  border-color: var(--in);
+  color: var(--on-in);
+}
+.svc-pick-locked,
+.svc-pick-locked:hover {
+  cursor: default;
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+.svc-pick-locked .svc-pick-tick {
+  background: var(--surface-3);
+  border-color: var(--border-strong);
+  color: var(--text-2);
+}
+
+/* ---------- notes ---------- */
+.osheet-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--accent-dim);
+  color: var(--text);
+  line-height: 1.4;
+}
+.osheet-info svg {
+  flex: none;
+  color: var(--accent);
+}
+.osheet-warn {
+  align-items: center;
+  background: var(--warn-dim);
+  color: var(--warn);
+}
+.osheet-warn svg {
+  color: var(--warn);
+}
+.osheet-warn .btn {
+  margin-left: auto;
+}
+.osheet-banner {
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--warn);
+  background: var(--warn-dim);
+  color: var(--warn);
+  font-weight: 600;
+}
+.osheet-details {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-2);
+  padding: 0 14px;
+}
+.osheet-details summary {
+  padding: 12px 0;
+  cursor: pointer;
+  font-weight: 700;
+}
+.osheet-details[open] {
+  padding-bottom: 14px;
+}
+.osheet-details[open] > * + * {
+  margin-top: 8px;
+}
+.frozen-note {
+  font-size: 0.88rem;
+}
+
+/* ---------- done ---------- */
+.created {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  padding: 14px 0 4px;
+  animation: popIn 360ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.created > .avatar-xl {
+  --size: 84px;
+}
+.created-title {
+  font-size: 1.6rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+.created-balance {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.created-amount {
+  font-size: 2.3rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--in);
+  font-variant-numeric: tabular-nums;
+}
+.created-limits {
+  font-size: 0.95rem;
+}
+.created-services {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.created-service {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 12px 3px 3px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-weight: 650;
+  font-size: 0.9rem;
+}
+.created-service .svc-tile-sm {
+  --size: 28px;
+}
+.created-note {
+  color: var(--text-2);
+}
+.done-check {
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  background: var(--in);
+  color: var(--on-in);
+  box-shadow: 0 0 0 8px var(--in-dim);
+}
+.token-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1.5px solid var(--warn);
+  background: var(--warn-dim);
+}
+.token-why {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--warn);
+  font-weight: 650;
+  line-height: 1.35;
+}
+.token-why svg {
+  flex: none;
+}
+.token-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-2);
+}
+.token-note {
+  font-size: 0.92rem;
+  color: var(--text);
+  font-weight: 600;
+}
+.copy-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.copy-value {
+  flex: 1 1 220px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.86rem;
+  line-height: 1.4;
+  word-break: break-all;
+  user-select: all;
+  cursor: text;
+}
+.copy-done {
+  border-color: var(--in);
+  color: var(--in);
+}
+.copy-manual {
+  flex-basis: 100%;
+  font-size: 0.82rem;
+  color: var(--text-2);
+}
+.receipt-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.receipt-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+.receipt-row strong {
+  font-size: 1.15rem;
+  font-variant-numeric: tabular-nums;
+}
+.receipt-row.muted {
+  font-size: 0.88rem;
+}
+.receipt-ids code,
+.receipt-ids a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+}
+
+/* ---------- agent picker (add money with no / unknown agent) ---------- */
+.agent-picks {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+}
+.agent-pick {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 8px 8px;
+  border-radius: 14px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  cursor: pointer;
+  text-align: left;
+}
+.agent-pick:hover {
+  background: var(--surface-3);
+}
+.agent-pick-name {
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes popIn {
+  from {
+    transform: scale(0.96);
+    opacity: 0;
+  }
+}
+
+/* ---------- phone width (dashboard sheet, or a narrow chat iframe) ---------- */
+@media (max-width: 560px) {
+  /* left: 0 rather than 100vw, which would include the page scrollbar and clip the left edge */
+  .sheet.osheet {
+    left: 0;
+    width: auto;
+  }
+  .sheet.osheet .sheet-head,
+  .sheet.osheet .sheet-body {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .sheet.osheet .osheet-foot {
+    padding: 12px 16px 16px;
+  }
+  .preset-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .limit-inputs {
+    gap: 8px;
+  }
+  .osheet-foot .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+  .osheet-error {
+    text-align: left;
+  }
+  .osheet-name {
+    font-size: 1.3rem;
+  }
+  .sheet.osheet .osheet-title .avatar-xl {
+    --size: 52px;
+  }
+  .created-title {
+    font-size: 1.35rem;
+  }
+}
+
+/* narrow chat iframe: keep the form as short as it can be */
+@media (max-width: 480px) {
+  .amount-chips {
+    gap: 6px;
+  }
+  .amount-chip {
+    min-width: 50px;
+    padding: 7px 12px;
+  }
+  .preset-blurb {
+    display: none;
+  }
+  .preset-card {
+    padding: 9px 10px;
+  }
+  .svc-picks {
+    gap: 6px;
+  }
+  .svc-pick {
+    padding: 6px 10px 6px 6px;
+  }
+  .osheet-body,
+  .esheet .osheet-body {
+    gap: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .created {
+    animation: none;
+  }
+}

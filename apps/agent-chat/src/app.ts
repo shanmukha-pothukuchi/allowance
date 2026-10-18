@@ -62,7 +62,7 @@ export function lastMessageOf(log: LogEntry[]): LastMessage | null {
     const e = log[i];
     if (e.kind === "user" || e.kind === "assistant" || e.kind === "error") {
       const text = e.text.length > PREVIEW_CHARS ? `${e.text.slice(0, PREVIEW_CHARS - 1)}…` : e.text;
-      return { kind: e.kind, text, at: e.at, ...(e.kind === "user" && e.groupId ? { groupId: e.groupId } : {}) };
+      return { kind: e.kind, text, at: e.at, ...(e.kind === "user" && e.groupId ? { groupId: e.groupId } : {}), ...(e.kind === "user" && e.group ? { group: e.group } : {}) };
     }
   }
   return null;
@@ -280,8 +280,8 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
     res.json({ ...summary(a), log: a.log, tools: a.toolNames() });
   });
 
-  const sendTo = async (a: ChatAgent, text: string, groupId?: string) => {
-    const { runId, done } = await a.send(text, { groupId });
+  const sendTo = async (a: ChatAgent, text: string, groupId?: string, group?: string) => {
+    const { runId, done } = await a.send(text, { groupId, group });
     void done.catch((err: Error) => console.warn(`[agent-chat] ${a.name}: ${err.message}`));
     return runId;
   };
@@ -347,7 +347,7 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
     const runs = await Promise.all(
       members.map(async (name) => {
         try {
-          return { agent: name, runId: await sendTo(agents.get(name)!, text, groupId) };
+          return { agent: name, runId: await sendTo(agents.get(name)!, text, groupId, def?.id ?? String(req.params.group)) };
         } catch (err) {
           return { agent: name, error: (err as Error).message };
         }

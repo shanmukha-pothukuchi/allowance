@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { mockRequested, type WalletAdapter } from "./api/adapter";
 import { createHttpAdapter, walletServiceReachable } from "./api/httpAdapter";
-import { createMockAdapter } from "./api/mockAdapter";
+import { createMockAdapter, mockChainMode } from "./api/mockAdapter";
 import { initialState, reducer, refreshesSummary, serviceKey, type DashboardState } from "./state";
 import type { ConnectionStatus, WalletEvent } from "./types";
 
@@ -20,14 +20,18 @@ export interface WalletActions {
   /** Fetch usage docs for the detail sheet (once per service). */
   loadServiceDocs(serviceId: string): Promise<void>;
   reloadDirectory(): Promise<void>;
+  /** Refetch the summary soon (after a sheet created an agent or added money). */
+  refresh(): void;
   toggleDetails(): void;
 }
 
 const SUMMARY_DEBOUNCE_MS = 500;
 
-export function useWallet(): { state: DashboardState; actions: WalletActions } {
+export function useWallet(): { state: DashboardState; actions: WalletActions; adapter: WalletAdapter | null } {
   const [state, dispatch] = useReducer(reducer, initialState);
   const adapterRef = useRef<WalletAdapter | null>(null);
+  // The same adapter the dashboard uses, for the owner sheets (so the mock's new agents show up here).
+  const [adapter, setAdapter] = useState<WalletAdapter | null>(null);
   const summaryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const docsRequested = useRef(new Set<string>());
 
@@ -72,7 +76,7 @@ export function useWallet(): { state: DashboardState; actions: WalletActions } {
       if (mockRequested()) {
         // Only on explicit request (?mock=1). Never a silent fallback: fake activity on the
         // owner's screen would be worse than an honest "offline".
-        adapter = createMockAdapter();
+        adapter = createMockAdapter({ chainMode: mockChainMode() });
       } else {
         while (!(await walletServiceReachable())) {
           if (cancelled) return;
@@ -83,6 +87,7 @@ export function useWallet(): { state: DashboardState; actions: WalletActions } {
       }
       if (cancelled) return;
       adapterRef.current = adapter;
+      setAdapter(adapter);
       if (adapter.kind === "mock") dispatch({ type: "connection", status: "demo" });
 
       try {
@@ -159,10 +164,11 @@ export function useWallet(): { state: DashboardState; actions: WalletActions } {
     reloadDirectory: async () => {
       if (adapterRef.current) await loadDirectory(adapterRef.current);
     },
+    refresh: () => refetchSummary(),
     toggleDetails: () => dispatch({ type: "toggleDetails" }),
   };
 
-  return { state, actions };
+  return { state, actions, adapter };
 }
 
 /** Re-renders once a second so relative times stay fresh. */

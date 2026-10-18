@@ -1,10 +1,12 @@
 /**
- * Type-only re-exports from the shared contract. The only runtime import from
- * @allowance/shared is the pure "@allowance/shared/avatars" entry (the main entry's config
- * loader uses node:fs, so it must never be bundled).
+ * Type-only re-exports from the shared contract. The runtime imports from the shared package are
+ * the pure "@allowance/shared/avatars" entry and two constants from its pure types file
+ * (sheets.ts); the main entry's config loader uses node:fs, so it must never be bundled.
  */
 export type {
   AgentPublic,
+  CreateAgentRequest,
+  CreateAgentResponse,
   Approval,
   ApprovalStatus,
   ConnectedService,

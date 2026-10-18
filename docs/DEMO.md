@@ -71,6 +71,16 @@ Two ways to show the same point; do one, or both if time allows.
 
 *"I told it to, and it tried. The money never moved. The rules live outside the model."*
 
+## Optional — Build the team (40 s, if there's time)
+
+Chat page: **New → New agent**. The wallet's own form opens inside the chat ("Allowance wallet ·
+only you can do this"). Name it `travel-planner`, one line of purpose, $20, **Everyday** limits,
+tick Acme Weather and Acme News, **Create**. It opens ready to chat. Ask it *"I'm going to Paris this
+weekend, what should I pack?"*: it pays $0.15 for weather and news and answers. Then **New →
+New broadcast**, "Trip team" with researcher and travel-planner, and send one message to both.
+
+*"Anyone can hire an agent in a minute. The money rules come with it."*
+
 ## 2:35 — Close (25 s)
 
 Tap **Unfreeze** on the phone (or dashboard). *"Open protocol for getting paid. Policy outside the

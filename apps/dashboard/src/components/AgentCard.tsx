@@ -10,13 +10,14 @@ interface Props {
   busy: boolean;
   onFreeze(): void;
   onUnfreeze(): void;
-  onTopup(): void;
+  /** Opens the Add money sheet. */
+  onAddMoney(): void;
 }
 
 /** "claude-desktop" / "Claude Desktop" says the same thing twice. */
 const showRole = (name: string) => roleLabel(name).toLowerCase().replace(/\s+/g, "-") !== name.toLowerCase();
 
-export function AgentCard({ agent, showDetails, busy, onFreeze, onUnfreeze, onTopup }: Props) {
+export function AgentCard({ agent, showDetails, busy, onFreeze, onUnfreeze, onAddMoney }: Props) {
   const pct = pctOf(agent.spentToday, agent.policy.dailyCap);
   const meterClass = pct >= 90 ? "meter-danger" : pct >= 60 ? "meter-warn" : "";
   const services = agent.services ?? [];
@@ -93,8 +94,8 @@ export function AgentCard({ agent, showDetails, busy, onFreeze, onUnfreeze, onTo
             <Snowflake width={18} height={18} /> Freeze
           </button>
         )}
-        <button className="btn" onClick={onTopup} disabled={busy} title="Add $20 of test money (mock ledger only)">
-          <Plus width={18} height={18} /> $20 (demo)
+        <button className="btn" onClick={onAddMoney} title={`Add test money to ${agent.name}`}>
+          <Plus width={18} height={18} /> Add money
         </button>
       </div>
     </article>

@@ -16,10 +16,23 @@ function ownerApiKey(): string | undefined {
   }
 }
 
-// Only the dashboard itself and the agent chat (§13.5 approval embed) may frame these pages.
-// Without this any site could iframe the approve buttons (clickjacking).
+// Only the dashboard itself and the agent chat (§13.5 approval embed, §14.3 owner sheets) may
+// frame these pages. Without this any site could iframe the approve buttons (clickjacking).
+// The chat origin follows VITE_AGENT_CHAT_URL (default http://localhost:4050), plus its
+// localhost/127.0.0.1 twin, the same origins the sheets post to.
+function chatFrameAncestors(): string {
+  let u: URL;
+  try {
+    u = new URL(process.env.VITE_AGENT_CHAT_URL || "http://localhost:4050");
+  } catch {
+    u = new URL("http://localhost:4050");
+  }
+  const port = u.port ? `:${u.port}` : "";
+  const twin = u.hostname === "localhost" ? `${u.protocol}//127.0.0.1${port}` : u.hostname === "127.0.0.1" ? `${u.protocol}//localhost${port}` : "";
+  return [u.origin, twin].filter(Boolean).join(" ");
+}
 const securityHeaders = {
-  "Content-Security-Policy": "frame-ancestors 'self' http://localhost:4050 http://127.0.0.1:4050",
+  "Content-Security-Policy": `frame-ancestors 'self' ${chatFrameAncestors()}`,
 };
 
 // The dashboard talks to the wallet-service only, always via relative /v1 URLs.

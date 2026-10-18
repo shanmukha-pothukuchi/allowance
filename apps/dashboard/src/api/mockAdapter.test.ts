@@ -309,7 +309,8 @@ describe("mockAdapter", () => {
       for (let i = 0; i < 120; i++) events.push(...m.tick());
       const paid = events.filter((e) => e.type === "payment.signed");
       expect(paid.length).toBeGreaterThan(5);
-      const allowed: Record<string, string[]> = { researcher: ["Acme Weather", "Acme News", "Acme Stocks"], "claude-desktop": ["Acme Weather"] };
+      // translator is the agent the scripted opening creates (connected to Acme News only).
+      const allowed: Record<string, string[]> = { researcher: ["Acme Weather", "Acme News", "Acme Stocks"], "claude-desktop": ["Acme Weather"], translator: ["Acme News"] };
       for (const e of paid) expect(allowed[e.agentName!] ?? []).toContain(e.receipt!.description);
       m.stop();
     });
@@ -323,6 +324,102 @@ describe("mockAdapter", () => {
       expect(blocked.data).toMatchObject({ frozen: true, willFreeze: true, receiptId: blocked.receipt!.id });
       expect(frozen.data).toMatchObject({ cause: "policy_violation", receiptId: blocked.receipt!.id });
       m.stop();
+    });
+  });
+  describe("owner sheets (§14.2): create agents, add money", () => {
+    const flush = async <T>(p: Promise<T>) => {
+      await vi.advanceTimersByTimeAsync(1);
+      return p;
+    };
+    const rejectsWith = async (p: Promise<unknown>, status: number, code: string) => {
+      const check = expect(p).rejects.toMatchObject({ status, code });
+      await vi.advanceTimersByTimeAsync(1);
+      await check;
+    };
+    const policy = { maxPerTx: "5.00", dailyCap: "25.00", approvalThreshold: "5.00", allowlist: { addresses: [], origins: [] } };
+
+    it("creates an agent: agent.created (with the agent), service.connected by owner, starting balance; token shown once", async () => {
+      const m = createMockAdapter({ seed: 1, latencyMs: 0 });
+      const got: WalletEvent[] = [];
+      m.subscribe((e) => got.push(e));
+      const res = await flush(m.createAgent({ name: "travel-planner", policy, initialBalance: "20.00", services: ["acme-weather", "directory"] }));
+      expect(res.token).toMatch(/^aw_[0-9a-f]{48}$/);
+      expect(res.tokenId).toMatch(/^tok_/);
+      expect(res.agent).toMatchObject({ name: "travel-planner", balance: "20.00", frozen: false, policy: { maxPerTx: "5.00", dailyCap: "25.00", approvalThreshold: "5.00", allowlist: { addresses: [], origins: [] } } });
+      expect(res.agent.services.map((s) => [s.id, s.connectedBy])).toEqual([["acme-weather", "owner"]]);
+      expect(got.map((e) => e.type)).toEqual(["agent.created", "service.connected", "topup"]);
+      expect((got[0].data as { agent: { name: string } }).agent.name).toBe("travel-planner");
+      expect(got[2].receipt).toMatchObject({ kind: "topup", amount: "20.00", description: "Starting balance", status: "settled" });
+      expect(JSON.stringify(got)).not.toContain(res.token); // the token never rides on an event
+      const s = await flush(m.getSummary());
+      expect(s.agents.at(-1)!.name).toBe("travel-planner");
+      expect(s.totalBalance).toBe("180.00");
+      m.stop();
+    });
+
+    it("no starting money: no topup event and a $0 balance", async () => {
+      const m = createMockAdapter({ seed: 1, latencyMs: 0 });
+      const got: WalletEvent[] = [];
+      m.subscribe((e) => got.push(e));
+      const res = await flush(m.createAgent({ name: "lurker", policy, services: [] }));
+      expect(res.agent.balance).toBe("0.00");
+      expect(got.map((e) => e.type)).toEqual(["agent.created"]);
+      m.stop();
+    });
+
+    it("refuses a taken name (409 agent_exists), a bad name (400) and an unknown service (404) without creating anything", async () => {
+      const m = createMockAdapter({ seed: 1, latencyMs: 0 });
+      const got: WalletEvent[] = [];
+      m.subscribe((e) => got.push(e));
+      await rejectsWith(m.createAgent({ name: "researcher", policy }), 409, "agent_exists");
+      await rejectsWith(m.createAgent({ name: "Travel Planner", policy }), 400, "invalid_request");
+      await rejectsWith(m.createAgent({ name: "-x", policy }), 400, "invalid_request");
+      await rejectsWith(m.createAgent({ name: "x", policy }), 400, "invalid_request");
+      await rejectsWith(m.createAgent({ name: "ok-name", policy, services: ["acme-weather", "acme-nope"] }), 404, "service_not_found");
+      expect(got).toEqual([]);
+      expect((await flush(m.getAgents())).some((a) => a.name === "ok-name")).toBe(false);
+      m.stop();
+    });
+
+    it("tops up $0.01 to $1000 and refuses the rest (400) or an unknown agent (404)", async () => {
+      const m = createMockAdapter({ seed: 1, latencyMs: 0 });
+      const shopper = (await flush(m.getAgents())).find((a) => a.name === "shopper")!;
+      for (const bad of ["0", "0.00", "1000.01", "-5", "abc", "12.345"]) await rejectsWith(m.topup(shopper.id, bad), 400, "invalid_request");
+      await rejectsWith(m.topup("agt_nope", "5.00"), 404, "agent_not_found");
+      const r = await flush(m.topup(shopper.id, "1000"));
+      expect(r).toMatchObject({ kind: "topup", amount: "1000.00", description: "Top-up" });
+      expect((await flush(m.getAgents())).find((a) => a.id === shopper.id)!.balance).toBe("1020.00");
+      m.stop();
+    });
+
+    it("in base-sepolia mode top-ups answer 501 and new agents get no minted balance", async () => {
+      const m = createMockAdapter({ seed: 1, latencyMs: 0, chainMode: "base-sepolia" });
+      expect((await flush(m.getSummary())).chainMode).toBe("base-sepolia");
+      const shopper = (await flush(m.getAgents())).find((a) => a.name === "shopper")!;
+      await rejectsWith(m.topup(shopper.id, "20.00"), 501, "not_supported");
+      const res = await flush(m.createAgent({ name: "chain-agent", policy, initialBalance: "20.00" }));
+      expect(res.agent.balance).toBe("0.00");
+      m.stop();
+    });
+
+    it("the scripted opening ends with the owner creating translator, and skips it if the name is taken", async () => {
+      const m = createMockAdapter({ seed: 3 });
+      const got: WalletEvent[] = [];
+      for (let i = 0; i < 13; i++) got.push(...m.tick());
+      expect(got.slice(-3).map((e) => [e.type, e.agentName])).toEqual([
+        ["agent.created", "translator"],
+        ["service.connected", "translator"],
+        ["topup", "translator"],
+      ]);
+      expect(got.at(-1)!.receipt!.amount).toBe("10.00");
+      m.stop();
+
+      const n = createMockAdapter({ seed: 3, latencyMs: 0 });
+      await flush(n.createAgent({ name: "translator", policy }));
+      const later: WalletEvent[] = [];
+      for (let i = 0; i < 13; i++) later.push(...n.tick());
+      expect(later.filter((e) => e.type === "agent.created")).toHaveLength(0);
+      n.stop();
     });
   });
 });

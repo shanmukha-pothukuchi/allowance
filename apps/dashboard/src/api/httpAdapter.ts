@@ -1,16 +1,8 @@
-import type { AgentPublic, Approval, DirectoryService, Receipt, SummaryResponse, WalletEvent } from "../types";
+import type { AgentPublic, Approval, CreateAgentResponse, DirectoryService, Receipt, SummaryResponse, WalletEvent } from "../types";
 import { EVENT_TYPES } from "../types";
-import type { WalletAdapter } from "./adapter";
+import { HttpError, type WalletAdapter } from "./adapter";
 
-export class HttpError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-    readonly code?: string,
-  ) {
-    super(message);
-  }
-}
+export { HttpError };
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -71,6 +63,7 @@ export function createHttpAdapter(): WalletAdapter {
     freeze: async (agentId) => (await post<{ agent: AgentPublic }>(`/v1/agents/${encodeURIComponent(agentId)}/freeze`)).agent,
     unfreeze: async (agentId) => (await post<{ agent: AgentPublic }>(`/v1/agents/${encodeURIComponent(agentId)}/unfreeze`)).agent,
     topup: async (agentId, amount) => (await post<{ receipt: Receipt }>(`/v1/agents/${encodeURIComponent(agentId)}/topup`, { amount })).receipt,
+    createAgent: (body) => post<CreateAgentResponse>("/v1/agents", body),
     getDirectory: async (q) => (await req<{ services: DirectoryService[] }>(`/v1/directory${q ? `?q=${enc(q)}` : ""}`)).services,
     getService: async (serviceId) => {
       const body = await req<DirectoryService | { service: DirectoryService }>(`/v1/directory/${enc(serviceId)}`);

@@ -102,9 +102,12 @@ export function isMoneyEvent(type: EventType): boolean {
   return MONEY_EVENTS.has(type);
 }
 
-/** Events after which the summary (balances, or agents' connected services) should be refetched. */
+/**
+ * Events after which the summary (balances, agents, or their connected services) should be
+ * refetched. `agent.created` too: the wallet may send it without `data.agent`.
+ */
 export function refreshesSummary(type: EventType): boolean {
-  return isMoneyEvent(type) || type === "service.connected" || type === "service.disconnected";
+  return isMoneyEvent(type) || type === "service.connected" || type === "service.disconnected" || type === "agent.created";
 }
 
 /** Busy key for one agent/service switch. */

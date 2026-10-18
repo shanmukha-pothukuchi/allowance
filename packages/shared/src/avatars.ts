@@ -19,6 +19,8 @@ const KNOWN: Record<string, Avatar> = {
 const WORKERS = ["#5B7CFA", "#9B5BFA", "#F08A24", "#2F9E5B", "#D9488F", "#3AA0E0"];
 const WORKER_EMOJI = ["🦊", "🐙", "🦉", "🐝", "🦦", "🐢"];
 const FALLBACK = ["#6E7BF2", "#E36464", "#3BA889", "#C08B2E", "#8E62D9"];
+/** Friendly faces for agents the owner creates (picked by name hash; the chat page mirrors this list). */
+const FRIENDLY = ["🐼", "🦁", "🐯", "🐨", "🐸", "🐧", "🦄", "🐳", "🦋", "🐞", "🦔", "🦩", "🐬", "🐻", "🦜", "🐿️"];
 
 export function avatarFor(name: string): Avatar {
   if (KNOWN[name]) return KNOWN[name];
@@ -29,5 +31,5 @@ export function avatarFor(name: string): Avatar {
   }
   let h = 0;
   for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return { emoji: name.slice(0, 1).toUpperCase(), color: FALLBACK[h % FALLBACK.length], label: "Agent" };
+  return { emoji: FRIENDLY[h % FRIENDLY.length], color: FALLBACK[h % FALLBACK.length], label: "Agent" };
 }

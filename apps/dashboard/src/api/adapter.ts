@@ -5,7 +5,18 @@
  * The mock is used only on explicit request (?mock=1 in the URL or VITE_MOCK=1); otherwise HTTP,
  * and an unreachable wallet-service shows "offline" (never a silent fallback, §12).
  */
-import type { AgentPublic, Approval, ConnectionStatus, DirectoryService, Receipt, SummaryResponse, WalletEvent } from "../types";
+import type { AgentPublic, Approval, ConnectionStatus, CreateAgentRequest, CreateAgentResponse, DirectoryService, Receipt, SummaryResponse, WalletEvent } from "../types";
+
+/** A failed wallet call: HTTP status plus the contract's `error` code (both adapters throw these). */
+export class HttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+  ) {
+    super(message);
+  }
+}
 
 export interface WalletAdapter {
   readonly kind: "http" | "mock";
@@ -22,6 +33,8 @@ export interface WalletAdapter {
   freeze(agentId: string): Promise<AgentPublic>;
   unfreeze(agentId: string): Promise<AgentPublic>;
   topup(agentId: string, amount: string): Promise<Receipt>;
+  /** `POST /v1/agents` (§14.2). The response's token is shown once and never stored. */
+  createAgent(req: CreateAgentRequest): Promise<CreateAgentResponse>;
   /** The service directory (§13.2 owner view: no docs, plus `connectedAgents`). */
   getDirectory(q?: string): Promise<DirectoryService[]>;
   /** One directory entry with its usage docs. */

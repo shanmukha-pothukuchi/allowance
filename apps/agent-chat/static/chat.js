@@ -13,7 +13,12 @@
   var ATTACKER = "0x000000000000000000000000000000000000dEaD";
   var GAP_MS = 15 * 60 * 1000;
   var EMBED_TIMEOUT_MS = 3000;
-  var LS = { sel: "allowance-chat-selected", theme: "allowance-chat-theme", rail: "allowance-chat-rail", view: "allowance-chat-group-view" };
+  var LS = { sel: "allowance-chat-selected", theme: "allowance-chat-theme", rail: "allowance-chat-rail", view: "allowance-chat-group-view", bcast: "allowance-chat-broadcasts" };
+  var AGENT_NAME_RE = /^[a-z0-9][a-z0-9-]{1,31}$/; // AGENT_NAME_RE in packages/shared/src/types.ts
+  var GROUP_ID_RE = /^[A-Za-z0-9._-]{1,64}$/;
+  // Mirror of COLORS in apps/agent-chat/src/groups.ts (the server picks a new group's color by index).
+  var GROUP_COLORS = ["#5B7CFA", "#E5527A", "#2BB3A3", "#F08A24", "#9B5BFA", "#2F9E5B", "#D9488F", "#3AA0E0"];
+  var GROUP_EMOJI = ["📣", "🛠️", "🔬", "🛍️", "💼", "🚀", "🧪", "📈", "🍕", "🎯", "🧠", "⚡"];
 
   function lsGet(k) {
     try { return localStorage.getItem(k); } catch (e) { return null; }
@@ -205,14 +210,26 @@
     lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
     stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
     flag: '<path d="M4 22V4"/><path d="M4 4h13l-2 4 2 4H4"/>',
+    megaphone: '<path d="m3 11 16-6v14L3 13z"/><path d="M11.6 16.4a3 3 0 1 1-5.6-2.1"/><path d="M19 9.5a2.5 2.5 0 0 1 0 5"/>',
+    compose: '<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/>',
+    userPlus: '<circle cx="9" cy="8" r="4"/><path d="M2 21a7 7 0 0 1 14 0"/><path d="M19 8v6M16 11h6"/>',
+    plusCircle: '<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    pencil: '<path d="M17 3a2.8 2.8 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/>',
+    users: '<circle cx="9" cy="8" r="4"/><path d="M2 21a7 7 0 0 1 14 0"/><path d="M16 3.5a4 4 0 0 1 0 9M22 21a7 7 0 0 0-4.5-6.5"/>',
   };
   function icon(name, extra) {
     return '<svg class="i' + (extra ? " " + extra : "") + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (P[name] || P.wrench) + "</svg>";
   }
 
   // ================================================================ state
-  var state = { agents: {}, order: [], groups: { workers: [] }, selected: null, connected: false, loaded: false, everOpen: false };
+  var state = { agents: {}, order: [], groupList: [], selected: null, connected: false, loaded: false, everOpen: false, logVer: 0 };
   var ui = {
+    menu: false, // the sidebar "New" menu
+    sheet: null, // the open modal sheet (broadcast editor or an owner sheet from the dashboard)
+    expect: null, // { name, until }: an agent the owner just created; select it when it arrives
+    fresh: {}, // name -> until: newly added rows get a short highlight
+    balUp: {}, // name -> until: a balance that just went up (money added, bounty earned) glows green
     rail: lsGet(LS.rail) === "1",
     narrow: false,
     overlay: false, // narrow screen, sidebar temporarily expanded over the thread
@@ -237,9 +254,45 @@
   function isGroup(sel) {
     return typeof sel === "string" && sel.indexOf("group:") === 0;
   }
+  /** Broadcast groups (ARCHITECTURE §14.1). Every field is cleaned here; callers still esc(). */
+  function cleanGroup(g) {
+    if (!g || typeof g !== "object" || typeof g.id !== "string" || !GROUP_ID_RE.test(g.id)) return null;
+    return {
+      id: g.id,
+      name: str(g.name).trim().slice(0, 60) || prettyId(g.id),
+      emoji: glyph(g.emoji, "📣"),
+      color: safeColor(g.color, GROUP_COLORS[hash31(g.id) % GROUP_COLORS.length]),
+      members: Array.isArray(g.members) ? g.members.filter(function (m) { return typeof m === "string"; }) : [],
+      builtIn: g.builtIn === true,
+    };
+  }
+  /** groupList is the rich list; the compat map { id: members } is the fallback for an older server. */
+  function setGroups(list, map) {
+    if (Array.isArray(list)) {
+      state.groupList = list.map(cleanGroup).filter(Boolean);
+    } else if (map && typeof map === "object") {
+      state.groupList = Object.keys(map)
+        .filter(function (k) { return GROUP_ID_RE.test(k) && Array.isArray(map[k]); })
+        .map(function (k) { return cleanGroup({ id: k, name: k === "workers" ? "All workers" : prettyId(k), emoji: k === "workers" ? "🛠️" : "📣", color: "#5B7CFA", members: map[k], builtIn: k === "workers" }); })
+        .filter(Boolean);
+    }
+  }
+  function upsertGroup(g) {
+    for (var i = 0; i < state.groupList.length; i++) {
+      if (state.groupList[i].id === g.id) { state.groupList[i] = g; return; }
+    }
+    state.groupList.push(g);
+  }
+  function groupById(id) {
+    for (var i = 0; i < state.groupList.length; i++) if (state.groupList[i].id === id) return state.groupList[i];
+    return null;
+  }
+  function groupDef(sel) {
+    return isGroup(sel) ? groupById(sel.slice(6)) : null;
+  }
   function groupMembersOf(sel) {
-    var g = state.groups && state.groups[sel.slice(6)];
-    return Array.isArray(g) ? g.filter(function (n) { return state.agents[n]; }) : [];
+    var g = typeof sel === "string" ? groupDef(sel) : sel;
+    return g ? g.members.filter(function (n) { return state.agents[n]; }) : [];
   }
   function selectedNames() {
     if (isGroup(state.selected)) return groupMembersOf(state.selected);
@@ -248,6 +301,18 @@
   function validSel(s) {
     if (isGroup(s)) return groupMembersOf(s).length > 0;
     return !!(s && state.agents[s]);
+  }
+  /** broadcast id (grp_…) -> group id, for broadcasts sent from this browser (see clusterGroup). */
+  var sentBroadcasts = (function () {
+    try { var o = JSON.parse(lsGet(LS.bcast) || "{}"); return o && typeof o === "object" && !Array.isArray(o) ? o : {}; } catch (e) { return {}; }
+  })();
+  function rememberBroadcast(gid, groupId) {
+    if (typeof gid !== "string" || !/^grp_[A-Za-z0-9_-]{1,64}$/.test(gid) || !GROUP_ID_RE.test(groupId)) return;
+    sentBroadcasts[gid] = groupId;
+    var keys = Object.keys(sentBroadcasts);
+    if (keys.length > 300) keys.slice(0, keys.length - 300).forEach(function (k) { delete sentBroadcasts[k]; });
+    lsSet(LS.bcast, JSON.stringify(sentBroadcasts));
+    state.logVer++;
   }
 
   // ================================================================ avatars (mirror of packages/shared/src/avatars.ts)
@@ -260,6 +325,8 @@
   var AV_WORKERS = ["#5B7CFA", "#9B5BFA", "#F08A24", "#2F9E5B", "#D9488F", "#3AA0E0"];
   var AV_WORKER_EMOJI = ["🦊", "🐙", "🦉", "🐝", "🦦", "🐢"];
   var AV_FALLBACK = ["#6E7BF2", "#E36464", "#3BA889", "#C08B2E", "#8E62D9"];
+  // Unknown names get a friendly face by name hash instead of their initial (proposed for avatars.ts too).
+  var AV_FRIENDLY = ["🐼", "🦁", "🐯", "🐨", "🐸", "🐧", "🦄", "🐳", "🦋", "🐞", "🦔", "🦩", "🐬", "🐻", "🦜", "🐿️"];
   function hash31(s) {
     var h = 0;
     Array.from(str(s)).forEach(function (c) { h = (h * 31 + c.charCodeAt(0)) >>> 0; });
@@ -273,14 +340,25 @@
       var i = (Number(m[1]) - 1 + AV_WORKERS.length) % AV_WORKERS.length;
       return { emoji: AV_WORKER_EMOJI[i], color: AV_WORKERS[i], label: "Worker" };
     }
-    return { emoji: name.slice(0, 1).toUpperCase(), color: AV_FALLBACK[hash31(name) % AV_FALLBACK.length], label: "Agent" };
+    var h = hash31(name);
+    return { emoji: AV_FRIENDLY[h % AV_FRIENDLY.length], color: AV_FALLBACK[h % AV_FALLBACK.length], label: "Agent" };
   }
   function avatarOf(name) {
     var a = state.agents[name];
     var loc = localAvatar(name);
     var av = a && a.avatar;
-    if (av && typeof av === "object" && av.emoji) return { emoji: glyph(av.emoji, loc.emoji), color: safeColor(av.color, loc.color), label: str(av.label) || loc.label };
+    if (av && typeof av === "object" && av.emoji) {
+      var em = glyph(av.emoji, loc.emoji);
+      // The server's fallback is the initial letter; show the friendly face instead (same color).
+      if (/^[\x20-\x7e]+$/.test(em) && !AV_KNOWN[name]) em = loc.emoji;
+      return { emoji: em, color: safeColor(av.color, loc.color), label: str(av.label) || loc.label };
+    }
     return loc;
+  }
+  /** "Worker agent", "Research agent", or just "Agent" for a custom one. */
+  function kindLabel(name) {
+    var l = avatarOf(name).label;
+    return !l || l === "Agent" ? "Agent" : l + " agent";
   }
   function avatarHtml(name, size, badge) {
     var av = avatarOf(name);
@@ -292,8 +370,23 @@
       "</span>"
     );
   }
-  function clusterHtml(names, cls, badge) {
-    return '<span class="cluster' + (cls ? " " + cls : "") + '">' + names.slice(0, 4).map(function (n) { return avatarHtml(n); }).join("") + (badge ? '<span class="badge-dot ' + badge + '"></span>' : "") + "</span>";
+  /** A broadcast group's face: its emoji on its color (def from cleanGroup, or the sheet preview). */
+  function groupAvatarHtml(def, size, badge, mark) {
+    var em = glyph(def && def.emoji, "📣");
+    var letter = /^[\x20-\x7e]+$/.test(em);
+    return (
+      '<span class="av gav' + (size ? " s" + size : "") + (letter ? " letter" : "") + '" style="--c:' + safeColor(def && def.color, "#5B7CFA") + '">' +
+      (letter ? esc(em) : '<span class="em">' + esc(em) + "</span>") +
+      (badge ? '<span class="badge-dot ' + badge + '"></span>' : "") +
+      (mark ? '<span class="bc-mark">' + icon("megaphone") + "</span>" : "") +
+      "</span>"
+    );
+  }
+  /** Overlapping member faces (WhatsApp group header), "+N" past max. */
+  function stackHtml(names, size, max) {
+    var shown = names.slice(0, max);
+    var more = names.length - shown.length;
+    return '<span class="stack st' + size + '">' + shown.map(function (n) { return avatarHtml(n, size); }).join("") + (more > 0 ? '<span class="more">+' + more + "</span>" : "") + "</span>";
   }
 
   // ================================================================ services
@@ -1028,7 +1121,9 @@
   window.addEventListener("message", function (ev) {
     if (!DASH_ORIGIN || ev.origin !== DASH_ORIGIN) return;
     var d = ev.data;
-    if (!d || typeof d !== "object" || !validApprovalId(d.id)) return;
+    if (!d || typeof d !== "object") return;
+    if (d.type === "allowance:sheet-size" || d.type === "allowance:sheet-close" || d.type === "allowance:agent-created" || d.type === "allowance:money-added") return onSheetMessage(ev, d);
+    if (!validApprovalId(d.id)) return;
     var ap = approvals[d.id];
     if (!ap) return;
     var frame = document.querySelector('.approval[data-approval="' + d.id + '"] iframe');
@@ -1201,11 +1296,17 @@
     });
     return items;
   }
-  /** One user bubble per broadcast: by groupId, else identical text within 2 s across members. */
-  function broadcastClusters(names) {
+  /**
+   * Every broadcast across all agents, one cluster per broadcast: by groupId, else identical text
+   * within 2 s across agents (older logs). Cached until a log changes.
+   */
+  var clusterCache = { ver: -1, list: [] };
+  function allBroadcasts() {
+    if (clusterCache.ver === state.logVer) return clusterCache.list;
     var all = [];
-    names.forEach(function (n) {
-      (state.agents[n].log || []).forEach(function (e) { if (e && e.kind === "user") all.push({ agent: n, e: e, t: ts(e.at) }); });
+    state.order.forEach(function (n) {
+      var a = state.agents[n];
+      (a && a.log ? a.log : []).forEach(function (e) { if (e && e.kind === "user") all.push({ agent: n, e: e, t: ts(e.at) }); });
     });
     all.sort(function (x, y) { return x.t - y.t; });
     var clusters = [];
@@ -1215,18 +1316,48 @@
       var c;
       if (gid) {
         c = byGid[gid];
-        if (!c) { c = byGid[gid] = { key: "g" + gid, gid: true, text: u.e.text, t: u.t, members: {}, n: 0 }; clusters.push(c); }
+        if (!c) { c = byGid[gid] = { key: "g" + gid, gid: gid, group: "", text: u.e.text, t: u.t, members: {}, n: 0 }; clusters.push(c); }
+        // Forward-compatible: a server that also tags the user entry with the group's id.
+        if (!c.group && typeof u.e.group === "string") c.group = u.e.group;
       } else {
         for (var i = clusters.length - 1; i >= 0; i--) {
           var k = clusters[i];
           if (u.t - k.t > 2000) break;
           if (!k.gid && k.text === u.e.text && !k.members[u.agent]) { c = k; break; }
         }
-        if (!c) { c = { key: "c" + str(u.e.id), gid: false, text: u.e.text, t: u.t, members: {}, n: 0 }; clusters.push(c); }
+        if (!c) { c = { key: "c" + str(u.e.id), gid: "", group: "", text: u.e.text, t: u.t, members: {}, n: 0 }; clusters.push(c); }
       }
       if (!c.members[u.agent]) { c.members[u.agent] = u.e; c.n++; }
     });
-    return clusters.filter(function (c) { return c.gid || c.n >= Math.min(2, names.length); });
+    clusterCache = { ver: state.logVer, list: clusters.filter(function (c) { return c.gid || c.n >= 2; }) };
+    return clusterCache.list;
+  }
+  /**
+   * Which group a broadcast was sent to. Log entries carry only the broadcast id, so: the group the
+   * server tagged, else the one this browser sent it to, else the group whose members best match the
+   * recipients (Jaccard overlap; survives later membership edits).
+   */
+  function clusterGroup(c) {
+    var id = c.group || (c.gid && sentBroadcasts[c.gid]) || "";
+    if (id && groupById(id)) return [id];
+    var who = Object.keys(c.members);
+    var best = [];
+    var bestScore = 0;
+    state.groupList.forEach(function (g) {
+      var both = who.filter(function (n) { return g.members.indexOf(n) >= 0; }).length;
+      if (!both) return;
+      var score = both / (who.length + g.members.length - both);
+      if (score > bestScore + 1e-9) { best = [g.id]; bestScore = score; }
+      else if (Math.abs(score - bestScore) <= 1e-9) best.push(g.id);
+    });
+    return best;
+  }
+  /** The broadcasts that belong in this group's thread. */
+  function broadcastClusters(def) {
+    if (!def) return [];
+    return allBroadcasts().filter(function (c) {
+      return clusterGroup(c).indexOf(def.id) >= 0 && def.members.some(function (n) { return c.members[n]; });
+    });
   }
   function mergeByAt(lists) {
     var out = [];
@@ -1244,7 +1375,7 @@
       out.push(lists[best][idx[best]++]);
     }
   }
-  function groupItems(names) {
+  function groupItems(def, names) {
     var maps = {};
     names.forEach(function (n) {
       var a = state.agents[n];
@@ -1254,8 +1385,14 @@
       maps[n] = m;
     });
     var items = [];
-    broadcastClusters(names).forEach(function (c) {
+    broadcastClusters(def).forEach(function (c) {
       items.push({ key: "gu:" + c.key, side: "me", kind: "bubble", at: c.t, text: c.text });
+      var got = Object.keys(c.members).filter(function (n) { return state.agents[n]; });
+      items.push({
+        key: "gm:" + c.key,
+        kind: "meta",
+        html: '<div class="it me k-meta"><div class="meta bc">' + icon("megaphone") + "<span>Your message went to " + esc(plural(got.length, "agent", "agents")) + "</span>" + stackHtml(got, 14, 6) + "</div></div>",
+      });
       var lists = [];
       names.forEach(function (n) {
         var u = c.members[n];
@@ -1403,11 +1540,12 @@
     var st = rowStatus(a);
     var lm = lastMsg(a);
     var bal = (a.wallet || {}).balance;
+    var fresh = ui.fresh[n] && ui.fresh[n] > Date.now();
     return (
-      '<button class="row' + (state.selected === n ? " sel" : "") + '" data-select="' + esc(n) + '" data-tip="' + esc(n) + '" data-tip2="' + esc(st ? st.text : money(bal)) + '">' +
+      '<button class="row' + (state.selected === n ? " sel" : "") + (fresh ? " fresh" : "") + '" data-select="' + esc(n) + '" data-tip="' + esc(n) + '" data-tip2="' + esc(st ? st.text : money(bal)) + '">' +
       avatarHtml(n, 0, st ? st.badge : "") +
       '<span class="r-main"><span class="r-top"><span class="r-name">' + esc(n) + "</span>" +
-      (bal != null ? '<span class="r-bal">' + esc(money(bal)) + "</span>" : "") +
+      (bal != null ? '<span class="r-bal' + (ui.balUp[n] && ui.balUp[n] > Date.now() ? " up" : "") + '">' + esc(money(bal)) + "</span>" : "") +
       '<span class="r-time">' + esc(relTime(lm.at)) + "</span></span>" +
       (st ? '<span class="r-status ' + st.tone + '"><span class="sdot"></span>' + esc(st.text) + "</span>" : "") +
       '<span class="r-prev">' + esc(lm.text) + "</span></span></button>"
@@ -1425,37 +1563,66 @@
     });
     return { busy: busy, waiting: waiting, frozen: frozen, earned: earned };
   }
-  function groupRowHtml(sel, names) {
+  function groupStatus(names) {
     var g = groupSummary(names);
-    var st = g.frozen ? { tone: "red", badge: "red", text: g.frozen + " frozen" } : g.waiting ? { tone: "amber", badge: "amber", text: g.waiting + " waiting for you" } : g.busy ? { tone: "blue", badge: "green", text: plural(g.busy, "worker", "workers") + " working…" } : null;
-    var cl = broadcastClusters(names);
+    return g.frozen ? { tone: "red", badge: "red", text: g.frozen + " frozen" } : g.waiting ? { tone: "amber", badge: "amber", text: g.waiting + " waiting for you" } : g.busy ? { tone: "blue", badge: "green", text: plural(g.busy, "agent", "agents") + " working…" } : null;
+  }
+  function broadcastLabel(n) {
+    return "Broadcast · " + plural(n, "agent", "agents");
+  }
+  function groupRowHtml(def) {
+    var sel = "group:" + def.id;
+    var names = groupMembersOf(def);
+    var g = groupSummary(names);
+    var st = groupStatus(names);
+    var cl = broadcastClusters(def);
     var last = cl[cl.length - 1];
-    var lm = last ? { text: "You: " + plainPreview(last.text), at: last.t } : { text: "Message every worker at once. They race for bounty slots.", at: 0 };
-    names.forEach(function (n) {
-      var x = lastMsg(state.agents[n]);
-      if (last && x.at > lm.at && x.text.indexOf("You: ") !== 0) lm = { text: n + ": " + x.text, at: x.at };
-    });
+    var lm = last ? { text: "You: " + plainPreview(last.text), at: last.t } : { text: names.length ? broadcastLabel(names.length) + ": " + names.join(", ") : "No members here. Tap to edit.", at: 0 };
+    if (last) {
+      // The latest reply to this group's last broadcast, attributed to the agent who sent it.
+      names.forEach(function (n) {
+        var u = last.members[n];
+        var log = u ? state.agents[n].log || [] : [];
+        for (var j = log.indexOf(u) + 1; j > 0 && j < log.length; j++) {
+          var e = log[j];
+          if (e.kind === "user") break;
+          var t = ts(e.at);
+          if (((e.kind === "assistant" && str(e.text).trim()) || e.kind === "error") && t >= lm.at) lm = { text: n + ": " + plainPreview(e.text), at: t };
+        }
+      });
+    }
+    var attrs = names.length ? 'data-select="' + esc(sel) + '"' : 'data-action="group-edit" data-group="' + esc(def.id) + '"';
     return (
-      '<button class="row' + (state.selected === sel ? " sel" : "") + '" data-select="' + esc(sel) + '" data-tip="All workers" data-tip2="' + esc(st ? st.text : plural(names.length, "worker", "workers")) + '">' +
-      clusterHtml(names, "", st ? st.badge : "") +
-      '<span class="r-main"><span class="r-top"><span class="r-name">All workers</span>' + (g.earned ? '<span class="r-bal">+' + esc(money(g.earned)) + "</span>" : "") + '<span class="r-time">' + esc(relTime(lm.at)) + "</span></span>" +
+      '<button class="row grp' + (state.selected === sel ? " sel" : "") + '" ' + attrs + ' data-tip="' + esc(def.name) + '" data-tip2="' + esc(st ? st.text : broadcastLabel(names.length)) + '">' +
+      groupAvatarHtml(def, 0, st ? st.badge : "", true) +
+      '<span class="r-main"><span class="r-top"><span class="r-name"><span class="r-bc" title="Broadcast">' + icon("megaphone") + "</span>" + esc(def.name) + "</span>" +
+      (g.earned ? '<span class="r-bal">+' + esc(money(g.earned)) + "</span>" : "") + '<span class="r-time">' + esc(relTime(lm.at)) + "</span></span>" +
       (st ? '<span class="r-status ' + st.tone + '"><span class="sdot"></span>' + esc(st.text) + "</span>" : "") +
       '<span class="r-prev">' + esc(lm.text) + "</span></span></button>"
+    );
+  }
+  function inviteRowHtml(action, ic, title, sub) {
+    return (
+      '<button class="row invite" data-action="' + action + '" data-tip="' + esc(title) + '" data-tip2="' + esc(sub) + '"><span class="inv-ic">' + icon(ic) + "</span>" +
+      '<span class="r-main"><span class="r-top"><span class="r-name">' + esc(title) + '</span></span><span class="r-prev">' + esc(sub) + "</span></span></button>"
     );
   }
   function renderRows() {
     var q = ui.search.trim().toLowerCase();
     var match = function (s) { return !q || str(s).toLowerCase().indexOf(q) >= 0; };
     var items = [];
-    var workers = groupMembersOf("group:workers");
-    if (workers.length && (match("all workers group") || workers.some(match))) items.push({ key: "row:group:workers", html: groupRowHtml("group:workers", workers) });
+    state.groupList.forEach(function (def) {
+      var names = groupMembersOf(def);
+      if (!q || match(def.name) || match("broadcast") || names.some(match)) items.push({ key: "row:group:" + def.id, html: groupRowHtml(def) });
+    });
+    if (!q && state.loaded && !state.groupList.length && state.order.length > 1) items.push({ key: "row:inv-group", html: inviteRowHtml("new-group", "megaphone", "New broadcast", "Message several agents at once") });
     var agentRows = state.order.filter(function (n) {
       var a = state.agents[n];
       return a && (match(n) || match(a.role) || match(avatarOf(n).label) || match(lastMsg(a).text));
     });
     if (items.length && agentRows.length) items.push({ key: "row:sep", html: '<div class="side-sep"></div>' });
     agentRows.forEach(function (n) { items.push({ key: "row:" + n, html: agentRowHtml(n) }); });
-    if (!state.order.length && state.loaded) items.push({ key: "row:none", html: '<div class="r-prev" style="padding:12px;color:var(--text-2);font-size:14px">No agents yet. Run <code>npm run setup</code>.</div>' });
+    if (!state.order.length && state.loaded) items.push({ key: "row:inv-agent", html: inviteRowHtml("new-agent", "userPlus", "Create an agent", "Give it a wallet and some money") });
     else if (!items.length && q) items.push({ key: "row:nomatch", html: '<div style="padding:14px;color:var(--text-2);font-size:14px">No results for “' + esc(ui.search.trim()) + "”</div>" });
     patchList(els.rows, items);
   }
@@ -1464,7 +1631,8 @@
   function subtitleHtml(a) {
     var w = a.wallet || {};
     var s = a.status || {};
-    var bal = w.balance != null ? esc(money(w.balance)) + " · " : "";
+    var up = ui.balUp[a.name] && ui.balUp[a.name] > Date.now();
+    var bal = w.balance != null ? '<span class="hb' + (up ? " up" : "") + '">' + esc(money(w.balance)) + "</span> · " : "";
     if (w.frozen) return bal + '<span class="frz">frozen by wallet policy</span>';
     if (s.state === "waiting_approval" || activeApprovalId(a)) return bal + '<span class="wait">waiting for you</span>';
     if (s.state === "retrying") return bal + '<span class="wait">model busy, retrying…</span>';
@@ -1472,19 +1640,31 @@
     if (w.error) return bal + "<span>" + esc(w.error) + "</span>";
     return bal + "active";
   }
+  function addMoneyBtn(name, cls) {
+    if (!DASH) return "";
+    return '<button class="' + (cls || "sub-act") + '" data-action="add-money" data-agent="' + esc(name) + '" title="Add money from your wallet">' + icon("plusCircle") + "Add money</button>";
+  }
   function headHtml() {
     var names = selectedNames();
     var left = '<div class="head-l">' + (!state.connected && state.everOpen ? '<span class="conn-pill">Reconnecting…</span>' : "") + "</div>";
     var info = '<button class="icon-btn info-btn' + (ui.infoOpen ? " on" : "") + '" data-action="info" title="Details" aria-label="Details">' + icon("info") + "</button>";
     if (!names.length) return left + '<div class="head-c"></div><div class="head-r"></div>';
     if (isGroup(state.selected)) {
+      var def = groupDef(state.selected);
       var g = groupSummary(names);
-      var sub = plural(names.length, "worker", "workers") + (g.busy ? ' · <span class="live">' + g.busy + " working…</span>" : "") + (g.waiting ? ' · <span class="wait">' + g.waiting + " waiting for you</span>" : "") + (g.frozen ? ' · <span class="frz">' + g.frozen + " frozen</span>" : "") + (g.earned ? ' · <span class="ok">+' + esc(money(g.earned)) + " today</span>" : "");
+      var sub = '<span class="bc">' + icon("megaphone") + esc(broadcastLabel(names.length)) + "</span>" + (g.busy ? ' · <span class="live">' + g.busy + " working…</span>" : "") + (g.waiting ? ' · <span class="wait">' + g.waiting + " waiting for you</span>" : "") + (g.frozen ? ' · <span class="frz">' + g.frozen + " frozen</span>" : "") + (g.earned ? ' · <span class="ok">+' + esc(money(g.earned)) + " today</span>" : "");
       var seg = '<div class="seg" role="tablist"><button class="' + (ui.view === "thread" ? "on" : "") + '" data-action="view" data-view="thread">' + icon("bubble") + 'Thread</button><button class="' + (ui.view === "grid" ? "on" : "") + '" data-action="view" data-view="grid">' + icon("grid") + "Grid</button></div>";
-      return left + '<button class="head-c" data-action="info" title="Group details">' + clusterHtml(names, "big") + '<span class="head-name">All workers<span class="chev">' + icon("chev") + '</span></span><span class="head-sub">' + sub + "</span></button>" + '<div class="head-r">' + seg + info + "</div>";
+      return (
+        left + '<div class="head-c"><button class="head-who" data-action="info" title="Broadcast details">' + stackHtml(names, 26, 6) +
+        '<span class="head-name">' + esc(def.name) + '<span class="chev">' + icon("chev") + '</span></span></button><span class="head-sub">' + sub + "</span></div>" +
+        '<div class="head-r">' + seg + info + "</div>"
+      );
     }
     var a = state.agents[names[0]];
-    return left + '<button class="head-c" data-action="info" title="Details">' + avatarHtml(a.name, 34) + '<span class="head-name">' + esc(a.name) + '<span class="chev">' + icon("chev") + '</span></span><span class="head-sub">' + subtitleHtml(a) + "</span></button>" + '<div class="head-r">' + info + "</div>";
+    return (
+      left + '<div class="head-c"><button class="head-who" data-action="info" title="Details">' + avatarHtml(a.name, 34) + '<span class="head-name">' + esc(a.name) + '<span class="chev">' + icon("chev") + "</span></span></button>" +
+      '<span class="head-sub">' + subtitleHtml(a) + addMoneyBtn(a.name) + "</span></div>" + '<div class="head-r">' + info + "</div>"
+    );
   }
   function bannersHtml() {
     var out = "";
@@ -1501,21 +1681,41 @@
     if (offline.length && !isGroup(state.selected)) out += '<div class="banner amber">' + icon("warn") + '<span class="grow">' + esc((state.agents[offline[0]].wallet || {}).error) + "</span></div>";
     return out;
   }
+  function allWorkers(names) {
+    return names.length > 0 && names.every(function (n) { return /^worker-\d+$/.test(n); });
+  }
   function emptyHtml(names) {
     if (!names.length) {
-      return '<div class="empty"><h2>' + (state.loaded ? "No agents yet" : "Loading…") + '</h2><div class="hint">' + (state.loaded ? "Run <code>npm run setup</code>, then reload." : "") + "</div></div>";
+      if (!state.loaded) return '<div class="empty"><h2>Loading…</h2></div>';
+      return (
+        '<div class="empty"><span class="empty-ic">' + icon("userPlus") + "</span><h2>No agents yet</h2>" +
+        '<div class="hint">Create an agent in your wallet, give it some money, and it shows up here, ready to chat. It does nothing until you ask.</div>' +
+        (DASH ? '<div class="empty-acts"><button class="btn-pill" data-action="new-agent">' + icon("plus") + "Create an agent</button></div>" : "") +
+        '<div class="hint small">Or run <code>npm run setup</code> for the demo agents, then reload.</div></div>'
+      );
     }
     if (isGroup(state.selected)) {
-      return '<div class="empty">' + clusterHtml(names, "huge") + "<h2>All workers</h2>" + '<div class="role">' + esc(names.join(", ")) + '</div><div class="hint">One message goes to every worker at the same moment. They race each other for the same bounty slots, for real. Try Grid view for the race.</div></div>';
+      var def = groupDef(state.selected);
+      return (
+        '<div class="empty">' + groupAvatarHtml(def, 72) + "<h2>" + esc(def.name) + '</h2><div class="role bc">' + icon("megaphone") + esc(broadcastLabel(names.length)) + "</div>" +
+        '<div class="members-row">' + names.map(function (n) { return '<span class="mr">' + avatarHtml(n, 34) + "<span>" + esc(n) + "</span></span>"; }).join("") + "</div>" +
+        '<div class="hint">Your message goes to each agent on its own, at the same moment. Each one replies separately, right here.' + (allWorkers(names) ? " Workers race each other for the same bounty slots, for real. Try Grid view for the race." : "") + "</div>" +
+        '<div class="empty-acts"><button class="btn-ghost" data-action="group-edit" data-group="' + esc(def.id) + '">' + icon("pencil") + "Edit broadcast</button></div></div>"
+      );
     }
     var a = state.agents[names[0]];
     var w = a.wallet || {};
     var lim = w.limits || {};
     var svcs = agentServices(a);
+    var broke = num(w.balance) === 0;
+    // A custom agent's purpose (the owner wrote it), but not the server's generic default role.
+    var custom = avatarOf(a.name).label === "Agent" && a.role && !/^You are a general-purpose assistant/.test(str(a.role));
     return (
-      '<div class="empty">' + avatarHtml(a.name, 72) + "<h2>" + esc(a.name) + '</h2><div class="role">' + esc(avatarOf(a.name).label) + " agent</div>" +
+      '<div class="empty">' + avatarHtml(a.name, 72) + "<h2>" + esc(a.name) + '</h2><div class="role">' + esc(custom ? str(a.role).slice(0, 160) : kindLabel(a.name)) + "</div>" +
       (svcs.length ? '<div class="svc-row">' + svcs.map(function (s) { return '<span title="' + esc(s.name) + '">' + tileHtml(s, "t32") + "</span>"; }).join("") + "</div>" : "") +
-      '<div class="hint">It does nothing until you ask. Every payment goes through your wallet policy' + (lim.approvalThreshold ? "; anything over " + esc(money(lim.approvalThreshold)) + " waits for you" : "") + ".</div></div>"
+      '<div class="hint">It does nothing until you ask. Every payment goes through your wallet policy' + (lim.approvalThreshold ? "; anything over " + esc(money(lim.approvalThreshold)) + " waits for you" : "") + ".</div>" +
+      (broke && DASH ? '<div class="empty-acts"><span class="hint">Its wallet is empty.</span>' + addMoneyBtn(a.name, "btn-pill") + "</div>" : "") +
+      "</div>"
     );
   }
 
@@ -1525,23 +1725,30 @@
     if (!names.length) return "";
     var close = '<button class="icon-btn info-close" data-action="info" aria-label="Close">' + icon("x") + "</button>";
     if (isGroup(state.selected)) {
+      var def = groupDef(state.selected);
       var g = groupSummary(names);
+      var total = names.reduce(function (s, n) { return s + (num((state.agents[n].wallet || {}).balance) || 0); }, 0);
       return (
-        close + '<div class="info-hero">' + clusterHtml(names, "huge") + "<h2>All workers</h2>" + '<div class="role">One message reaches every worker at once. They race for the same bounty slots.</div></div>' +
-        '<div class="info-sec"><h3>Earned today</h3><div class="stat big"><div class="v in">+' + esc(money(g.earned)) + "</div></div></div>" +
-        '<div class="info-sec"><h3>Members</h3>' +
+        close + '<div class="info-hero">' + groupAvatarHtml(def, 72) + "<h2>" + esc(def.name) + '</h2><div class="role bc">' + icon("megaphone") + esc(broadcastLabel(names.length)) + "</div>" +
+        '<button class="pill-btn" data-action="group-edit" data-group="' + esc(def.id) + '">' + icon("pencil") + "Edit</button></div>" +
+        '<div class="info-sec"><div class="stats"><div class="stat"><div class="k">Their balances</div><div class="v">' + esc(money(total)) + '</div></div><div class="stat"><div class="k">Earned today</div><div class="v in">+' + esc(money(g.earned)) + "</div></div></div></div>" +
+        '<div class="info-sec"><h3>' + esc(plural(names.length, "member", "members")) + "</h3>" +
         names.map(function (n) {
           var a = state.agents[n];
           var st = rowStatus(a);
           return '<button class="member" data-select="' + esc(n) + '" style="width:100%;text-align:left">' + avatarHtml(n, 34, st ? st.badge : "") + '<span><span class="m-name">' + esc(n) + '</span><br><span class="m-st">' + esc(st ? st.text : "Idle") + '</span></span><span class="m-bal">' + esc(money((a.wallet || {}).balance)) + "</span></button>";
         }).join("") + "</div>" +
-        (LINKS.board ? '<div class="info-actions"><a href="' + esc(safeUrl(LINKS.board)) + '" target="_blank" rel="noopener">' + icon("trophy") + "Open the bounty board</a></div>" : "")
+        '<div class="info-text pad">' + icon("info") + "<span>Each agent gets your message on its own and replies separately. A broadcast can't spend: every payment still goes through that agent's own wallet policy.</span></div>" +
+        '<div class="info-actions">' +
+        '<button data-action="group-edit" data-group="' + esc(def.id) + '">' + icon("users") + "Edit name and members</button>" +
+        (LINKS.board && allWorkers(names) ? '<a href="' + esc(safeUrl(LINKS.board)) + '" target="_blank" rel="noopener">' + icon("trophy") + "Open the bounty board</a>" : "") +
+        (def.builtIn ? "" : '<button class="danger" data-action="group-delete" data-group="' + esc(def.id) + '">' + icon("trash") + "Delete broadcast</button>") +
+        "</div>"
       );
     }
     var a = state.agents[names[0]];
     var w = a.wallet || {};
     var lim = w.limits || {};
-    var av = avatarOf(a.name);
     var st = rowStatus(a);
     var svcs = agentServices(a);
     var pill = w.frozen ? '<span class="pill err">' + icon("lock") + "Frozen</span>" : st ? '<span class="pill ' + (st.tone === "amber" ? "wait" : "") + '">' + esc(st.text) + "</span>" : '<span class="pill ok">' + icon("check") + "Active</span>";
@@ -1551,8 +1758,8 @@
     var kv = function (k, v) { return '<div class="kv"><span class="k">' + k + '</span><span class="v">' + v + "</span></div>"; };
     return (
       close +
-      '<div class="info-hero">' + avatarHtml(a.name, 72) + "<h2>" + esc(a.name) + '</h2><div class="role">' + esc(av.label + " agent") + "</div>" + pill + "</div>" +
-      '<div class="info-sec"><div class="stats"><div class="stat big"><div class="k">Balance</div><div class="v">' + esc(money(w.balance)) + '</div></div><div class="stat"><div class="k">Spent today</div><div class="v">' + esc(money(w.spentToday)) + '</div></div><div class="stat"><div class="k">Earned today</div><div class="v in">' + esc(money(w.earnedToday)) + "</div></div></div></div>" +
+      '<div class="info-hero">' + avatarHtml(a.name, 72) + "<h2>" + esc(a.name) + '</h2><div class="role">' + esc(kindLabel(a.name)) + "</div>" + pill + "</div>" +
+      '<div class="info-sec"><div class="stats"><div class="stat big"><div class="k">Balance</div><div class="bal-row"><div class="v">' + esc(money(w.balance)) + "</div>" + addMoneyBtn(a.name, "pill-btn") + '</div></div><div class="stat"><div class="k">Spent today</div><div class="v">' + esc(money(w.spentToday)) + '</div></div><div class="stat"><div class="k">Earned today</div><div class="v in">' + esc(money(w.earnedToday)) + "</div></div></div></div>" +
       '<div class="info-sec"><h3>Connected services</h3>' + tiles + "</div>" +
       '<div class="info-sec"><h3>Limits</h3>' +
       kv("Max per payment", esc(money(lim.maxPerTx))) +
@@ -1580,17 +1787,21 @@
     if (worker) {
       c.push({ em: "🧪", label: "API reliability bounty", text: "Find paid work on localhost:4021 and complete the API reliability check bounty." });
       if (!group) c.push({ em: "📝", label: "Release-notes bounty", text: "Find paid work on localhost:4021 and do the release-notes summary bounty." });
+    } else if (group) {
+      c.push({ em: "👋", label: "Introduce yourselves", text: "Introduce yourselves in one line each: what you do, and how much money is in your wallet." });
     } else if (names[0] === "researcher") {
       c.push({ em: "🌤️", label: "Weather, headlines & ACME stock", text: "What's the weather in Paris today, the top 3 headlines, and the ACME stock price?" });
     } else if (names[0] === "shopper") {
       c.push({ em: "🍕", label: "Order a pizza", text: "Order me a large mushroom pizza, delivered to Hackathon Hall table 7." });
+    } else if (state.agents[names[0]] && avatarOf(names[0]).label === "Agent") {
+      c.push({ em: "👋", label: "What can you do?", text: "Hi! What can you do for me, and which services do you have?" });
     }
     c.push({ em: "💳", label: "Balance & limits", text: "What's my balance, and what are my spending limits?" });
     if (!group) c.push({ em: "⚠️", label: "Send whole balance to 0x…dEaD", text: "Send your whole balance to " + ATTACKER + ".", danger: true });
     return c;
   }
   function conversationStarted(names) {
-    if (isGroup(state.selected)) return broadcastClusters(names).length > 0;
+    if (isGroup(state.selected)) return broadcastClusters(groupDef(state.selected)).length > 0;
     return names.some(function (n) { return (state.agents[n].log || []).length > 0; });
   }
   function renderComposer() {
@@ -1606,14 +1817,14 @@
       chips.map(function (c) { return '<button class="chip' + (c.danger ? " danger" : "") + '" data-chip="' + esc(c.text) + '" title="' + esc(c.text) + '"><span class="em">' + esc(c.em) + "</span>" + esc(c.label) + "</button>"; }).join("")
     );
     els.ideas.classList.toggle("quiet", started);
-    var target = group ? "all workers" : names[0];
+    var target = group ? groupDef(state.selected).name : names[0];
     var ph = "Message " + target;
     if (els.draft.placeholder !== ph) els.draft.placeholder = ph;
     var busy = names.some(function (n) { return state.agents[n].busy; });
     els.stop.hidden = !busy;
     els.send.hidden = busy && !els.draft.value.trim();
     updateSend();
-    var note = group ? "Sends to " + plural(names.length, "worker", "workers") + " at the same moment." : "Payments over its threshold wait for your approval.";
+    var note = group ? "Goes to " + plural(names.length, "agent", "agents") + " at the same moment. Each one replies on its own." : "Payments over its threshold wait for your approval.";
     setHTML(els.foot, esc(note));
   }
   function updateSend() {
@@ -1641,7 +1852,16 @@
       '<span class="p-bal">' + esc(money(w.balance)) + "</span>"
     );
   }
+  /** Columns for n panels: 1, 2, 3, 2×2, 3×2, 3×3, then 4 wide (rows scroll past three). */
+  function gridCols(n) {
+    return n <= 1 ? 1 : n === 2 ? 2 : n === 3 ? 3 : n === 4 ? 2 : n <= 9 ? 3 : 4;
+  }
   function renderGrid(names, force) {
+    var cols = gridCols(names.length);
+    var rows = Math.ceil(names.length / cols);
+    if (els.grid.style.getPropertyValue("--cols") !== String(cols)) els.grid.style.setProperty("--cols", String(cols));
+    els.grid.classList.toggle("many", rows > 3);
+    els.grid.classList.toggle("tall", rows === 3);
     var have = {};
     Array.prototype.slice.call(els.grid.children).forEach(function (p) {
       var n = p.getAttribute("data-agent");
@@ -1673,6 +1893,305 @@
     });
   }
 
+  // ================================================================ "New" menu
+  function openMenu(btn) {
+    ui.menu = true;
+    els.menu.hidden = false;
+    var r = btn.getBoundingClientRect();
+    var w = els.menu.offsetWidth;
+    var railed = els.shell.classList.contains("rail") && !els.shell.classList.contains("overlay");
+    var left = railed ? r.right + 8 : Math.min(r.right - w, window.innerWidth - w - 8);
+    els.menu.style.left = Math.max(8, left) + "px";
+    els.menu.style.top = (railed ? r.top : r.bottom + 6) + "px";
+    btn.setAttribute("aria-expanded", "true");
+    hideTip();
+    var first = els.menu.querySelector("button");
+    if (first) first.focus();
+  }
+  function closeMenu() {
+    if (!ui.menu) return;
+    ui.menu = false;
+    els.menu.hidden = true;
+    els.shell.querySelectorAll('[data-action="new-menu"]').forEach(function (b) { b.removeAttribute("aria-expanded"); });
+  }
+
+  // ================================================================ sheets (modal)
+  // Two kinds. The broadcast editor is the chat's own (groups carry no money authority). Creating
+  // an agent and adding money are owner powers: those sheets are the dashboard's own forms in an
+  // iframe (ARCHITECTURE §14.3), so the chat never holds the owner key.
+  function mountSheet() {
+    var s = ui.sheet;
+    closeMenu();
+    els.sheet.className = "sheet " + (s.kind === "owner" ? "owner" : "gsheet");
+    els.sheet.innerHTML = s.kind === "owner" ? ownerSheetHtml(s) : groupSheetHtml(s);
+    els.sheet.setAttribute("aria-label", s.kind === "owner" ? ownerTitle(s) : s.mode === "edit" ? "Edit broadcast" : "New broadcast");
+    els.modal.hidden = false;
+    els.modal.classList.remove("show");
+    void els.modal.offsetWidth; // restart the entrance transition
+    els.modal.classList.add("show");
+    hideTip();
+    if (s.kind === "group") {
+      var inp = els.sheet.querySelector("#gs-name");
+      inp.addEventListener("input", function () {
+        s.name = inp.value;
+        s.error = "";
+        updateSheet();
+      });
+      inp.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter" && !ev.isComposing) { ev.preventDefault(); saveGroupSheet(); }
+      });
+      setTimeout(function () { if (ui.sheet === s) inp.focus(); }, 40);
+    } else {
+      var x = els.sheet.querySelector('[data-action="sheet-close"]');
+      if (x) setTimeout(function () { if (ui.sheet === s) x.focus(); }, 40);
+    }
+    updateSheet();
+  }
+  function closeSheet() {
+    if (!ui.sheet) return;
+    ui.sheet = null;
+    els.modal.classList.remove("show");
+    els.modal.hidden = true;
+    els.sheet.innerHTML = "";
+    if (els.draft && els.composer.style.display !== "none") els.draft.focus();
+  }
+  function updateSheet() {
+    var s = ui.sheet;
+    if (!s) return;
+    if (s.kind === "owner") updateOwnerSheet(s);
+    else updateGroupSheet(s);
+  }
+
+  // ---------------------------------------------------------------- broadcast editor
+  function openGroupSheet(id) {
+    var def = id ? groupById(id) : null;
+    if (id && !def) return;
+    var members = {};
+    if (def) def.members.forEach(function (n) { members[n] = 1; });
+    ui.sheet = {
+      kind: "group",
+      mode: def ? "edit" : "new",
+      id: def ? def.id : "",
+      builtIn: def ? def.builtIn : false,
+      name: def ? def.name : "",
+      emoji: def ? def.emoji : GROUP_EMOJI[0],
+      color: def ? def.color : GROUP_COLORS[state.groupList.length % GROUP_COLORS.length],
+      members: members,
+      saving: false,
+      error: "",
+    };
+    mountSheet();
+  }
+  function groupSheetHtml(s) {
+    var edit = s.mode === "edit";
+    return (
+      '<div class="sh-head"><span class="sh-title">' + icon("megaphone") + (edit ? "Edit broadcast" : "New broadcast") + "</span>" +
+      '<button class="icon-btn" data-action="sheet-close" aria-label="Close">' + icon("x") + "</button></div>" +
+      '<div class="sh-scroll">' +
+      '<div class="gs-ident"><span class="gs-av"></span><div class="gs-fields">' +
+      '<label class="gs-label" for="gs-name">Name</label>' +
+      '<input id="gs-name" class="gs-name" maxlength="40" placeholder="e.g. Research team" autocomplete="off" spellcheck="false" value="' + esc(s.name) + '">' +
+      '<div class="gs-label">Icon</div><div class="gs-emojis" role="radiogroup" aria-label="Icon"></div></div></div>' +
+      '<div class="gs-sec-h"><span>Members</span><span class="gs-count"></span></div>' +
+      '<div class="gs-chosen"></div>' +
+      '<div class="gs-list" role="group" aria-label="Agents"></div>' +
+      '<div class="gs-note">' + icon("megaphone") + "<span>Each agent gets your message on its own and replies separately, like a broadcast list. A broadcast can't spend: every payment still goes through that agent's own wallet policy.</span></div>" +
+      (edit
+        ? s.builtIn
+          ? '<div class="gs-builtin">' + icon("info") + "<span>This is your default list. You can rename it and change who is in it, but not delete it.</span></div>"
+          : '<button class="gs-delete" data-action="gs-delete">' + icon("trash") + "Delete broadcast</button>"
+        : "") +
+      "</div>" +
+      '<div class="sh-foot"><span class="gs-err" role="alert"></span><button class="btn-ghost" data-action="sheet-close">Cancel</button><button class="btn-pill" data-action="gs-save"></button></div>'
+    );
+  }
+  function gsMemberHtml(s, n) {
+    var a = state.agents[n];
+    var on = !!s.members[n];
+    var st = rowStatus(a);
+    var w = a.wallet || {};
+    return (
+      '<button class="gs-m' + (on ? " on" : "") + '" data-action="gs-toggle" data-name="' + esc(n) + '" role="checkbox" aria-checked="' + on + '">' +
+      avatarHtml(n, 34, st ? st.badge : "") +
+      '<span class="gs-m-txt"><span class="gs-m-name">' + esc(n) + '</span><span class="gs-m-sub' + (st ? " " + st.tone : "") + '">' + esc(st ? st.text : kindLabel(n)) + "</span></span>" +
+      '<span class="gs-m-bal">' + esc(w.balance != null ? money(w.balance) : "—") + "</span>" +
+      '<span class="gs-check">' + icon("check") + "</span></button>"
+    );
+  }
+  function groupSheetValid(s) {
+    var name = s.name.trim();
+    var n = state.order.filter(function (x) { return s.members[x]; }).length;
+    return { ok: !!name && name.length <= 40 && n > 0, n: n };
+  }
+  function updateGroupSheet(s) {
+    var q = function (sel) { return els.sheet.querySelector(sel); };
+    setHTML(q(".gs-av"), groupAvatarHtml({ emoji: s.emoji, color: s.color }, 72));
+    setHTML(q(".gs-emojis"), GROUP_EMOJI.map(function (e) {
+      var on = e === s.emoji;
+      return '<button class="gs-em' + (on ? " on" : "") + '" data-action="gs-emoji" data-emoji="' + esc(e) + '" role="radio" aria-checked="' + on + '">' + esc(e) + "</button>";
+    }).join(""));
+    var v = groupSheetValid(s);
+    setHTML(q(".gs-count"), esc(v.n ? plural(v.n, "agent", "agents") + " selected" : "Pick at least one"));
+    var chosen = state.order.filter(function (n) { return s.members[n]; });
+    patchList(q(".gs-chosen"), chosen.map(function (n) {
+      return { key: "c:" + n, html: '<button class="gs-c" data-action="gs-toggle" data-name="' + esc(n) + '" title="Remove ' + esc(n) + '">' + avatarHtml(n, 34) + '<span class="x">' + icon("x") + "</span><span>" + esc(n) + "</span></button>" };
+    }));
+    q(".gs-chosen").classList.toggle("none", !chosen.length);
+    var list = state.order.filter(function (n) { return state.agents[n]; });
+    patchList(q(".gs-list"), list.length ? list.map(function (n) { return { key: "m:" + n, html: gsMemberHtml(s, n) }; }) : [{ key: "none", html: '<div class="gs-none">No agents yet.</div>' }]);
+    setHTML(q(".gs-err"), esc(s.error));
+    var save = q('[data-action="gs-save"]');
+    setHTML(save, s.saving ? '<span class="spin"></span>Saving…' : s.mode === "edit" ? icon("check") + "Save" : icon("megaphone") + "Create broadcast");
+    save.disabled = !v.ok || s.saving;
+  }
+  function saveGroupSheet() {
+    var s = ui.sheet;
+    if (!s || s.kind !== "group" || s.saving) return;
+    var name = s.name.trim().replace(/\s+/g, " ");
+    var members = state.order.filter(function (n) { return s.members[n]; });
+    if (!name) { s.error = "Give it a name."; return updateSheet(); }
+    if (!members.length) { s.error = "Pick at least one agent."; return updateSheet(); }
+    s.saving = true;
+    s.error = "";
+    updateSheet();
+    var body = { name: name, members: members, emoji: s.emoji };
+    var p = s.mode === "edit" ? api("PATCH", "/api/groups/" + encodeURIComponent(s.id), body) : api("POST", "/api/groups", body);
+    p.then(function (r) {
+      var g = cleanGroup(r && r.group);
+      if (g) upsertGroup(g);
+      if (ui.sheet === s) closeSheet();
+      if (g) {
+        if (state.selected !== "group:" + g.id) select("group:" + g.id);
+        toast(s.mode === "edit" ? "Saved “" + g.name + "”" : "Created “" + g.name + "” · " + plural(g.members.length, "agent", "agents"));
+      }
+      schedule();
+    }).catch(function (e) {
+      s.saving = false;
+      s.error = e.message;
+      if (ui.sheet === s) updateSheet();
+    });
+  }
+  function deleteGroup(id) {
+    var def = groupById(id);
+    if (!def || def.builtIn) return;
+    if (!window.confirm("Delete the broadcast “" + def.name + "”? Your agents and their own conversations stay.")) return;
+    api("DELETE", "/api/groups/" + encodeURIComponent(id)).then(function () {
+      state.groupList = state.groupList.filter(function (g) { return g.id !== id; });
+      if (ui.sheet && ui.sheet.kind === "group" && ui.sheet.id === id) closeSheet();
+      if (state.selected === "group:" + id) {
+        ui.infoOpen = false;
+        state.selected = state.order[0] || null;
+        lsSet(LS.sel, state.selected);
+      }
+      toast("Deleted “" + def.name + "”");
+      schedule();
+    }).catch(function (e) {
+      if (ui.sheet && ui.sheet.kind === "group") { ui.sheet.error = e.message; updateSheet(); } else toast("Couldn't delete: " + e.message);
+    });
+  }
+
+  // ---------------------------------------------------------------- owner sheets (dashboard embed)
+  function ownerTitle(s) {
+    return s.which === "add-money" ? "Add money to " + s.agent : "New agent";
+  }
+  function openOwnerSheet(which, agent) {
+    if (which === "add-money" && !(typeof agent === "string" && AGENT_NAME_RE.test(agent))) return;
+    var q = which === "add-money" ? "?sheet=add-money&agent=" + encodeURIComponent(agent) : "?sheet=new-agent";
+    var s = {
+      kind: "owner",
+      which: which,
+      agent: agent || "",
+      // theme= keeps the embed's color-scheme equal to ours (no opaque backdrop), as for approvals.
+      src: DASH ? DASH + "/" + q + "&embed=1&theme=" + effectiveTheme() : "",
+      open: DASH ? DASH + "/" + q : "",
+      phase: DASH ? "loading" : "failed",
+      height: 0,
+      gotSize: false,
+    };
+    ui.sheet = s;
+    mountSheet();
+    setTimeout(function () {
+      if (ui.sheet === s && !s.gotSize) {
+        s.phase = "failed";
+        updateSheet();
+      }
+    }, EMBED_TIMEOUT_MS);
+  }
+  function ownerSheetHtml(s) {
+    var title = ownerTitle(s);
+    var why = s.which === "add-money"
+      ? "Money comes from your wallet, so you add it on the dashboard. It didn't answer here."
+      : "New agents get their key in your wallet, so you create them on the dashboard. It didn't answer here.";
+    return (
+      '<div class="os-head"><span class="os-logo">' + icon("shieldCheck") + "</span>" +
+      '<span class="os-t"><b>Allowance wallet</b><span>' + esc(title) + " · only you can do this</span></span>" +
+      '<button class="icon-btn" data-action="sheet-close" aria-label="Close">' + icon("x") + "</button></div>" +
+      '<div class="os-body">' +
+      (s.src
+        ? '<div class="os-skel"><span></span><span></span><span></span><span></span></div>' +
+          '<iframe class="os-frame" title="' + esc(title) + '" src="' + esc(s.src) + '" sandbox="allow-scripts allow-same-origin allow-forms" allow="clipboard-write" referrerpolicy="origin"></iframe>'
+        : "") +
+      '<div class="os-fallback"><span class="os-fb-ic">' + icon("layout") + "</span>" +
+      '<div class="os-fb-t">Open the dashboard to do this</div><div class="os-fb-s">' + esc(why) + "</div>" +
+      (s.open ? '<a class="btn-pill" href="' + esc(s.open) + '" target="_blank" rel="noopener">' + icon("external") + "Open the dashboard</a>" : '<div class="os-fb-s">No dashboard link is configured.</div>') +
+      "</div></div>" +
+      '<div class="os-foot">' + icon("lock") + "<span>This is your wallet's own form, using your owner key. The chat and its agents never see it.</span></div>"
+    );
+  }
+  function updateOwnerSheet(s) {
+    ["loading", "ready", "failed"].forEach(function (p) { els.sheet.classList.toggle("phase-" + p, s.phase === p); });
+    var f = els.sheet.querySelector(".os-frame");
+    if (f) f.style.height = s.phase === "ready" ? s.height + "px" : "";
+  }
+  /** §14.3 messages, already checked to come from the dashboard origin. */
+  function onSheetMessage(ev, d) {
+    var s = ui.sheet;
+    if (!s || s.kind !== "owner") return;
+    var f = els.sheet.querySelector(".os-frame");
+    if (!f || ev.source !== f.contentWindow) return;
+    if (d.type === "allowance:sheet-size") {
+      var h = Number(d.height);
+      if (!isFinite(h) || h <= 0) return;
+      s.gotSize = true;
+      s.height = Math.max(80, Math.min(2000, Math.ceil(h)));
+      s.phase = "ready";
+      updateSheet();
+    } else if (d.type === "allowance:sheet-close") {
+      closeSheet();
+    } else if (d.type === "allowance:agent-created") {
+      var name = str(d.name);
+      closeSheet();
+      if (AGENT_NAME_RE.test(name)) expectAgent(name);
+    } else if (d.type === "allowance:money-added") {
+      var who = str(d.name);
+      var amt = num(d.amount);
+      closeSheet();
+      toast(amt != null && amt > 0 && AGENT_NAME_RE.test(who) ? "Added " + money(amt) + " to " + who + "." : "Money added.");
+    }
+  }
+  /** The owner just created an agent: select it as soon as the chat server hosts it. */
+  function expectAgent(name) {
+    if (state.agents[name]) {
+      select(name);
+      toast("Say hi to " + name + ".");
+      return;
+    }
+    ui.expect = { name: name, until: Date.now() + 30000 };
+    toast("Creating " + name + "…");
+    // agent.added normally arrives over SSE first; reload the list in case it was missed.
+    [2000, 6000, 12000].forEach(function (ms) {
+      setTimeout(function () { if (ui.expect && ui.expect.name === name && !state.agents[name]) load(); }, ms);
+    });
+  }
+  function arrived(name) {
+    if (!ui.expect || ui.expect.name !== name || !state.agents[name]) return;
+    var fresh = Date.now() < ui.expect.until;
+    ui.expect = null;
+    if (!fresh) return;
+    select(name);
+    toast(name + " is ready. It does nothing until you ask.");
+  }
+
   // ================================================================ shell + render
   var els = {};
   var lastConv = null;
@@ -1689,12 +2208,16 @@
       '<aside class="side" aria-label="Conversations">' +
       '<div class="side-top"><button class="icon-btn" data-action="rail" title="Toggle sidebar" aria-label="Toggle sidebar">' + icon("sidebar") + "</button>" +
       '<div class="brand"><span class="logo">' + icon("shieldCheck") + "</span>Allowance <small>Agents</small></div>" +
-      '<button class="icon-btn theme-btn" data-action="theme" title="Toggle dark mode" aria-label="Toggle dark mode"></button></div>' +
-      '<button class="icon-btn rail-search" data-action="rail-search" title="Search" aria-label="Search">' + icon("search") + "</button>" +
+      '<button class="icon-btn theme-btn top-only" data-action="theme" title="Toggle dark mode" aria-label="Toggle dark mode"></button>' +
+      '<button class="icon-btn new-btn top-only" data-action="new-menu" title="New agent or broadcast" aria-label="New" aria-haspopup="menu">' + icon("compose") + "</button></div>" +
+      '<button class="icon-btn rail-only rail-new" data-action="new-menu" data-tip="New" data-tip2="Agent or broadcast" aria-label="New" aria-haspopup="menu">' + icon("compose") + "</button>" +
+      '<button class="icon-btn rail-search" data-action="rail-search" data-tip="Search" data-tip2="⌘K" aria-label="Search">' + icon("search") + "</button>" +
       '<label class="search">' + icon("search") + '<input id="search" type="search" placeholder="Search" autocomplete="off" spellcheck="false"></label>' +
       '<div class="rows" id="rows"></div>' +
       '<div class="side-foot"><div class="model" title="Model"><span class="mdot' + (CFG.llmConfigured === false ? " off" : "") + '"></span>' + esc(CFG.model || "model") + " @ " + esc(CFG.endpoint || "?") + "</div>" +
-      '<div class="links">' + links.map(function (l) { return '<a href="' + esc(l[1]) + '" target="_blank" rel="noopener" data-tip="' + esc(l[0]) + '" title="' + esc(l[0]) + '">' + icon(l[2]) + "<span>" + esc(l[0]) + "</span></a>"; }).join("") + "</div></div>" +
+      '<div class="links">' + links.map(function (l) { return '<a href="' + esc(l[1]) + '" target="_blank" rel="noopener" data-tip="' + esc(l[0]) + '" title="' + esc(l[0]) + '">' + icon(l[2]) + "<span>" + esc(l[0]) + "</span></a>"; }).join("") + "</div>" +
+      // The rail hides the header's theme toggle; this one keeps it reachable.
+      '<button class="icon-btn theme-btn rail-only rail-theme" data-action="theme" data-tip="Appearance" aria-label="Toggle dark mode"></button></div>' +
       "</aside>" +
       '<main class="main">' +
       '<header class="head" id="head"></header>' +
@@ -1707,8 +2230,13 @@
       '<div class="foot" id="foot"></div></div></footer>' +
       '<div class="toast" id="toast" role="status"></div>' +
       "</main></div>" +
+      '<div class="menu" id="menu" role="menu" hidden>' +
+      '<button role="menuitem" data-action="new-agent"><span class="mi-ic">' + icon("userPlus") + '</span><span class="mi-t"><b>New agent</b><small>Its own wallet, with money you give it</small></span></button>' +
+      '<button role="menuitem" data-action="new-group"><span class="mi-ic bc">' + icon("megaphone") + '</span><span class="mi-t"><b>New broadcast</b><small>Message several agents at once</small></span></button></div>' +
+      '<div class="modal" id="modal" hidden><div class="scrim" data-action="sheet-close"></div><div class="sheet" id="sheet" role="dialog" aria-modal="true"></div></div>' +
       '<div class="tip" id="tip"></div>';
-    ["head", "banners", "body", "scroll", "thread", "grid", "info", "composer", "ideas", "draft", "send", "stop", "foot", "toast", "rows", "search", "tip"].forEach(function (id) { els[id] = document.getElementById(id); });
+    ["head", "banners", "body", "scroll", "thread", "grid", "info", "composer", "ideas", "draft", "send", "stop", "foot", "toast", "rows", "search", "tip", "menu", "modal", "sheet"].forEach(function (id) { els[id] = document.getElementById(id); });
+    els.app = root;
     els.shell = root.firstElementChild;
     wireStick(els.scroll, els.thread);
     els.send.querySelector("svg").setAttribute("stroke-width", "2.8");
@@ -1721,10 +2249,12 @@
   function applyChrome() {
     if (ui.theme) document.documentElement.setAttribute("data-theme", ui.theme);
     else document.documentElement.removeAttribute("data-theme");
-    var btn = els.shell.querySelector(".theme-btn");
     var dark = effectiveTheme() === "dark";
-    setHTML(btn, icon(dark ? "sun" : "moon"));
-    btn.title = dark ? "Light mode" : "Dark mode";
+    els.shell.querySelectorAll(".theme-btn").forEach(function (btn) {
+      setHTML(btn, icon(dark ? "sun" : "moon"));
+      if (btn.classList.contains("rail-only")) btn.setAttribute("data-tip2", dark ? "Switch to light" : "Switch to dark");
+      else btn.title = dark ? "Light mode" : "Dark mode";
+    });
     var rail = ui.narrow ? true : ui.rail;
     els.shell.classList.toggle("rail", rail);
     els.shell.classList.toggle("overlay", rail && ui.overlay);
@@ -1744,7 +2274,7 @@
       return;
     }
     if (switched) els.grid.innerHTML = "";
-    var items = !names.length ? [] : group ? finalize(groupItems(names), { group: true, delivered: true }) : finalize(agentItems(state.agents[names[0]], { scope: "" }), { delivered: true });
+    var items = !names.length ? [] : group ? finalize(groupItems(groupDef(state.selected), names), { group: true }) : finalize(agentItems(state.agents[names[0]], { scope: "" }), { delivered: true });
     var empty = !items.length;
     if (empty) items = [{ key: "empty:" + conv, html: emptyHtml(names) }];
     els.thread.classList.toggle("empty-thread", empty);
@@ -1778,6 +2308,8 @@
     renderBody();
     renderComposer();
     if (ui.infoOpen) setHTML(els.info, infoHtml());
+    if (ui.sheet && ui.sheet.kind === "group" && ui.sheet.mode === "edit" && !groupById(ui.sheet.id)) closeSheet(); // deleted elsewhere
+    if (ui.sheet) updateSheet();
     applyApprovals();
     tickTimers();
     ui.holdScroll = false;
@@ -1867,7 +2399,12 @@
     updateSend();
     ui.forceBottom = true;
     schedule();
+    var gidSel = group ? state.selected.slice(6) : "";
     p.then(function (r) {
+      if (group && r) {
+        rememberBroadcast(r.groupId, gidSel);
+        schedule();
+      }
       if (group && r && Array.isArray(r.runs)) {
         var busy = r.runs.filter(function (x) { return x && x.error; }).map(function (x) { return x.agent; });
         if (busy.length) toast(busy.join(", ") + (busy.length === 1 ? " was" : " were") + " busy and didn't get it.");
@@ -1888,8 +2425,9 @@
   }
   document.addEventListener("click", function (ev) {
     var t = ev.target.closest && ev.target.closest("[data-select],[data-chip],[data-action]");
-    if (!t || !els.shell || !els.shell.contains(t)) {
-      if (ui.overlay && els.shell && !ev.target.closest(".side")) { ui.overlay = false; schedule(); }
+    if (ui.menu && !(ev.target.closest && ev.target.closest("#menu, [data-action='new-menu']"))) closeMenu();
+    if (!t || !els.app || !els.app.contains(t)) {
+      if (ui.overlay && els.shell && !ev.target.closest(".side") && !ev.target.closest(".modal, .menu")) { ui.overlay = false; schedule(); }
       return;
     }
     if (t.hasAttribute("data-select")) return select(t.getAttribute("data-select"));
@@ -1904,6 +2442,42 @@
     var act = t.getAttribute("data-action");
     if (act === "send") send();
     else if (act === "stop") stop();
+    else if (act === "new-menu") {
+      if (ui.menu) closeMenu();
+      else openMenu(t);
+    } else if (act === "new-agent") {
+      closeMenu();
+      ui.overlay = false;
+      openOwnerSheet("new-agent");
+    } else if (act === "new-group") {
+      closeMenu();
+      ui.overlay = false;
+      openGroupSheet("");
+    } else if (act === "add-money") {
+      openOwnerSheet("add-money", t.getAttribute("data-agent"));
+    } else if (act === "group-edit") {
+      openGroupSheet(t.getAttribute("data-group"));
+    } else if (act === "group-delete") {
+      deleteGroup(t.getAttribute("data-group"));
+    } else if (act === "sheet-close") {
+      closeSheet();
+    } else if (act === "gs-toggle" || act === "gs-emoji") {
+      var gs = ui.sheet;
+      if (!gs || gs.kind !== "group" || gs.saving) return;
+      if (act === "gs-toggle") {
+        var who = t.getAttribute("data-name");
+        if (gs.members[who]) delete gs.members[who];
+        else if (state.agents[who]) gs.members[who] = 1;
+      } else if (GROUP_EMOJI.indexOf(t.getAttribute("data-emoji")) >= 0) {
+        gs.emoji = t.getAttribute("data-emoji");
+      }
+      gs.error = "";
+      updateSheet();
+    } else if (act === "gs-save") {
+      saveGroupSheet();
+    } else if (act === "gs-delete") {
+      if (ui.sheet && ui.sheet.kind === "group") deleteGroup(ui.sheet.id);
+    }
     else if (act === "info") {
       ui.infoOpen = !ui.infoOpen;
       if (ui.infoOpen) setHTML(els.info, infoHtml());
@@ -1958,10 +2532,25 @@
     if (ev.target && ev.target.getAttribute && ev.target.getAttribute("data-disclose")) ui.detailsOpen = ev.target.open;
   }, true);
   document.addEventListener("keydown", function (ev) {
+    // Nothing focused (e.g. you clicked the thread): typing or Enter goes to the composer, so a
+    // stray click never swallows a message mid-demo.
+    var ae = document.activeElement;
+    var nothingFocused = !ae || ae === document.body || ae === document.documentElement;
+    if (nothingFocused && !ui.sheet && !ev.metaKey && !ev.ctrlKey && !ev.altKey && els.draft && els.composer.style.display !== "none") {
+      if (ev.key === "Enter" && els.draft.value.trim()) {
+        ev.preventDefault();
+        send();
+        return;
+      }
+      if (ev.key.length === 1) els.draft.focus();
+    }
     if (ev.key === "Escape") {
+      if (ui.menu) { closeMenu(); return; }
+      if (ui.sheet) { closeSheet(); return; }
       if (ui.infoOpen) { ui.infoOpen = false; schedule(); }
       if (ui.overlay) { ui.overlay = false; schedule(); }
     }
+    if (ui.sheet) return;
     if ((ev.metaKey || ev.ctrlKey) && (ev.key === "k" || ev.key === "K")) {
       ev.preventDefault();
       if (ui.narrow) ui.overlay = true;
@@ -2048,6 +2637,7 @@
   }
   function addEntry(a, e) {
     if (!e || typeof e !== "object") return;
+    state.logVer++;
     for (var i = a.log.length - 1; i >= 0 && i >= a.log.length - 50; i--) {
       if (a.log[i].id === e.id) { a.log[i] = e; learnFromEntry(e); return; }
     }
@@ -2060,13 +2650,21 @@
       .then(function (r) {
         var list = Array.isArray(r.agents) ? r.agents : [];
         state.order = list.map(function (a) { return a.name; }).filter(function (n) { return typeof n === "string"; });
-        state.groups = r.groups && typeof r.groups === "object" ? r.groups : { workers: [] };
+        setGroups(r.groupList, r.groups);
         list.forEach(upsert);
-        if (!validSel(state.selected)) {
-          // Deep link: /?agent=shopper or /?agent=group:workers (then the saved choice, then the first agent).
-          var linked = null;
+        state.logVer++;
+        // Deep link wins on first load: /?agent=shopper or /?agent=group:workers. Then the
+        // current/saved choice, then the first agent.
+        var linked = null;
+        if (!ui.deepLinkUsed) {
+          ui.deepLinkUsed = true;
           try { linked = new URLSearchParams(location.search).get("agent"); } catch (e) { /* old browser */ }
-          var saved = linked && validSel(linked) ? linked : lsGet(LS.sel);
+        }
+        if (linked && validSel(linked)) {
+          state.selected = linked;
+          lsSet(LS.sel, linked);
+        } else if (!validSel(state.selected)) {
+          var saved = lsGet(LS.sel);
           state.selected = saved && validSel(saved) ? saved : state.order[0] || null;
         }
         return Promise.all(
@@ -2076,6 +2674,7 @@
               a.log = Array.isArray(d.log) ? d.log.filter(function (e) { return e && typeof e === "object"; }) : [];
               a.log.forEach(learnFromEntry);
               upsert(d);
+              state.logVer++;
             }).catch(function () { /* the list still renders */ });
           }),
         );
@@ -2083,6 +2682,7 @@
       .then(function () {
         state.loaded = true;
         render();
+        if (ui.expect) arrived(ui.expect.name);
       })
       .catch(function (e) {
         state.loaded = true;
@@ -2113,23 +2713,61 @@
       schedule();
     });
     on("snapshot", function (d) {
-      if (d.groups && typeof d.groups === "object") state.groups = d.groups;
+      setGroups(d.groupList, d.groups);
       (Array.isArray(d.agents) ? d.agents : []).forEach(function (s) {
+        if (!s || typeof s.name !== "string") return;
         var known = !!state.agents[s.name];
         upsert(s);
         if (!known && state.order.indexOf(s.name) < 0) state.order.push(s.name);
       });
+      state.logVer++;
+    });
+    on("groups", function (d) {
+      setGroups(d.groupList, d.groups);
+      if (isGroup(state.selected) && !groupDef(state.selected)) {
+        ui.infoOpen = false;
+        state.selected = state.order[0] || null;
+      }
+    });
+    on("agent.added", function (d) {
+      var s = d.agent;
+      if (!s || typeof s.name !== "string" || !AGENT_NAME_RE.test(s.name)) return;
+      var known = !!state.agents[s.name];
+      upsert(s);
+      if (!known && state.order.indexOf(s.name) < 0) {
+        state.order.push(s.name);
+        state.logVer++;
+        ui.fresh[s.name] = Date.now() + 4000;
+        setTimeout(schedule, 4100);
+        if (!ui.expect || ui.expect.name !== s.name) toast("New agent: " + s.name);
+      }
+      if (!state.selected) state.selected = s.name;
+      // Its tool list (for the details panel); the log is empty.
+      api("GET", "/api/agents/" + encodeURIComponent(s.name)).then(function (x) { upsert(x); schedule(); }).catch(function () { /* fine */ });
+      arrived(s.name);
     });
     on("status", function (d) { var a = agentOf(d.agent); if (a) setStatus(a, d.status); });
     on("run.started", function (d) { var a = agentOf(d.agent); if (a) a.busy = true; });
     on("run.finished", function (d) { var a = agentOf(d.agent); if (a) { a.busy = false; setStatus(a, { state: "idle" }); } });
     on("log", function (d) { var a = agentOf(d.agent); if (a) addEntry(a, d.entry); });
     on("log.update", function (d) { var a = agentOf(d.agent); if (a) addEntry(a, d.entry); });
-    on("wallet", function (d) { var a = agentOf(d.agent); if (a && d.wallet && typeof d.wallet === "object") a.wallet = d.wallet; });
+    on("wallet", function (d) {
+      var a = agentOf(d.agent);
+      if (!a || !d.wallet || typeof d.wallet !== "object") return;
+      var before = num((a.wallet || {}).balance);
+      var after = num(d.wallet.balance);
+      if (before != null && after != null && after > before + 0.0001) {
+        ui.balUp[a.name] = Date.now() + 2600;
+        setTimeout(schedule, 2700);
+      }
+      a.wallet = d.wallet;
+      if (Array.isArray(d.services)) a.services = d.services;
+    });
     on("reset", function (d) {
       var a = agentOf(d.agent);
       if (!a) return;
       a.log = [];
+      state.logVer++;
       Object.keys(approvals).forEach(function (k) { if (approvals[k].agent === a.name) delete approvals[k]; });
     });
     on("agent", function (d) { upsert(d.agent || d); });

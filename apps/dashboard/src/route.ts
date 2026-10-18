@@ -1,5 +1,10 @@
-/** Tiny hash router: #/ (overview), #/services, #/services/<id>. Pure parse + a hook. */
-import { useEffect, useState } from "react";
+/**
+ * Tiny hash router: #/ (overview), #/services, #/services/<id>. Pure parse + a hook.
+ * Owner sheets live in the query string instead (`?sheet=new-agent`, §14.3) so the same URL works
+ * embedded; `useSheetRoute` reads and writes it.
+ */
+import { useCallback, useEffect, useState } from "react";
+import { sheetFromSearch, withSheet, type SheetRoute } from "./sheets";
 
 export type Route = { view: "overview" } | { view: "services"; serviceId?: string };
 
@@ -27,4 +32,21 @@ export function useRoute(): Route {
     return () => removeEventListener("hashchange", on);
   }, []);
   return route;
+}
+
+/** The open owner sheet (`?sheet=…`), and a setter that keeps the hash and the other params. */
+export function useSheetRoute(): [SheetRoute | null, (r: SheetRoute | null) => void] {
+  const [sheet, setSheet] = useState(() => sheetFromSearch(location.search));
+  useEffect(() => {
+    const on = () => setSheet(sheetFromSearch(location.search));
+    addEventListener("popstate", on);
+    return () => removeEventListener("popstate", on);
+  }, []);
+  const set = useCallback((r: SheetRoute | null) => {
+    const url = `${location.pathname}${withSheet(location.search, r)}${location.hash}`;
+    if (r) history.pushState(history.state, "", url);
+    else history.replaceState(history.state, "", url);
+    setSheet(r);
+  }, []);
+  return [sheet, set];
 }

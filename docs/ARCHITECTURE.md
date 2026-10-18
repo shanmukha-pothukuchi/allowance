@@ -568,6 +568,11 @@ validated before anything is created) and enforces `AGENT_NAME_RE`. Top-ups are 
 | `/?sheet=add-money&agent=<name>&embed=1` | Add test money to an agent (amount chips + custom, ≤ $1000). `POST /v1/agents/:id/topup`. |
 
 Both also open as sheets inside the dashboard itself (no `embed`). Embedded, they post to
-`window.parent` (target origin = the chat origin, never a token):
+`window.parent` with the real parent's origin as target (the chat origin, its localhost/127.0.0.1
+twin, or the dashboard's own origin for same-origin testing; never `*`, never a token).
+`agent-created` is posted only after the chat server hosts the agent; if registration fails the
+sheet shows the one-time token and posts nothing until the owner is done. `sheet-close` means "the
+owner is done with this sheet" (cancel, done, or saved the token). The wallet's `agent.created`
+event carries `data.agent` (`AgentPublic`), and `initialBalance` is range-checked like a top-up.
 `{ type: "allowance:sheet-size", sheet, height }`, `{ type: "allowance:agent-created", name }`,
 `{ type: "allowance:money-added", name, amount }`, `{ type: "allowance:sheet-close", sheet }`.

@@ -21,7 +21,7 @@ export type AgentStatus =
 
 export type LogEntry =
   /** `groupId` is set when the message was a group broadcast (same id for every member). */
-  | { kind: "user"; id: string; text: string; at: string; groupId?: string }
+  | { kind: "user"; id: string; text: string; at: string; groupId?: string; group?: string }
   | { kind: "assistant"; id: string; text: string; reasoning?: string; at: string }
   | { kind: "tool"; id: string; name: string; args: unknown; result?: string; isError?: boolean; ms?: number; at: string }
   | { kind: "error"; id: string; text: string; at: string };
@@ -166,7 +166,7 @@ export class ChatAgent {
    * Start a run. Resolves once the run has started; `done` resolves when it is finished (callers
    * may not await it). `groupId` tags the user log entry of a group broadcast.
    */
-  async send(text: string, opts: { groupId?: string } = {}): Promise<{ runId: string; done: Promise<void> }> {
+  async send(text: string, opts: { groupId?: string; group?: string } = {}): Promise<{ runId: string; done: Promise<void> }> {
     if (this.busy) throw new BusyError(this.name);
     if (!this.client) await this.init();
     if (this.busy) throw new BusyError(this.name);
@@ -174,7 +174,7 @@ export class ChatAgent {
     this.runId = runId;
     this.controller = new AbortController();
     this.emit({ type: "run.started", agent: this.name, runId });
-    const done = this.run(text, runId, this.controller.signal, opts.groupId);
+    const done = this.run(text, runId, this.controller.signal, opts.groupId, opts.group);
     return { runId, done };
   }
 
@@ -199,10 +199,10 @@ export class ChatAgent {
 
   // ---------------------------------------------------------------------------------------------
 
-  private async run(text: string, runId: string, signal: AbortSignal, groupId?: string): Promise<void> {
+  private async run(text: string, runId: string, signal: AbortSignal, groupId?: string, group?: string): Promise<void> {
     const maxSteps = this.opts.maxSteps ?? 16;
     this.history.push({ role: "user", content: text });
-    this.append({ kind: "user", id: newId("msg"), text, at: now(), ...(groupId ? { groupId } : {}) });
+    this.append({ kind: "user", id: newId("msg"), text, at: now(), ...(groupId ? { groupId } : {}), ...(group ? { group } : {}) });
     let outcome: "done" | "error" | "stopped" | "step_limit" = "step_limit";
     const pendingCalls = new Set<string>();
     try {

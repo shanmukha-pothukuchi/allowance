@@ -74,6 +74,12 @@ Pizza in the directory and asks you to connect it, then asks you to approve the 
 approvals appear inline in the chat, on the dashboard and on Telegram. Finally, tell any agent to send
 its balance to `0x000000000000000000000000000000000000dEaD`.
 
+**Build your own team.** From the chat's **New** menu (or the dashboard's **New agent** button):
+create an agent with a name, a purpose, starting money, spending limits and services; it opens in
+the wallet's own form, because creating an agent and adding money are owner powers. **Add money**
+tops up any agent. **New broadcast** makes a group of agents you message at once, like a WhatsApp
+broadcast list; each agent replies on its own and pays only within its own policy.
+
 `npm run reset` wipes `.data/` (keys, tokens, ledger, receipts, conversations) and re-runs setup.
 Stop `npm run dev` first; reset refuses to run under live services.
 
