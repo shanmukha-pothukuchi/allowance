@@ -77,6 +77,10 @@ beforeAll(async () => {
     quantcommBridgePort: 0,
     quantcommBridgeUrl: "http://127.0.0.1:1",
     quantcommUrl: "http://127.0.0.1:1",
+    brokeragePort: 0,
+    brokerageUrl: "http://127.0.0.1:1",
+    schedulerPort: 0,
+    schedulerUrl: "http://127.0.0.1:1",
   });
   for (const level of ["log", "warn", "error"] as const) {
     vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {

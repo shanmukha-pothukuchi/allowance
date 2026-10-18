@@ -146,6 +146,10 @@ beforeAll(async () => {
     quantcommBridgePort: 0,
     quantcommBridgeUrl: "http://127.0.0.1:1",
     quantcommUrl: "http://127.0.0.1:1",
+    brokeragePort: 0,
+    brokerageUrl: "http://127.0.0.1:1",
+    schedulerPort: 0,
+    schedulerUrl: "http://127.0.0.1:1",
     ownerApiKey: OWNER_KEY,
   };
 });
