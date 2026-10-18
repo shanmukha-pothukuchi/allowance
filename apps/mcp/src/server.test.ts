@@ -521,3 +521,15 @@ describe("failure modes", () => {
     for (const out of allResults) expect(out).not.toContain(wallet.token);
   });
 });
+
+describe("coerceJsonResult", () => {
+  it("turns a JSON-string result into the object the site expects", async () => {
+    const { coerceJsonResult } = await import("./server.js");
+    expect(coerceJsonResult('{"failing": ["http://x/orders"]}')).toEqual({ failing: ["http://x/orders"] });
+    expect(coerceJsonResult(' ["a"] ')).toEqual(["a"]);
+    expect(coerceJsonResult("just a summary")).toBe("just a summary");
+    expect(coerceJsonResult("{not json")).toBe("{not json");
+    expect(coerceJsonResult({ summary: "x" })).toEqual({ summary: "x" });
+  });
+});
+

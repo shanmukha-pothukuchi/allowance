@@ -198,6 +198,19 @@ describe("chat agent", () => {
     await agent.close();
   });
 
+  it("asks again when the model returns an empty reply", async () => {
+    const { agent } = makeAgent();
+    let n = 0;
+    llm.script = () => (++n <= 2 ? reply("") : reply("here you go"));
+    await (await agent.send("hi")).done;
+    expect(agent.log.at(-1)).toMatchObject({ kind: "assistant", text: "here you go" });
+    n = 0;
+    llm.script = () => reply("");
+    await (await agent.send("hi again")).done;
+    expect(agent.log.at(-1)).toMatchObject({ kind: "error" });
+    await agent.close();
+  });
+
   it("caps runaway loops at maxSteps", async () => {
     const { agent, events } = makeAgent({ maxSteps: 3 });
     llm.script = (_b, i) => callTool("get_wallet", {}, `c${i}`);

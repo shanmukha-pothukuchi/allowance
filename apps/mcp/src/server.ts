@@ -78,6 +78,19 @@ function toBlockedTarget(raw: string): BlockedTarget | null {
     return null;
   }
 }
+/** A result that is a string holding a JSON object/array becomes that object; anything else is unchanged. */
+export function coerceJsonResult(result: unknown): unknown {
+  if (typeof result !== "string") return result;
+  const t = result.trim();
+  if (!(t.startsWith("{") || t.startsWith("["))) return result;
+  try {
+    const v = JSON.parse(t) as unknown;
+    return v !== null && typeof v === "object" ? v : result;
+  } catch {
+    return result;
+  }
+}
+
 export function isBlockedUrl(url: string, targets: BlockedTarget[]): boolean {
   let u: URL;
   try {
@@ -718,7 +731,9 @@ export function createServer(opts: CreateServerOptions): McpServer {
       inputSchema: {
         submit_url: z.string().describe("The submitUrl from claim_bounty."),
         claim_id: z.string().describe("The claimId from claim_bounty."),
-        result: z.unknown().describe("The task-specific result, e.g. { \"failing\": [\"http://…/orders\"] } or { \"summary\": \"…\" }."),
+        result: z
+          .union([z.record(z.string(), z.unknown()), z.array(z.unknown()), z.string()])
+          .describe("The task-specific result as a JSON object (not a string), e.g. { \"failing\": [\"http://…/orders\"] } or { \"summary\": \"…\" }."),
         bounty_title: z.string().optional().describe("Bounty title, for the receipt description."),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -727,7 +742,9 @@ export function createServer(opts: CreateServerOptions): McpServer {
       guard(async () => {
         const walletAddress = await agentAddress();
         const url = normalizeUrl(submit_url);
-        const res = await plainFetch(url, "POST", { claimId: claim_id, walletAddress, result }, { accept: "application/json" });
+        // Open-weight models often send the result object as a JSON string; the site expects the object.
+        const payload = coerceJsonResult(result);
+        const res = await plainFetch(url, "POST", { claimId: claim_id, walletAddress, result: payload }, { accept: "application/json" });
         const { json, raw, contentType } = await readBody(res);
         if (res.status === 422) {
           const e = (json ?? {}) as Partial<AgentWorkError>;

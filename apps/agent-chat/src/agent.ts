@@ -211,14 +211,26 @@ export class ChatAgent {
       let services = await this.loadServices();
       for (let step = 1; step <= maxSteps; step++) {
         this.setStatus({ state: "thinking", step });
-        const res = await chatCompletion(this.opts.llm, {
-          messages: [{ role: "system", content: systemPrompt(this.name, this.role, services) }, ...this.contextWindow()],
-          tools: this.tools,
-          signal,
-          onRetry: (r) => this.setStatus({ state: "retrying", attempt: r.attempt, waitMs: r.waitMs, reason: r.reason }),
-        });
+        const ask = () =>
+          chatCompletion(this.opts.llm, {
+            messages: [{ role: "system", content: systemPrompt(this.name, this.role, services) }, ...this.contextWindow()],
+            tools: this.tools,
+            signal,
+            onRetry: (r) => this.setStatus({ state: "retrying", attempt: r.attempt, waitMs: r.waitMs, reason: r.reason }),
+          });
+        let res = await ask();
+        // Open-weight models occasionally return nothing at all (no text, no tool call). Ask again
+        // rather than showing an empty bubble; the context is unchanged, so this is safe.
+        for (let retry = 0; retry < 2 && res.toolCalls.length === 0 && !res.content.trim(); retry++) {
+          res = await ask();
+        }
+        if (res.toolCalls.length === 0 && !res.content.trim()) {
+          this.append({ kind: "error", id: newId("err"), text: "The model returned an empty reply three times. Send the message again.", at: now() });
+          outcome = "error";
+          return;
+        }
         if (res.toolCalls.length === 0) {
-          const reply = res.content || "(no reply)";
+          const reply = res.content;
           this.history.push({ role: "assistant", content: reply });
           this.append({ kind: "assistant", id: newId("msg"), text: reply, reasoning: res.reasoning, at: now() });
           outcome = "done";
