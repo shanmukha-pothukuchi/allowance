@@ -1,0 +1,17 @@
+{
+  "name": "@allowance/computer-use",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A queued, sandboxed desktop (Chromium in Docker) that agents rent by the minute and pay per action over x402",
+  "exports": {
+    ".": "./src/index.ts",
+    "./app": "./src/app.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "test": "vitest run"
+  }
+}

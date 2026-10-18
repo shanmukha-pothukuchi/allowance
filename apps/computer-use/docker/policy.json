@@ -1,0 +1,16 @@
+{
+  "URLBlocklist": ["file://*", "chrome://settings", "chrome://flags", "chrome-extension://*", "localhost", "127.0.0.1", "[::1]", "0.0.0.0"],
+  "PasswordManagerEnabled": false,
+  "AutofillCreditCardEnabled": false,
+  "AutofillAddressEnabled": false,
+  "PaymentMethodQueryEnabled": false,
+  "DownloadRestrictions": 3,
+  "BrowserSignin": 0,
+  "SyncDisabled": true,
+  "MetricsReportingEnabled": false,
+  "DefaultNotificationsSetting": 2,
+  "DefaultGeolocationSetting": 2,
+  "AudioCaptureAllowed": false,
+  "VideoCaptureAllowed": false,
+  "PromotionalTabsEnabled": false
+}
