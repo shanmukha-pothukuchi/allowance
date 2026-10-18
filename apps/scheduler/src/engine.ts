@@ -307,7 +307,7 @@ export class Scheduler {
     if (hosted && !hosted.has(agent.name)) s.needsChat = true;
     this.state.schedules.push(s);
     this.persist();
-    this.log(`${source === "owner" ? "owner" : agent.name} set ${s.id} for ${agent.name}: ${summarize(s, now)}${s.needsChat ? " (not hosted by the chat: it can't be woken)" : ""}`);
+    this.log(`${source === "owner" ? `owner set ${s.id} for ${agent.name}` : `${agent.name} set ${s.id}`}: ${summarize(s, now)}${s.needsChat ? " (not hosted by the chat: it can't be woken)" : ""}`);
     return s;
   }
 
