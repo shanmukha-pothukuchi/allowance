@@ -18,6 +18,7 @@ import {
 } from "@allowance/shared";
 import { formatBody, receiptLine, receiptListLine, serviceLine, shopifyPayLine, shopifyTag, shortAddress, storefrontHost, txRef, usd, type ShopRef } from "./format.js";
 import { WalletApiError, WalletClient, WalletUnreachableError, type FetchLike } from "./wallet-client.js";
+import { registerScheduleTools } from "./schedule.js";
 
 export interface CreateServerOptions {
   walletServiceUrl: string;
@@ -1203,6 +1204,7 @@ export function createServer(opts: CreateServerOptions): McpServer {
       }),
   );
 
+  registerScheduleTools(server, { agentToken: opts.agentToken, fetch: doFetch, log });
   return server;
 }
 

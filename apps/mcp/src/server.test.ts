@@ -62,6 +62,10 @@ describe("tool registry", () => {
         "get_service",
         "search_services",
         "request_service",
+        // §20.3 scheduler (schedule.ts)
+        "schedule_task",
+        "list_schedules",
+        "cancel_schedule",
       ].sort(),
     );
     expect(tools.find((t) => t.name === "list_services")!.description).toMatch(/Call this first when the owner asks for something you might need a service for/);
