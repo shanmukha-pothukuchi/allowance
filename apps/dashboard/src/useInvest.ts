@@ -5,7 +5,7 @@
  * Either service being down never touches the rest of the dashboard: its views say so, nothing else.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { WalletAdapter } from "./api/adapter";
+import { HttpError, type WalletAdapter } from "./api/adapter";
 import type { AgentRules, Portfolios, SchedulerState } from "./invest";
 import type { AgentPublic } from "./types";
 
@@ -27,6 +27,12 @@ export interface InvestActions {
 
 const FAST_MS = 4000;
 const SLOW_MS = 15000;
+
+/** The service's own words when it answered with an error code; else that it isn't running. */
+function downMessage(what: string, port: number, err: Error): string {
+  if (err instanceof HttpError && err.code && err.code !== "not_found") return `The ${what} said: ${err.message}`;
+  return `The ${what} isn't answering on port ${port}. Start it with npm run dev.`;
+}
 
 const failed = <T,>(prev: Loadable<T>, message: string): Loadable<T> => ({ state: "error", message, ...(prev.state === "ready" ? { data: prev.data } : prev.state === "error" && prev.data ? { data: prev.data } : {}) });
 
@@ -51,11 +57,11 @@ export function useInvest(adapter: WalletAdapter | null, fast: boolean): { inves
       await Promise.all([
         adapter.getPortfolios().then(
           (data) => setPortfolios({ state: "ready", data, at: Date.now() }),
-          (err: Error) => setPortfolios((p) => failed(p, `The brokerage isn't answering (${err.message}).`)),
+          (err: Error) => setPortfolios((p) => failed(p, downMessage("brokerage", 4110, err))),
         ),
         adapter.getScheduler().then(
           (data) => setScheduler({ state: "ready", data, at: Date.now() }),
-          (err: Error) => setScheduler((p) => failed(p, `The scheduler isn't answering (${err.message}).`)),
+          (err: Error) => setScheduler((p) => failed(p, downMessage("scheduler", 4100, err))),
         ),
       ]);
     } finally {

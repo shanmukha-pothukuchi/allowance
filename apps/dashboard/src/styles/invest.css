@@ -397,3 +397,12 @@
   font-size: 1rem;
   color: var(--text-2);
 }
+@media (max-width: 420px) {
+  /* a rule's meta sits under its name, left like the name (sheets.css right-aligns trailing metas) */
+  .rule-row .grow-main .grow-meta {
+    text-align: left;
+  }
+  .money-input.rule-input {
+    width: 84px;
+  }
+}
