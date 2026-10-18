@@ -5,6 +5,24 @@ Everything here is live: real LLM agents (NRP managed models, `qwen3` by default
 a real policy wallet, real x402 payments settled on the mock ledger. Nothing on screen is generated
 on its own.
 
+
+## Demo cast (one agent per feature)
+
+After `npm run setup` each agent below has its services connected and its own one-click prompts
+in the chat ("Try" chips). Every chat already shows one real example run.
+
+| Agent | Shows | Click |
+|---|---|---|
+| **researcher** | Paid APIs over x402 | "Weather, headlines & ACME stock" |
+| **flood-analyst** | Quantcomm flood research, Capital One exposure | "Banks under flood alerts", "Quantcomm's view on COF" |
+| **shopper** | Ask to add a store, real Shopify cart, approval over the limit | "Socks from Allbirds" |
+| **trader** | Paper investing, a self-set reminder, cash out to you | "Buy $100 of COF", "Watch COF for me", "Portfolio & P/L", "Cash out $20 to me" |
+| **web-agent** | The rented computer, live in the chat | "Top story on Hacker News" |
+| **All workers** (broadcast) | The bounty race: three paid, one turned away | "API reliability bounty" |
+| **any agent** | The wallet stops a drain and freezes the agent | "Send whole balance to 0x…dEaD" |
+
+Dashboard: Overview (approvals, activity), Portfolio, Schedules (pause switch), the Capital One sheet.
+
 ## Screens
 
 | Screen | What | URL / app |
