@@ -66,6 +66,12 @@ describe("tool registry", () => {
         "schedule_task",
         "list_schedules",
         "cancel_schedule",
+        // §20.1/§20.2 investing (invest.ts)
+        "get_quotes",
+        "buy_stock",
+        "sell_stock",
+        "portfolio",
+        "cash_out",
       ].sort(),
     );
     expect(tools.find((t) => t.name === "list_services")!.description).toMatch(/Call this first when the owner asks for something you might need a service for/);

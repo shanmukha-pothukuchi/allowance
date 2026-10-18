@@ -48,6 +48,8 @@ export function receiptLine(r: Receipt): string {
       return `Sent ${amount} to ${shortAddress(r.counterparty?.address)}${r.description && r.description !== "Transfer" ? ` (${r.description})` : ""}. Receipt: ${ref}`;
     case "topup":
       return `Top-up of ${amount}. Receipt: ${ref}`;
+    case "cashout":
+      return `Cashed out ${amount} to your owner. Receipt: ${ref}`;
     case "spend":
     default:
       return `Paid ${amount} to ${counterpartyName(r)}. Receipt: ${ref}`;
@@ -61,7 +63,21 @@ export function receiptListLine(r: Receipt): string {
   const who = r.kind === "earn" ? r.description : counterpartyName(r);
   const failed = r.status === "blocked" || r.status === "denied" || r.status === "failed";
   const verb =
-    r.kind === "earn" ? "earned" : r.kind === "transfer" ? (failed ? "tried to send" : "sent") : r.kind === "topup" ? "top-up" : failed ? "tried to pay" : "paid";
+    r.kind === "earn"
+      ? "earned"
+      : r.kind === "transfer"
+        ? failed
+          ? "tried to send"
+          : "sent"
+        : r.kind === "topup"
+          ? "top-up"
+          : r.kind === "cashout"
+            ? failed
+              ? "tried to cash out"
+              : "cashed out"
+            : failed
+              ? "tried to pay"
+              : "paid";
   const status = r.status === "settled" ? "" : ` [${r.status}${r.reason ? `: ${r.reason}` : ""}]`;
   const ref = r.txHash ? ` — ${txRef(r.txHash, r.explorerUrl)}` : "";
   return `${when}  ${verb} ${amount}  ${who}${status}${ref}`;
