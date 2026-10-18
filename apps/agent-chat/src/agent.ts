@@ -82,7 +82,7 @@ export function servicesBlock(services: ServiceSummary[] | null): string {
     "Your services (connected by your owner; these are the only paid services you can use):",
     ...lines,
     "The Service Directory is always available: search_services finds more, get_service shows how to call one.",
-    "Before using a service, call get_service for how to call it. If you need something you don't have, search_services and request_service; your owner approves.",
+    "Before using a service, call get_service for how to call it. If you need something you don't have, search_services and request_service; your owner approves. For anything outside the directory (a Shopify store, any API that charges over x402), pass its link to request_service as url.",
   ].join("\n");
 }
 

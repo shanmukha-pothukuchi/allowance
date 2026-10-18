@@ -4,7 +4,7 @@
  */
 import express from "express";
 import type { Server } from "node:http";
-import { encodePaymentRequiredHeader, encodePaymentResponseHeader } from "@x402/core/http";
+import { decodePaymentRequiredHeader, encodePaymentRequiredHeader, encodePaymentResponseHeader } from "@x402/core/http";
 import type {
   AgentWorkDoc,
   ApprovalWaitResponse,
@@ -483,13 +483,77 @@ export async function startWalletStub(opts: WalletStubOptions = {}): Promise<Wal
     res.status(404).json({ error: "service_not_found", message: `No service ${id}` });
   });
 
-  app.post("/v1/services/requests", (req, res) => {
-    const body = (req.body ?? {}) as ServiceRequest;
+  app.post("/v1/services/requests", async (req, res) => {
+    let body = (req.body ?? {}) as ServiceRequest;
     stub.serviceRequests.push(body);
     const agent = agentOf(res);
     let grant: ServiceGrant;
     let newShopify: ServiceManifest | undefined;
-    if (body.shopifyStoreUrl) {
+    let linkGrant: ServiceGrant | undefined;
+    if (body.url) {
+      // ARCHITECTURE §18, in order: directory prefix → Shopify store → a GET that answers an x402 402 → 422.
+      const raw = String(body.url).trim();
+      let u: URL;
+      try {
+        u = new URL(/^[a-z]+:\/\//i.test(raw) ? raw : `https://${raw}`);
+      } catch {
+        return void res.status(400).json({ error: "invalid_request", message: "`url` must be a link" });
+      }
+      const href = `${u.origin}${u.pathname}`;
+      const dir = stub
+        .directory()
+        .filter((m) => m.kind === "x402" && (href === m.baseUrl || href.startsWith(`${m.baseUrl.replace(/\/+$/, "")}/`)))
+        .sort((a, b) => b.baseUrl.length - a.baseUrl.length)[0];
+      const host = u.hostname.toLowerCase();
+      if (dir) body = { ...body, url: undefined, serviceId: dir.id };
+      else if (host === "admin.shopify.com" || STUB_SHOPIFY_ALIASES[host] || host.endsWith(".myshopify.com")) body = { ...body, url: undefined, shopifyStoreUrl: raw };
+      else {
+        let header: string | null = null;
+        try {
+          const r = await fetch(u.href, { redirect: "manual" });
+          header = r.status === 402 ? r.headers.get("PAYMENT-REQUIRED") : null;
+        } catch {
+          header = null;
+        }
+        if (!header) {
+          return void res.status(422).json({
+            error: "unrecognized_service_url",
+            message: "That link isn't something Allowance can pay: it's not in the directory, not a Shopify store, and it doesn't ask for payment over x402.",
+            details: { reason: `${u.host} answered without an x402 402` },
+          });
+        }
+        const pr = decodePaymentRequiredHeader(header);
+        const name = (pr.resource?.description || u.host).slice(0, 60);
+        const price = (Number(pr.accepts[0].amount) / 1e6).toFixed(2);
+        if (Number(price) > 20) {
+          return void res.status(400).json({
+            error: "invalid_request",
+            message: `${name} (${u.host}) asks $${price} per request, over this agent's $20.00 per-payment limit. Ask your owner to raise the limit or to add it from the dashboard.`,
+          });
+        }
+        const baseUrl = `${u.origin}${u.pathname.replace(/\/+$/, "")}`;
+        const existing = agent.services.find((c) => c.kind === "x402" && c.baseUrl === baseUrl);
+        if (existing) return void res.json({ status: "connected", service: existing } satisfies ServiceRequestResponse);
+        const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+        linkGrant = {
+          id: `custom-${slug}`,
+          name,
+          provider: u.host,
+          icon: "🔌",
+          color: "#8A8F98",
+          kind: "x402",
+          summary: pr.resource?.description ?? `An API at ${u.host} that charges over x402`,
+          baseUrl,
+          pricing: `$${price} per request`,
+          maxPrice: price,
+          permissions: [`Pay up to $${price} per payment to ${name} (${u.host})`],
+          source: "agent",
+        };
+      }
+    }
+    if (linkGrant) {
+      grant = linkGrant;
+    } else if (body.shopifyStoreUrl) {
       // ARCHITECTURE §15.3: discover via the bridge; listed → normal request; otherwise ask to add it.
       const host = (() => {
         try {

@@ -949,3 +949,10 @@ The §15.3 Shopify endpoints stay for compatibility.
   - No separate "Add a Shopify store" entry: stores are rows in the services list like everything else.
 - Chat: request and connected cards are the same for every kind. A store shows its storefront domain
   as its meta line, an x402 API its host.
+
+**As built (§18 additions):**
+- **Preview fields:** the preview adds `listed` (store already in the directory) and, for `x402`, `price` (the challenge amount). A 422 `unrecognized_service_url` carries `details.reason` (why the probe failed).
+- **Resolution:** directory resolution takes the longest matching `baseUrl` prefix, or an origin match when exactly one directory service lives on that origin. The probe follows at most 2 redirects and checks each hop. It refuses private, loopback, link-local and CGNAT targets except the local service origins.
+- **Owner-added x402 APIs:** these have `source: "owner"` and ids `custom-<slug>`. They are connected per agent and are not listed in the directory.
+- **`/v1/directory/add` caps:** a directory match connects on its listed terms (`maxPrice` ignored, except for a listed store). An x402 cap must be ≥ the challenge price and ≤ `MAX_TOPUP`. Re-adding a link raises the cap in place.
+- **Agent x402 requests:** an agent's request uses the challenge amount as `maxPrice`. If that is over the agent's `maxPerTx`, the answer is `400 invalid_request`. An unreachable directory during resolution gives `503 directory_unavailable`.
