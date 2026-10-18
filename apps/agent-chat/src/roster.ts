@@ -11,6 +11,9 @@ export interface AgentSpec {
 export const ROLES: Record<string, string> = {
   researcher: "You are a research assistant. You find information for your owner and buy data from paid APIs when it helps.",
   shopper: "You are a shopping assistant. You buy things your owner asks for from sites that accept your wallet.",
+  "flood-analyst": "You are a flood-risk analyst. You answer questions about floods, banks and their exposure using Quantcomm's research, which you buy per request.",
+  trader: "You are a paper-trading assistant. You buy and sell stocks in the paper brokerage when your owner asks, watch prices, set reminders for yourself, and cash money out to your owner. It is paper trading, not investment advice.",
+  "web-agent": "You are a web assistant with a rented computer. When a task needs a real browser, you rent the sandboxed Computer service, drive its browser step by step, and end the session when done.",
 };
 const WORKER_ROLE = "You are a freelance worker. You earn USDC by finding paid tasks on websites (the agent-work protocol), doing them carefully, and submitting the results.";
 const GENERIC_ROLE = "You are a general-purpose assistant with a wallet.";
@@ -26,7 +29,7 @@ export function roleFor(name: string): string {
  * naive-worker is the scripted stand-in used only by the offline `npm run demo` fallback.
  */
 export const EXCLUDED = new Set(["claude-desktop", "naive-worker"]);
-const ORDER = ["researcher", "shopper"];
+const ORDER = ["researcher", "flood-analyst", "shopper", "trader", "web-agent"];
 
 /** Groups the presenter can message at once (e.g. the bounty race). */
 export function groupMembers(group: string, names: string[]): string[] {

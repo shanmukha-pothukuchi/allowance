@@ -125,7 +125,8 @@ describe("scripted demo with connected services", () => {
       const a = agents.find((x) => x.name === seed.name)!;
       expect(a.policy.allowlist, seed.name).toEqual({ addresses: [], origins: [] });
       expect(a.services.map((s) => s.id), seed.name).toEqual(seed.services);
-      for (const s of a.services) expect(s.baseUrl.startsWith(config.merchantUrl)).toBe(true);
+      // Acme services live on the merchant; Quantcomm, the brokerage and the Computer on their own services.
+      for (const s of a.services) if (s.id.startsWith("acme-")) expect(s.baseUrl.startsWith(config.merchantUrl), s.id).toBe(true);
     }
   }, 60_000);
 

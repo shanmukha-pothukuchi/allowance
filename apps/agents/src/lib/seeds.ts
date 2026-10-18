@@ -41,6 +41,27 @@ export function buildSeeds(): Seed[] {
       services: [],
     },
     {
+      name: "flood-analyst",
+      policy: { maxPerTx: "1.00", dailyCap: "5.00", approvalThreshold: "1.00", allowlist: CLOSED() },
+      initialBalance: "20.00",
+      note: "buys Quantcomm's flood and bank research",
+      services: ["quantcomm"],
+    },
+    {
+      name: "trader",
+      policy: { maxPerTx: "150.00", dailyCap: "300.00", approvalThreshold: "50.00", allowlist: CLOSED() },
+      initialBalance: "200.00",
+      note: "paper-trades stocks, sets rules, cashes out to you",
+      services: ["brokerage"],
+    },
+    {
+      name: "web-agent",
+      policy: { maxPerTx: "0.50", dailyCap: "5.00", approvalThreshold: "1.00", allowlist: CLOSED() },
+      initialBalance: "20.00",
+      note: "rents the sandboxed computer and browses for you",
+      services: ["computer-use"],
+    },
+    {
       name: "naive-worker",
       policy: { maxPerTx: "25.00", dailyCap: "50.00", approvalThreshold: "25.00", allowlist: CLOSED() },
       initialBalance: "20.00",

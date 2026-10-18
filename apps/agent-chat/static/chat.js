@@ -418,6 +418,9 @@
   var AV_KNOWN = {
     researcher: { emoji: "🔎", color: "#2BB3A3", label: "Research" },
     shopper: { emoji: "🛍️", color: "#E5527A", label: "Shopping" },
+    "flood-analyst": { emoji: "🌊", color: "#1D4ED8", label: "Flood research" },
+    trader: { emoji: "💹", color: "#0E9F6E", label: "Paper trading" },
+    "web-agent": { emoji: "🖥️", color: "#64748B", label: "Computer use" },
     "claude-desktop": { emoji: "✳️", color: "#D97757", label: "Claude Desktop" },
     "naive-worker": { emoji: "🐣", color: "#E0B13A", label: "Scripted" },
   };
@@ -504,7 +507,7 @@
     // §17.2: Quantcomm's research, sold per request through its bridge (under /quantcomm on any host).
     quantcomm: { name: "Quantcomm Flood Research", icon: "🌊", color: "#1D4ED8", provider: "Quantcomm", path: "/quantcomm", pricing: "$0.05 per flood check · $0.10 per analyst view", permissions: ["Pay up to $0.10 per request", "Read Quantcomm's flood and bank research"] },
   };
-  var DEFAULT_SERVICES = { researcher: ["acme-weather", "acme-news", "acme-stocks"], shopper: [], "claude-desktop": ["acme-bounties", "acme-weather"] };
+  var DEFAULT_SERVICES = { researcher: ["acme-weather", "acme-news", "acme-stocks"], shopper: [], "flood-analyst": ["quantcomm"], trader: ["brokerage"], "web-agent": ["computer-use"], "claude-desktop": ["acme-bounties", "acme-weather"] };
 
   function prettyId(id) {
     return str(id).replace(/^custom-/, "").split(/[-_]+/).filter(Boolean).map(cap).join(" ");
@@ -4014,10 +4017,20 @@
     } else if (group) {
       c.push({ label: "Introduce yourselves", text: "Introduce yourselves in one line each: what you do, and how much money is in your wallet." });
     } else if (names[0] === "researcher") {
-      c.push({ label: "Banks under flood alerts", text: "Are any banks exposed to the coastal flooding right now? What about Capital One?" });
       c.push({ label: "Weather, headlines & ACME stock", text: "What's the weather in Paris today, the top 3 headlines, and the ACME stock price?" });
+    } else if (names[0] === "flood-analyst") {
+      c.push({ label: "Banks under flood alerts", text: "Are any banks exposed to the coastal flooding right now? What about Capital One?" });
+      c.push({ label: "Quantcomm's view on COF", text: "What's Quantcomm's analyst view on Capital One (COF)?" });
     } else if (names[0] === "shopper") {
+      c.push({ label: "Socks from Allbirds", text: "Get me the cheapest pair of socks in stock from allbirds.com, size M." });
       c.push({ label: "Order a pizza", text: "Order me a large mushroom pizza, delivered to Hackathon Hall table 7." });
+    } else if (names[0] === "trader") {
+      c.push({ label: "Buy $100 of COF", text: "Buy $100 of Capital One (COF) in the paper brokerage." });
+      c.push({ label: "Watch COF for me", text: "Set yourself a reminder in 2 minutes to check my portfolio and tell me my profit or loss." });
+      c.push({ label: "Portfolio & P/L", text: "Show my portfolio and profit or loss." });
+      c.push({ label: "Cash out $20 to me", text: "Cash out $20 to me." });
+    } else if (names[0] === "web-agent") {
+      c.push({ label: "Top story on Hacker News", text: "Use the computer so I can watch: open https://news.ycombinator.com, click the top story, and tell me that page's title. End the session when you're done." });
     } else if (state.agents[names[0]] && avatarOf(names[0]).label === "Agent") {
       c.push({ label: "What can you do?", text: "Hi! What can you do for me, and which services do you have?" });
     }

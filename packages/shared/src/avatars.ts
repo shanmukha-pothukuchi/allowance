@@ -13,6 +13,9 @@ export interface Avatar {
 const KNOWN: Record<string, Avatar> = {
   researcher: { emoji: "🔎", color: "#2BB3A3", label: "Research" },
   shopper: { emoji: "🛍️", color: "#E5527A", label: "Shopping" },
+  "flood-analyst": { emoji: "🌊", color: "#1D4ED8", label: "Flood research" },
+  trader: { emoji: "💹", color: "#0E9F6E", label: "Paper trading" },
+  "web-agent": { emoji: "🖥️", color: "#64748B", label: "Computer use" },
   "claude-desktop": { emoji: "✳️", color: "#D97757", label: "Claude Desktop" },
   "naive-worker": { emoji: "🐣", color: "#E0B13A", label: "Scripted" },
 };
