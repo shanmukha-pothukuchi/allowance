@@ -899,3 +899,53 @@ about Capital One?" It asks to connect Quantcomm, the owner approves, it pays $0
 (TowneBank ≈ 60% of deposits under alerts; Capital One 0 of 220 sandbox locations). The $0.05 then
 shows on the researcher's Capital One allowance statement as a purchase at "Quantcomm Flood
 Research".
+
+## 18. One way to add a service: pick it, or paste a link (Phase 8)
+
+Shopify stores are not a separate thing. There is one **Add service** flow: pick a service from the
+directory, or paste any link and Allowance works out what it is. Agents work the same way.
+
+**Resolving a link** (wallet-service, in this order):
+1. The URL is under a directory service's `baseUrl`, or on its origin → that service (`kind: "directory"`).
+2. The Shopify bridge's `GET /stores/discover?url=` accepts it → a store (`kind: "shopify"`, §15).
+   Its 422 `store_unsupported` and 400 admin-link answers are returned as they are.
+3. A plain `GET` of the URL answers 402 with an x402 `PAYMENT-REQUIRED` that offers USDC on
+   `eip155:84532` → an **x402 API** (`kind: "x402"`). The manifest is built from the challenge:
+   - `name`: the resource description, else the host
+   - `baseUrl`: the URL without its query
+   - `maxPrice`: the challenge amount (the cap the owner can raise)
+   - `summary`: the description
+   - `source`: `"owner"` (owner adds) or `"agent"` (agent asks)
+4. Otherwise → `422 unrecognized_service_url`: "That link isn't something Allowance can pay: it's not
+   in the directory, not a Shopify store, and it doesn't ask for payment over x402."
+
+The probe uses no body and no credentials, times out after 8 s, and never follows a redirect to a
+private address.
+
+**Owner (`X-Owner-Key`):**
+
+| Method | Path | Body → Response |
+|---|---|---|
+| GET | `/v1/directory/preview?url=` | `{ kind: "directory" \| "shopify" \| "x402", service: ServiceManifest, store?: ShopifyStore, connectedAgents?: string[] }` · the errors above |
+| POST | `/v1/directory/add` | `{ url, maxPrice?, connectTo?: string[] }` → `{ kind, service, connected: string[] }`. `directory`: connects it. `shopify`: adds it to the directory, then connects it (as §15.3). `x402`: connects it to each agent in `connectTo` as a custom service, with `connectedBy: "owner"`; it isn't listed in the directory. |
+
+The §15.3 Shopify endpoints stay for compatibility.
+
+**Agents:**
+- `ServiceRequest.url` is the generic link. `shopifyStoreUrl` stays as an alias.
+- The wallet resolves it as above, then follows the normal approval: an `x402` link becomes a custom
+  proposal with `maxPrice` = the challenge amount (≤ the agent's `maxPerTx`), and a `directory`
+  match becomes a normal `serviceId` request.
+- MCP `request_service` takes `url` ("Pass a service_id from the directory, or the link to anything
+  else: a Shopify store or any API that charges over x402"). `shopify_store_url` still works.
+  Pending, connected and refused texts name the service and its host in parentheses, e.g. "Asked
+  your owner to connect Acme Weather (localhost:4321)", and keep the `service_id:` sentence.
+
+**UI:**
+- Dashboard: one **Add service** sheet. It has:
+  - a search list of the directory (pick → choose agents and cap → Connect);
+  - "Or paste a link" → preview (a store shows its images and product count; an x402 API shows its
+    price and host; a directory match shows that service) → cap → Connect.
+  - No separate "Add a Shopify store" entry: stores are rows in the services list like everything else.
+- Chat: request and connected cards are the same for every kind. A store shows its storefront domain
+  as its meta line, an x402 API its host.

@@ -213,39 +213,66 @@ function hashStr(s: string): number {
   return h;
 }
 
+function esc(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+}
+
+/** Index page: the Allowance tokens (dark by default, light on prefers-color-scheme), grouped rows. */
 function indexPage(config: AppConfig, payTo: string): string {
   const explorer = `${config.facilitatorUrl}/explorer`;
+  const explorerHost = explorer.replace(/^https?:\/\//, "").replace(/\/explorer$/, "");
+  const row = (label: string, path: string, href: string | null, right: string, note = "") =>
+    `<li>${href ? `<a class="r" href="${esc(href)}">` : `<div class="r">`}<span class="l">${label ? `<span class="name">${esc(label)}</span>` : ""}${path ? `<code>${esc(path)}</code>` : ""}${note}</span><span class="v">${right}</span>${href ? "</a>" : "</div>"}</li>`;
+  const ok = `<span class="st">200</span>`;
+  const fails = `<span class="st"><span class="dot err" aria-hidden="true"></span>500 always</span>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${SITE_NAME}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-body{margin:0;padding:32px;background:#f6f7f9;color:#111827;font:16px/1.6 ui-sans-serif,system-ui,sans-serif}
-h1{font-size:26px;margin:0 0 4px}.sub{color:#6b7280;margin:0 0 24px}h2{font-size:18px;margin:28px 0 8px;color:#374151}
-ul{list-style:none;padding:0;margin:0;background:#fff;border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.06)}
-li{padding:12px 16px;border-bottom:1px solid #eef0f3;display:flex;justify-content:space-between;gap:16px}li:last-child{border:0}
-code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}a{color:#2563eb;text-decoration:none}a:hover{text-decoration:underline}
-.price{color:#6b7280;white-space:nowrap}.tag{font-size:12px;background:#dbeafe;color:#1e40af;border-radius:999px;padding:2px 8px}
-</style></head><body>
+:root{color-scheme:dark;--bg:#101114;--hover:rgba(255,255,255,.045);--text:#ececee;--text-2:#a4a6ad;--text-3:#7e8189;--line:#22242a;--fill-2:#222328;--accent:#6e79e0;--card:#15161a;--card-line:#24262c;--red:#eb6a6a;
+--mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;--font:"Google Sans",system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+@media (prefers-color-scheme:light){:root{color-scheme:light;--bg:#fff;--hover:rgba(15,15,20,.045);--text:#1c1d21;--text-2:#55565f;--text-3:#74767f;--line:#ebebee;--fill-2:#ebebee;--accent:#5e6ad2;--card:#fff;--card-line:#e6e6ea;--red:#d64545}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 var(--font);-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}a:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+code{font-family:var(--mono);font-size:12.5px}
+.wrap{max-width:880px;margin:0 auto;padding:32px 16px 40px}
+h1{margin:0;font-size:16px;font-weight:600;letter-spacing:-.01em}
+.lede{margin:2px 0 0;color:var(--text-3);font-size:13px}.lede code{font-size:12px;color:var(--text-2);overflow-wrap:anywhere}
+h2{display:flex;align-items:center;gap:8px;margin:28px 0 8px;font-size:13px;font-weight:500;color:var(--text-2)}
+.tag{font-size:11.5px;font-weight:500;padding:0 7px;border-radius:6px;background:var(--fill-2);color:var(--text-3)}
+ul{list-style:none;padding:0;margin:0;background:var(--card);border:1px solid var(--card-line);border-radius:10px;overflow:hidden}
+li+li{border-top:1px solid var(--line)}
+.r{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:38px;padding:8px 14px;color:inherit}
+a.r:hover{background:var(--hover);text-decoration:none}
+.l{display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 10px;min-width:0}
+.name{font-weight:500}.l code{color:var(--text-2);overflow-wrap:anywhere}
+.v{color:var(--text-2);font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
+.st{display:inline-flex;align-items:center;gap:6px;color:var(--text-3);font-size:12.5px}
+.dot{width:7px;height:7px;border-radius:50%}.dot.err{background:var(--red)}
+.v .muted{color:var(--text-3);font-size:12.5px;white-space:normal}
+@media (max-width:560px){.wrap{padding-top:20px}.r{padding:8px 12px}.hint{display:none}}
+</style></head><body><div class="wrap">
 <h1>${SITE_NAME}</h1>
-<p class="sub">Demo merchant for Allowance. Paid endpoints use <strong>x402 v2</strong> (USDC on <code>eip155:84532</code>). Payments go to <code>${payTo}</code>.</p>
+<p class="lede">Demo merchant for Allowance · x402 v2 · USDC on <code>eip155:84532</code> · pays to <code>${esc(payTo)}</code></p>
 <h2>Paid APIs <span class="tag">x402</span></h2>
 <ul>
-<li><a href="/api/weather?city=Paris"><code>GET /api/weather?city=</code></a><span class="price">$0.05</span></li>
-<li><a href="/api/news"><code>GET /api/news</code></a><span class="price">$0.10</span></li>
-<li><a href="/api/stock?symbol=ACME"><code>GET /api/stock?symbol=</code></a><span class="price">$0.15</span></li>
-<li><code>POST /pizza/order</code> <span class="price">$18.50 · fulfillment simulated</span></li>
+${row("Weather", "GET /api/weather?city=", "/api/weather?city=Paris", "$0.05")}
+${row("News", "GET /api/news", "/api/news", "$0.10")}
+${row("Stock quote", "GET /api/stock?symbol=", "/api/stock?symbol=ACME", "$0.15")}
+${row("Pizza order", "POST /pizza/order", null, "$18.50", ` <span class="tag" title="No pizza is made and no card is charged">Simulated</span>`)}
 </ul>
 <h2>Free test target</h2>
 <ul>
-<li><a href="/test-target/users"><code>GET /test-target/users</code></a><span class="price">200</span></li>
-<li><a href="/test-target/orders"><code>GET /test-target/orders</code></a><span class="price">500 (always)</span></li>
-<li><a href="/test-target/products"><code>GET /test-target/products</code></a><span class="price">200</span></li>
-<li><a href="/test-target/inventory"><code>GET /test-target/inventory</code></a><span class="price">500 (always)</span></li>
-<li><a href="/test-target/health"><code>GET /test-target/health</code></a><span class="price">200</span></li>
+${row("", "GET /test-target/users", "/test-target/users", ok)}
+${row("", "GET /test-target/orders", "/test-target/orders", fails)}
+${row("", "GET /test-target/products", "/test-target/products", ok)}
+${row("", "GET /test-target/inventory", "/test-target/inventory", fails)}
+${row("", "GET /test-target/health", "/test-target/health", ok)}
 </ul>
 <h2>Work for agents <span class="tag">agent-work</span></h2>
 <ul>
-<li><a href="/.well-known/agent-work"><code>GET /.well-known/agent-work</code></a><span class="price">bounty board (HTML for browsers, JSON for agents)</span></li>
-<li><a href="${explorer}">Ledger explorer</a><span class="price">${explorer}</span></li>
+${row("Bounty board", "GET /.well-known/agent-work", "/.well-known/agent-work", `<span class="muted hint">HTML for browsers, JSON for agents</span>`)}
+${row("Ledger explorer", "", explorer, `<span class="muted">${esc(explorerHost)}</span>`)}
 </ul>
-</body></html>`;
+</div></body></html>`;
 }
