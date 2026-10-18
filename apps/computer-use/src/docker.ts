@@ -114,6 +114,7 @@ class DockerDesktop implements Desktop {
 export class DockerDesktopDriver implements DesktopDriver {
   private readonly log: (msg: string) => void;
   private readonly running = new Set<string>();
+  private readonly removing = new Map<string, Promise<void>>();
   private checked?: { at: number; result: { ok: true } | { ok: false; reason: string } };
 
   constructor(private readonly opts: DockerDriverOptions) {
@@ -173,12 +174,7 @@ export class DockerDesktopDriver implements DesktopDriver {
       await docker(["rm", "-f", name], 20_000).catch(() => undefined);
       throw new DesktopError(503, "desktop_failed", `The desktop couldn't start: ${(err as Error).message}`);
     }
-    const stop = async () => {
-      this.running.delete(name);
-      await docker(["rm", "-f", name], 30_000).catch((e: Error) => {
-        if (!/no such container/i.test(e.message)) this.log(`removing ${name} failed: ${e.message}`);
-      });
-    };
+    const stop = () => this.remove(name);
     try {
       const base = await this.address(name);
       const desktop = new DockerDesktop(name, base, secret, stop);
@@ -224,18 +220,34 @@ export class DockerDesktopDriver implements DesktopDriver {
     throw new DesktopError(503, "desktop_failed", "The desktop didn't come up in time.");
   }
 
+  /** Remove one desktop (once, however many times it is asked). */
+  private remove(name: string): Promise<void> {
+    let p = this.removing.get(name);
+    if (!p) {
+      p = docker(["rm", "-f", name], 30_000).then(
+        () => undefined,
+        (e: Error) => {
+          if (!/no such container|already in progress/i.test(e.message)) this.log(`removing ${name} failed: ${e.message}`);
+        },
+      );
+      p.finally(() => {
+        this.running.delete(name);
+        this.removing.delete(name);
+      });
+      this.removing.set(name, p);
+    }
+    return p;
+  }
+
   async cleanup(): Promise<void> {
-    let ids: string[] = [];
+    let names: string[] = [];
     try {
-      const out = await docker(["ps", "-aq", "--filter", `label=${LABEL}.instance=${this.opts.instance}`], 15_000);
-      ids = out.split(/\s+/).filter(Boolean);
+      const out = await docker(["ps", "-a", "--filter", `label=${LABEL}.instance=${this.opts.instance}`, "--format", "{{.Names}}"], 15_000);
+      names = out.split(/\s+/).filter(Boolean);
     } catch (err) {
       this.log(`listing desktops failed: ${(err as Error).message}`);
     }
-    for (const name of this.running) ids.push(name);
-    if (!ids.length) return;
-    await docker(["rm", "-f", ...new Set(ids)], 60_000).catch((e: Error) => this.log(`removing desktops failed: ${e.message}`));
-    this.running.clear();
+    await Promise.all([...new Set([...names, ...this.running, ...this.removing.keys()])].map((n) => this.remove(n)));
   }
 }
 

@@ -170,6 +170,22 @@ company's flood research, $0.10 for Quantcomm's AI analyst view (research, not a
 to connect "Quantcomm Flood Research" like any other service. If Quantcomm isn't running, nothing
 is charged.
 
+## Computer use (optional, needs Docker)
+
+Agents can rent a real Chromium browser on a sandboxed Linux desktop (`apps/computer-use`, :4090).
+`npm run dev` starts it and builds its Docker image the first time (a few minutes; or run
+`npm run computer-use:image`). There are no flat rates: time is bought by the minute ($0.02, one to
+five minutes per payment) and every action ($0.003–$0.005) and screen read ($0.002 text, $0.003
+screenshot) is its own x402 payment. Starting, waiting in line, polling and ending are free, and so
+is anything that fails. Each session gets a fresh container (no mounts, not privileged, CPU and
+memory limits, a firewall that lets it browse the internet but never reach this machine or the
+LAN), removed when the session ends. If every seat (`COMPUTER_USE_SEATS`, default 1) is busy,
+sessions wait in line. Text-only agents read the screen as text with numbered links and fields
+("click element 12"); Claude Desktop also gets `computer_*` tools with screenshots. Every session
+has a viewer page with the live screen, its place in line, the time left and the spend
+(`viewUrl`). Agents ask to connect "Computer" like any other service. `npm run computer-use:e2e`
+runs the whole thing against real Docker.
+
 ## Simulated vs real
 
 | Thing | Status |
@@ -190,6 +206,7 @@ is charged.
 | Paying a Shopify store with the Allowance Card | **Simulated** (the agent's USDC payment is real; card issuing and Shopify's agent card checkout are not wired) |
 | Capital One accounts (checking, one allowance account per agent, transfers, purchases, deposits) | Real Nessie API calls (Capital One's hackathon sandbox: sandbox money). Bank dollars → USDC is simulated (mock mint) |
 | Quantcomm flood and bank research | Real data from Quantcomm (live NWS alerts, FDIC deposits, Sentinel-1 flood maps); its Capital One customers are SYNTHETIC and its branches are Nessie sandbox ones |
+| Computer use (desktop, queue, lease, per-action payments, live stream) | Real: Docker containers with Chromium; payments are real x402 (mock-ledger USDC in mock mode) |
 | Chat agents | Real LLM agents (OpenAI-compatible endpoint); they act only when you message them |
 | `npm run demo` | Scripted fallback; no model, labelled as such |
 
@@ -209,6 +226,7 @@ apps/agent-chat/        chat agents (LLM tool loop over the MCP tools), chat pag
 apps/directory/         service directory (catalog of services agents can connect) on :4060
 apps/shopify-bridge/    any public Shopify store as an x402 service: catalog, real carts, USDC → Allowance Card, on :4070
 apps/quantcomm-bridge/  Quantcomm's flood and bank research (../technica2026) sold to agents over x402, on :4080
+apps/computer-use/      a queued, sandboxed Chromium desktop (Docker) rented by the minute and paid per action, on :4090
 apps/agents/            setup, reset, scripted offline demo
 docs/                   ARCHITECTURE.md, agent-work-spec.md, DEMO.md
 ```

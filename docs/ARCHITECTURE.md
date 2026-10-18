@@ -17,6 +17,7 @@ file change requests and the lead decides. Types live in `packages/shared/src/ty
 | directory | `apps/directory` | 4060 | Catalog of services agents can connect (§13). |
 | shopify-bridge | `apps/shopify-bridge` | 4070 | Any public Shopify store as an x402 service (§15). |
 | quantcomm-bridge | `apps/quantcomm-bridge` | 4080 | Quantcomm's flood and bank research as an x402 service (§17). |
+| computer-use | `apps/computer-use` | 4090 | A queued, sandboxed Chromium desktop (Docker), rented by the minute and paid per action over x402 (§19). |
 | agents | `apps/agents` | — | `setup`, `reset`, and the scripted offline demo (no model). |
 
 Packages: `packages/shared` (types, config, money), `packages/wallet` (policy engine, EIP-3009
@@ -949,3 +950,214 @@ The §15.3 Shopify endpoints stay for compatibility.
   - No separate "Add a Shopify store" entry: stores are rows in the services list like everything else.
 - Chat: request and connected cards are the same for every kind. A store shows its storefront domain
   as its meta line, an x402 API its host.
+
+## 19. Computer use: a queued desktop paid by time and execution (Phase 8, branch `feature/computer-use`)
+
+Agents rent a real Chromium browser on a sandboxed Linux desktop. There is no flat rate: an active
+session holds a **time lease** bought in one-minute blocks, and every **action** and every **read**
+of the screen is its own small x402 "exact" payment. Most agents run on text-only models, so the
+screen is also served as text: the visible page text plus numbered links, buttons and fields.
+
+### 19.1 Service and config (`apps/computer-use`, port 4090)
+
+| Env | Default | Meaning |
+|---|---|---|
+| `COMPUTER_USE_PORT` / `COMPUTER_USE_URL` | 4090 / `http://localhost:<port>` | where it listens / the base of every URL it hands out |
+| `COMPUTER_USE_SEATS` | 1 | desktops that run at once |
+| `COMPUTER_USE_MAX_QUEUE` | 20 | waiting sessions before `503 queue_full` |
+| `COMPUTER_USE_START_GRACE_SECONDS` | 90 | time to buy the first minute once a seat is yours |
+| `COMPUTER_USE_MAX_SESSION_MINUTES` | 30 | longest session (from the first minute) |
+| `COMPUTER_USE_MAX_LEASE_AHEAD_MINUTES` | 10 | most prepaid time a lease can hold |
+| `COMPUTER_USE_IMAGE` | `allowance-cu-desktop:latest` | the desktop image |
+| `COMPUTER_USE_CPUS` / `COMPUTER_USE_MEMORY` | `1` / `1g` | per-container limits (no swap) |
+| `COMPUTER_USE_DNS` | `1.1.1.1,8.8.8.8` | public resolvers, so the firewall never needs a LAN one |
+| `COMPUTER_USE_ACCESS` | `ip` | `ip`: talk to the container's bridge IP (Linux); `publish`: a random `127.0.0.1` port (Docker Desktop) |
+
+The fields are read in `apps/computer-use/src/config.ts` on top of `loadConfig()`, named like
+`quantcommBridge*` (`computerUsePort`, `computerUseUrl`, `computerUseSeats`, …) so they can move into
+`AppConfig` unchanged; the directory reads `COMPUTER_USE_URL` itself for its entry. The earnings
+wallet (the x402 `payTo`) is `DATA_DIR/computer-use-key.json` (0600, created on first start, never
+logged).
+
+### 19.2 Sessions, the queue and the lease
+
+- `POST /computer/sessions` (free) gives the session a free seat (`201 status:"active"`) or puts it
+  in line (`202 status:"queued"`, with `position`, `queueLength` and `estimatedWaitSeconds`). Ids are
+  `cus_…`.
+- **Ownership.** The create response carries a control token `cut_<48 hex>` (time, actions, reads,
+  end) and a `viewUrl` with a view-only token `cuv_<32 hex>` (status, viewer page, stream). Only
+  their hashes are kept. Tokens go in the query (`?token=`) because MCP `fetch_url` drops
+  `Authorization` and the wallet re-fetches 402s by URL alone. Unknown id `404 session_not_found`, no
+  token `401 token_required`, someone else's `403 wrong_token`, a view token on a control route
+  `403 view_only`.
+- **Activation.** When a session gets a seat its desktop container starts at once, and the seat is
+  held for the start grace (90 s) while the first minute is bought. The first `POST …/time` waits
+  until the desktop is up; a desktop that can't start answers 503 and is not charged. If nobody pays
+  in time the session ends `not_started` (free) and the seat goes to the next in line.
+- **Lease.** Each purchase adds 1–5 minutes to the end of the lease (to now, for the first). A lease
+  holds at most 10 minutes ahead (`409 lease_full`) and a session lasts at most 30 minutes
+  (`409 session_limit`). When the lease runs out the session ends `lease_lapsed`: the container is
+  removed, streams close, and the next in line starts. A paid request still in flight (a renewal
+  settling, an action running) finishes first.
+- **End.** `POST …/end` or `DELETE /computer/sessions/:id` (free) ends an active session or leaves
+  the line (`cancelled`); the next in line starts. Ended sessions stay readable for 15 minutes.
+- **Estimate.** Each seat frees when its lease (or start grace) ends; every session ahead is assumed
+  to take 3 minutes once it starts.
+- Actions on one session run one at a time.
+
+### 19.3 Prices and payments
+
+| What | Route | Price | 402 description (receipt and statement line) |
+|---|---|---|---|
+| Time | `POST /computer/sessions/:id/time?token=&minutes=1..5` | $0.02 per minute | `Computer use · 1 minute`, `Computer use · 3 minutes` |
+| navigate, click, type, select | `POST /computer/sessions/:id/actions/:kind?token=` | $0.005 | `Computer use · click` |
+| key, scroll, hover, back, forward, reload | same | $0.003 | `Computer use · scroll` |
+| Text snapshot | `GET /computer/sessions/:id/snapshot?token=` | $0.002 | `Computer use · text snapshot` |
+| Screenshot | `GET /computer/sessions/:id/screenshot?token=&format=jpeg\|png` | $0.003 | `Computer use · screenshot` |
+
+The largest single payment is 5 minutes, $0.10 (the directory's `maxPrice`). `serviceName` is
+"Allowance". Payments settle to the earnings wallet and, through the wallet-service, show on the
+agent's Capital One statement like any other (§16).
+
+**Never charged for a failure:**
+- Queueing, polling, cancelling, ending, the viewer and the stream are free.
+- Everything that can't be served is answered **before** the paywall, so there is no 402: an unknown
+  session, token problems, `409 session_queued`, `409 lease_required`, `410 session_ended`,
+  `410 lease_lapsed`, `409 lease_full`, `409 session_limit`, `400 invalid_minutes`, an unknown action
+  kind, and a bad action body when one is sent (`400 invalid_action`, `422 card_number_refused`,
+  `422 password_field_refused`).
+- **The price depends on the URL only** (the kind is in the path, the minutes in the query). The
+  wallet verifies a connected-service payment by re-fetching the URL with the same method and no
+  body (§6) and freezes the agent if the live 402 differs, so a bodyless request on a valid session
+  always gets the same 402 as the agent's.
+- After payment, a failure inside the desktop is answered with its status, always ≥ 400 (`404
+  element_not_found`, `409 stale_snapshot`, `422 navigation_failed`, `502 input_failed`, `503
+  desktop_unavailable`, …). `@x402/express` settles only responses below 400, so the agent isn't
+  charged; `apps/computer-use/src/computer.test.ts` checks the balances.
+- Time is added, and spend counted, only in the resource server's `afterSettle` hook (each paid
+  response carries an `X-Computer-Charge` id that the hook looks up), i.e. only once the USDC moved.
+  A settlement failure answers `402 payment_not_settled` and adds no time. If settlement fails after
+  an action ran, that action was free.
+
+**Later: `upto`.** `@x402/evm` 2.28 also ships an `upto` scheme: the client authorizes a maximum and
+the server settles what was used (the express middleware already reads a settlement-overrides
+response header). With it, one authorization of, say, $0.10 could cover up to five minutes, and the
+service would settle the seconds actually used when the session ends or the authorization runs out,
+instead of selling one-minute blocks. The wallet-service signs only `exact` today, so blocks it is.
+
+### 19.4 Endpoints
+
+| Method | Path | Auth | Response |
+|---|---|---|---|
+| GET | `/computer` | none | free index: `{ name, provider, summary, available, unavailable?, seats, active, queued, estimatedWaitSeconds?, pricing, prices: { perMinute, maxMinutesPerPayment, maxPayment, actions, reads }, limits, start, rules }` |
+| POST | `/computer/sessions` | none | `{ label? }` → `201`/`202` status view + `token`, `viewUrl`, `urls`, `next`, `prices`, `rules` · `503 computer_unavailable` (Docker down, image building) · `503 queue_full` |
+| GET | `/computer/sessions/:id` | token or view token | `{ id, status, label?, position?, queueLength?, estimatedWaitSeconds?, seat?, desktop?, lease?: { secondsLeft, endsAt } \| { secondsLeft: 0, payWithinSeconds }, page?, lastAction?, spent?: { total, time, actions, reads, minutesBought, actionCount, readCount }, endReason?, message?, next?, urls? }` (`next` and `urls` only with the control token) |
+| POST · DELETE | `/computer/sessions/:id/end` · `/computer/sessions/:id` | token | `{ id, status: "ended", endReason, message, spent }` |
+| POST | `/computer/sessions/:id/time?minutes=` | token, **x402** | `{ id, status, bought, lease, page? }` |
+| POST | `/computer/sessions/:id/actions/:kind` | token, **x402** | body per kind (below) → `{ ok, action, url, title, …, lease }` |
+| GET | `/computer/sessions/:id/snapshot` | token, **x402** | `{ url, title, text, elements: [{ n, role, label, x, y, w, h, href?, type?, value?, checked?, options?, disabled? }], scroll: { y, maxY, more }, truncated?, moreElements?, note?, lease }` |
+| GET | `/computer/sessions/:id/screenshot?format=` | token, **x402** | the image, with an `X-Computer-Lease-Seconds` header |
+| GET | `/computer/sessions/:id/view?token=&embed=1` | token or view token | the viewer page (§19.7) |
+| GET | `/computer/sessions/:id/stream` | token or view token | live MJPEG (`multipart/x-mixed-replace; boundary=frame`, about 6 fps), at most 4 viewers per session; `409 not_live` until the desktop is up |
+| GET | `/health` | none | `{ ok, seats, active, queued, desktop: "ready" \| reason }` |
+
+Action bodies: `navigate { url }` (http(s) only) · `click { element } | { x, y }` (+ `button`,
+`count: 2`) · `type { text, element?, submit?, clear? }` · `key { keys }` (`"Enter"`, `"ctrl+a"`,
+`"Tab Tab Enter"`) · `scroll { direction?, amount?, element? }` · `select { element, value }` ·
+`hover { element } | { x, y }` · `back`, `forward`, `reload` `{}`. Element numbers refer to the last
+snapshot; once the page changes they are stale (`409 stale_snapshot`). Typing a Luhn-valid card
+number, or into a field the last snapshot showed as a password input, is refused (422, free).
+
+**Text snapshot.** Built in the page through Chromium's DevTools protocol: a walk of what is inside
+the viewport, with `[n]` in front of each interactive element (links, buttons, inputs, selects, ARIA
+roles, `onclick`), at most 5000 characters and 120 elements. `x`/`y` are the screen pixels of each
+element's visible center. Clicking element `n` locates it again, scrolls it into view if needed and
+clicks there with xdotool. Content inside iframes isn't listed (a `note` says so). Links that would
+open a new tab open in the same one, so there is always one page.
+
+### 19.5 The desktop container and isolation
+
+`apps/computer-use/docker/`: Alpine 3.24 with Xvfb (1280×800), Openbox (no decorations, every window
+maximized at 0,0), Chromium, xdotool, ffmpeg (x11grab, for screenshots and the MJPEG stream) and
+`server.py`, a small control server (Python stdlib plus websocket-client) on port 8080 inside the
+container. The image is `allowance-cu-desktop:latest`, about 370 MB compressed. The service builds it
+when it is missing or its `docker/` files changed (a content hash is kept as an image label).
+
+Per session the service runs one **fresh** container, `allowance-cu-<session id>`, labelled
+`allowance.cu=1`, `allowance.cu.instance=<port>` and `allowance.cu.session=<id>`, and removes it
+(`docker rm -f`) when the session ends for any reason, so no agent ever sees another's cookies,
+history or screen. At start the service removes containers a previous run on the same port left
+behind; on SIGINT/SIGTERM it ends every session and removes every container.
+
+- No mounts, no Docker socket, not privileged, `--read-only` root with tmpfs `/tmp` and `/run` only.
+- `--cap-drop ALL`, plus NET_ADMIN, SETUID and SETGID for the entrypoint only. As root it installs
+  the egress firewall (and refuses to start if that fails), then `su-exec`s to `cu` (uid 64000, no
+  host account). Switching uid clears every capability and `no-new-privileges` keeps them cleared, so
+  nothing the browser runs can change the rules.
+- `--memory 1g --memory-swap 1g --cpus 1 --pids-limit 512`, small logs, IPv6 off, public DNS.
+- **Network.** The internet is allowed (it's for browsing). The firewall rejects new connections to
+  the Docker gateway (the host), 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16, 127/8 off
+  loopback, and the multicast and reserved ranges, so the host's localhost services, other
+  containers and the LAN are unreachable. Checked: the browser gets `ERR_CONNECTION_REFUSED` for
+  `172.17.0.1:4010` while the host itself answers there.
+- The control server needs a random per-container secret (`X-CU-Secret`), which pages can't send.
+  Chromium runs without the secret in its environment, and with a policy that blocks `file://`,
+  `localhost`/`127.0.0.1`, downloads, the password manager and autofill.
+- Chromium runs with `--no-sandbox` (Docker's seccomp profile blocks its namespace sandbox); the
+  container is the sandbox.
+
+### 19.6 Agents
+
+**fetch_url (every agent).** The JSON is compact and text-first. The flow: `POST
+{COMPUTER_USE_URL}/computer/sessions`; if queued, poll `urls.status`; `POST …/time?minutes=1`;
+`POST …/actions/navigate { url }`; `GET …/snapshot`; `POST …/actions/click { element }`; …; `POST
+…/end`. Every answer carries `lease.secondsLeft`, and status answers carry `next`, one sentence with
+the exact next URL.
+The `fetch_url` blocklist doesn't include :4090 (a public paid service, like :4080).
+
+**Directory** (`apps/directory/src/catalog.ts`, static): `id "computer-use"`, `name "Computer"`,
+`provider "Allowance"`, `icon "🖥️"`, `color "#64748B"`, `category "tools"`, `kind "x402"`, `baseUrl
+{COMPUTER_USE_URL}/computer`, `maxPrice "0.10"`, `pricing "$0.02 per minute · $0.005 per action"`.
+Its docs explain the queue, the lease, the actions and the text snapshot, and say: never type card
+numbers or passwords into the computer; pay with your wallet tools instead. No agent has it by
+default; agents ask with `request_service { service_id: "computer-use" }`.
+
+**MCP tools** (`apps/mcp/src/computer.ts`), for vision-capable clients. `createServer({ …,
+computerTools: true })` registers them. The stdio entry (Claude Desktop) turns them on
+(`ALLOWANCE_COMPUTER_TOOLS=0` turns them off); the chat agents keep their tool list and use
+`fetch_url`. The tools pay through the same wallet flow as `fetch_url` and keep the session token in
+the MCP process:
+
+| Tool | Input | Does |
+|---|---|---|
+| `computer_start` | `{ minutes?: 1–5, label? }` | starts a session and buys the first minutes, or queues it; on a running session it adds time. If the first minute can't be bought (not connected, blocked, denied) it gives the seat back |
+| `computer_status` | `{}` | place in line, time left, page, spend (free) |
+| `computer_act` | `{ action, url?, element?, x?, y?, text?, submit?, clear?, keys?, direction?, amount?, value?, button?, count? }` | one paid action |
+| `computer_view` | `{ mode?: "text" \| "image" \| "both", format? }` | the text snapshot (default) and/or a screenshot as MCP image content |
+| `computer_end` | `{}` | ends the session (free) |
+
+Structured results carry `sessionId`, `status`, `viewUrl` and `lease`, so a client can show the
+viewer next to the conversation.
+
+### 19.7 UI (minimal for now)
+
+The service serves its own viewer at `GET /computer/sessions/:id/view?token=<view token>` (the
+`viewUrl`): the live stream in an `<img>`, a status chip (In line, Starting, Live, Ended), the lease
+time left counting down, one muted meta line (label · seat, or queue position and wait · spend ·
+minutes · actions · reads), then the page title and URL. It polls the free status route every second
+and follows `docs/ui-rules.md` with the tokens of `apps/agent-chat/static/chat.css`. It sends
+`Content-Security-Policy: … frame-ancestors 'self' http://localhost:4050 http://127.0.0.1:4050
+http://localhost:4040 http://127.0.0.1:4040` and `Referrer-Policy: no-referrer`; `&embed=1` drops the
+page chrome and the background for an iframe.
+
+Not done on this branch, because the chat and the dashboard are being redesigned on master:
+- **Chat.** When a tool result is a computer session (a `fetch_url` to `…/computer/sessions` whose
+  JSON has `viewUrl`, or `computer_start`'s `structuredContent.viewUrl`), show one card with
+  `<iframe src="{viewUrl}&embed=1">` (16:10, lazy) while it runs, collapsing to one event line when
+  the session ends. Step lines can use the receipt descriptions ("Computer use · click · $0.005").
+- **Dashboard.** Time-based spend is ordinary receipts named `Computer use · N minutes` and
+  `Computer use · <kind>`. Fold one agent's consecutive `Computer use · …` receipts into one activity
+  line ("researcher used the Computer for 4 min · 23 actions · $0.21"), with minutes and actions as
+  muted meta. Receipts don't carry the URL; the wallet keeps it (with the `cus_…` session id) in the
+  pending payment's `request.url`, so a `Receipt.url` field would let the dashboard group exactly
+  per session.

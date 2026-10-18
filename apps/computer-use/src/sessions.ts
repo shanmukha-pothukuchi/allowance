@@ -197,7 +197,11 @@ export class SessionManager {
    * out), and every session ahead is assumed to use 3 minutes once it starts.
    */
   estimatedWaitMs(s: Session): number {
-    const pos = this.position(s);
+    return this.estimatedWaitAt(this.position(s));
+  }
+
+  /** The wait for whoever is at queue position `pos` (1-based); `queue.length + 1` is a newcomer. */
+  estimatedWaitAt(pos: number): number {
     if (pos <= 0) return 0;
     const now = this.clock.now();
     const free: number[] = [];

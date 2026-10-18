@@ -33,6 +33,7 @@ export function viewerPage(opts: { id: string; token: string; embed: boolean; no
   --card: #ffffff; --card-line: #e6e6ea; --green: #1e8e52; --red: #d14343; --red-ink: #b93a3a; --amber: #b7791f; --amber-ink: #8a5a12;
 } }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 var(--font); }
 html[data-embed="1"], html[data-embed="1"] body { background: transparent; }
 main { max-width: 1040px; margin: 0 auto; padding: 20px 16px 24px; }

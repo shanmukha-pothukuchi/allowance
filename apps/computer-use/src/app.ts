@@ -274,7 +274,6 @@ export function createComputerUseApp(config: ComputerUseConfig, deps: ComputerUs
 
   app.get("/computer", async (_req, res) => {
     const d = await deps.driver.check();
-    const firstQueued = manager.queue[0];
     res.json({
       name: DIRECTORY_NAME,
       provider: PROVIDER,
@@ -284,7 +283,7 @@ export function createComputerUseApp(config: ComputerUseConfig, deps: ComputerUs
       seats: manager.seats,
       active: manager.activeCount,
       queued: manager.queue.length,
-      ...(manager.activeCount >= manager.seats ? { estimatedWaitSeconds: Math.round((firstQueued ? manager.estimatedWaitMs(firstQueued) : 0) / 1000) } : {}),
+      ...(manager.activeCount >= manager.seats ? { estimatedWaitSeconds: Math.round(manager.estimatedWaitAt(manager.queue.length + 1) / 1000) } : {}),
       pricing: PRICING,
       prices: {
         perMinute: PER_MINUTE,

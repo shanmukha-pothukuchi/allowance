@@ -276,6 +276,7 @@ describe("computer use service", () => {
     expect(env.driver.started).toEqual([a.id]);
     const c = await session(env);
     expect(c.res.body).toMatchObject({ status: "queued", position: 2, estimatedWaitSeconds: 60 + 180 });
+    expect((await call("GET", `${env.url}/computer`)).body).toMatchObject({ active: 1, queued: 2, estimatedWaitSeconds: 60 + 2 * 180 });
 
     // Polling is free, with either token; the view token sees no control URLs.
     const viaView = await call("GET", `${b.base}?token=${b.viewToken}`);

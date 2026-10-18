@@ -26,7 +26,8 @@
     "dev:shopify": "tsx watch apps/shopify-bridge/src/index.ts",
     "dev:quantcomm-bridge": "tsx watch apps/quantcomm-bridge/src/index.ts",
     "dev:computer-use": "tsx watch --include apps/computer-use/docker apps/computer-use/src/index.ts",
-    "computer-use:image": "tsx apps/computer-use/src/build-image.ts"
+    "computer-use:image": "tsx apps/computer-use/src/build-image.ts",
+    "computer-use:e2e": "tsx apps/computer-use/src/e2e.ts"
   },
   "dependencies": {
     "@fontsource/google-sans": "^5.3.2",
