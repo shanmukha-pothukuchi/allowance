@@ -10,7 +10,7 @@
   ],
   "scripts": {
     "setup": "tsx apps/agents/src/setup.ts",
-    "dev": "concurrently -k -n facilitator,wallet,merchant,directory,shopify,quantcomm,notifier,dashboard,agents -c cyan,green,yellow,gray,greenBright,blueBright,magenta,blue,white \"npm:dev:facilitator\" \"npm:dev:wallet\" \"npm:dev:merchant\" \"npm:dev:directory\" \"npm:dev:shopify\" \"npm:dev:quantcomm-bridge\" \"npm:dev:notifier\" \"npm:dev:dashboard\" \"npm:dev:agents\"",
+    "dev": "concurrently -k -n facilitator,wallet,merchant,directory,shopify,quantcomm,notifier,dashboard,agents,brokerage,scheduler -c cyan,green,yellow,gray,greenBright,blueBright,magenta,blue,white,redBright,cyanBright \"npm:dev:facilitator\" \"npm:dev:wallet\" \"npm:dev:merchant\" \"npm:dev:directory\" \"npm:dev:shopify\" \"npm:dev:quantcomm-bridge\" \"npm:dev:notifier\" \"npm:dev:dashboard\" \"npm:dev:agents\" \"npm:dev:brokerage\" \"npm:dev:scheduler\"",
     "dev:facilitator": "tsx watch apps/mock-facilitator/src/index.ts",
     "dev:wallet": "tsx watch apps/wallet-service/src/index.ts",
     "dev:merchant": "tsx watch apps/merchant/src/index.ts",
@@ -24,7 +24,9 @@
     "demo:scripted": "tsx apps/agents/src/demo.ts",
     "dev:directory": "tsx watch apps/directory/src/index.ts",
     "dev:shopify": "tsx watch apps/shopify-bridge/src/index.ts",
-    "dev:quantcomm-bridge": "tsx watch apps/quantcomm-bridge/src/index.ts"
+    "dev:quantcomm-bridge": "tsx watch apps/quantcomm-bridge/src/index.ts",
+    "dev:brokerage": "tsx watch apps/brokerage/src/index.ts",
+    "dev:scheduler": "tsx watch apps/scheduler/src/index.ts"
   },
   "dependencies": {
     "@fontsource/google-sans": "^5.3.2",

@@ -103,7 +103,7 @@ export interface AgentToken {
 // Receipts
 // ----------------------------------------------------------------------------
 
-export type ReceiptKind = "spend" | "earn" | "transfer" | "topup";
+export type ReceiptKind = "spend" | "earn" | "transfer" | "topup" | "cashout";
 export type ReceiptStatus = "pending_approval" | "signed" | "settled" | "failed" | "denied" | "blocked";
 
 export interface Receipt {
@@ -221,7 +221,7 @@ export interface Approval {
 // ----------------------------------------------------------------------------
 
 export type ServiceKind = "x402" | "agent-work" | "directory";
-export type ServiceCategory = "data" | "shopping" | "work" | "tools";
+export type ServiceCategory = "data" | "shopping" | "work" | "tools" | "finance";
 
 /** A service as listed in the directory. */
 export interface ServiceManifest {
@@ -372,7 +372,8 @@ export type EventType =
   | "service.connected"
   | "service.disconnected"
   | "bank.posted"
-  | "bank.failed";
+  | "bank.failed"
+  | "cashout";
 
 export interface WalletEvent {
   id: string;
