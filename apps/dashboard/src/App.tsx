@@ -6,6 +6,11 @@ import { AgentCard } from "./components/AgentCard";
 import { AgentSheet } from "./components/AgentSheet";
 import { ApprovalsPanel } from "./components/ApprovalsPanel";
 import { BankSheet } from "./components/BankSheet";
+import { CashOutSheet } from "./components/CashOutSheet";
+import { PortfolioView } from "./components/PortfolioView";
+import { SchedulesView } from "./components/SchedulesView";
+import { rulesFor, tradeOf } from "./invest";
+import { dataOf, useInvest } from "./useInvest";
 import { Plus } from "./components/Icons";
 import { NewAgentSheet } from "./components/NewAgentSheet";
 import { ReceiptsList } from "./components/ReceiptsList";
@@ -58,7 +63,22 @@ export default function App() {
     },
     [actions],
   );
-  const sheetAgent = sheet?.sheet === "agent" ? state.agents.find((a) => a.name === sheet.agent) : undefined;
+  const sheetAgent = sheet?.sheet === "agent" || sheet?.sheet === "cash-out" ? state.agents.find((a) => a.name === sheet.agent) : undefined;
+
+  // §20: the brokerage and the scheduler, polled fast while something on screen shows them.
+  const investOnScreen = route.view === "portfolio" || route.view === "schedules" || sheet?.sheet === "agent" || sheet?.sheet === "cash-out";
+  const { invest, investActions } = useInvest(adapter, investOnScreen);
+  const portfolios = dataOf(invest.portfolios);
+  const scheduler = dataOf(invest.scheduler);
+  const portfolioOf = (name: string) => portfolios?.portfolios.find((p) => p.agentName === name);
+  // A trade or a cash-out just moved money: the positions changed too.
+  const newest = state.events[0];
+  const newestId = newest?.id;
+  const moved = !!newest && (newest.type === "cashout" || !!tradeOf(newest.receipt));
+  useEffect(() => {
+    if (moved) investActions.refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newestId, moved]);
 
   const [feedTab, setFeedTab] = useState<"activity" | "receipts">("activity");
   const pending = state.approvals.length;
@@ -66,11 +86,20 @@ export default function App() {
 
   return (
     <div className="app">
-      <SideNav state={state} route={route} theme={theme} onToggleTheme={toggleTheme} onToggleDetails={actions.toggleDetails} onOpenBank={() => setSheet({ sheet: "bank" })} />
+      <SideNav state={state} route={route} paused={!!scheduler?.paused} theme={theme} onToggleTheme={toggleTheme} onToggleDetails={actions.toggleDetails} onOpenBank={() => setSheet({ sheet: "bank" })} />
       <div className="page">
         <Banners state={state} />
         {route.view === "services" ? (
           <ServicesView state={state} actions={actions} selectedId={route.serviceId} now={now} onAddService={() => setSheet({ sheet: "add-service" })} />
+        ) : route.view === "portfolio" ? (
+          <PortfolioView
+            portfolios={invest.portfolios}
+            onRetry={investActions.refresh}
+            onCashOut={(name) => setSheet({ sheet: "cash-out", agent: name })}
+            onOpenAgent={(name) => setSheet({ sheet: "agent", agent: name })}
+          />
+        ) : route.view === "schedules" ? (
+          <SchedulesView scheduler={invest.scheduler} busy={invest.busy} now={now} onCancel={investActions.cancel} onPause={investActions.setPaused} onRetry={investActions.refresh} />
         ) : (
           <main className="overview">
             <header className="page-head">
@@ -161,6 +190,7 @@ export default function App() {
                     onRetryBank={(id) => void retryBank(id)}
                     retrying={retrying}
                     checkingLast4={state.totals.bank?.checkingLast4}
+                    firings={scheduler?.firings}
                   />
                 ) : (
                   <ReceiptsList
@@ -228,7 +258,32 @@ export default function App() {
           checkingLast4={state.totals.bank?.checkingLast4}
           onRetry={(id) => void retryBank(id)}
           onAddMoney={() => setSheet({ sheet: "add-money", agent: sheet.agent })}
+          onCashOut={() => setSheet({ sheet: "cash-out", agent: sheet.agent })}
+          invest={{
+            portfolio: portfolioOf(sheet.agent),
+            rules: scheduler ? rulesFor(scheduler.schedules, sheet.agent) : undefined,
+            rulesUnavailable: invest.scheduler.state === "error" && !scheduler ? "The scheduler isn't answering, so rules can't be changed right now." : undefined,
+            onSaveRules: (rules) => investActions.setRules(sheetAgent ?? { id: "", name: sheet.agent }, rules),
+            onOpenPortfolio: () => {
+              closeSheet();
+              navigate({ view: "portfolio" });
+            },
+          }}
           onClose={closeSheet}
+        />
+      )}
+      {sheet?.sheet === "cash-out" && (
+        <CashOutSheet
+          adapter={adapter}
+          agent={sheetAgent}
+          agentName={sheet.agent}
+          bank={state.totals.bank}
+          invested={portfolioOf(sheet.agent)?.totals.value}
+          onClose={closeSheet}
+          onDone={() => {
+            actions.refresh();
+            investActions.refresh();
+          }}
         />
       )}
     </div>

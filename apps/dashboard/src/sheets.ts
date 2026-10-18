@@ -16,8 +16,8 @@ export { AGENT_NAME_RE, MAX_TOPUP };
 /** The sheets the chat can embed (§14.3, §16.5 bank); their ids ride on the postMessage contract. */
 export type SheetId = "new-agent" | "add-money" | "bank" | "add-service";
 export type EmbedSheetRoute = { sheet: "new-agent" } | { sheet: "add-money"; agent?: string } | { sheet: "bank" } | { sheet: "add-service"; agent?: string };
-/** Plus an agent's detail (§16.5), which lives on the dashboard only. */
-export type SheetRoute = EmbedSheetRoute | { sheet: "agent"; agent: string };
+/** Plus an agent's detail (§16.5) and its cash-out (§20.2), which live on the dashboard only. */
+export type SheetRoute = EmbedSheetRoute | { sheet: "agent"; agent: string } | { sheet: "cash-out"; agent: string };
 
 /**
  * `?sheet=new-agent` / `add-money&agent=<name>` / `add-service` / `bank` / `agent&agent=<name>` → the
@@ -31,7 +31,7 @@ export function sheetFromSearch(search: string): SheetRoute | null {
   if (sheet === "add-shopify" || sheet === "add-service") return agent ? { sheet: "add-service", agent } : { sheet: "add-service" };
   if (sheet === "new-agent" || sheet === "bank") return { sheet };
   if (sheet === "add-money") return agent ? { sheet, agent } : { sheet };
-  if (sheet === "agent" && agent) return { sheet, agent };
+  if ((sheet === "agent" || sheet === "cash-out") && agent) return { sheet, agent };
   return null;
 }
 
@@ -44,7 +44,7 @@ export function embedRequested(search: string): boolean {
 export function embedSheet(search: string): EmbedSheetRoute | null {
   if (!embedRequested(search)) return null;
   const r = sheetFromSearch(search);
-  return r && r.sheet !== "agent" ? r : null;
+  return r && r.sheet !== "agent" && r.sheet !== "cash-out" ? r : null;
 }
 
 /** The query string with the sheet params set (or removed), keeping everything else (mock, theme). */
@@ -54,7 +54,7 @@ export function withSheet(search: string, route: SheetRoute | null): string {
   p.delete("agent");
   if (route) {
     p.set("sheet", route.sheet);
-    if ((route.sheet === "add-money" || route.sheet === "agent" || route.sheet === "add-service") && route.agent) p.set("agent", route.agent);
+    if ((route.sheet === "add-money" || route.sheet === "agent" || route.sheet === "cash-out" || route.sheet === "add-service") && route.agent) p.set("agent", route.agent);
   }
   const s = p.toString();
   return s ? `?${s}` : "";

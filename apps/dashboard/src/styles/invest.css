@@ -1,0 +1,399 @@
+/* Paper investing, cash out and schedules (§20.4): the Portfolio and Schedules views, the rules
+   group in the agent sheet. Same tokens and density as the rest (docs/ui-rules.md): rows, not cards;
+   tabular figures right-aligned; green and red only on P/L signs. */
+
+/* ---------- P/L figures ---------- */
+.pnl-in {
+  color: var(--in);
+}
+.pnl-neg {
+  color: var(--danger);
+}
+.pnl-flat {
+  color: var(--text-2);
+}
+.pf-pnl {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.pf-pct {
+  font-size: 0.86em;
+  opacity: 0.85;
+}
+
+/* ---------- Portfolio view ---------- */
+.pf-view .balance-sub {
+  max-width: 62ch;
+}
+.pf-list {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.pf-cols,
+.pf-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px 92px 92px 100px 156px;
+  column-gap: 12px;
+  align-items: center;
+}
+.pf-cols {
+  padding: 0 4px;
+  margin-bottom: -14px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.pf-cols > span:not(:first-child) {
+  text-align: right;
+}
+.pf-group-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px 92px 92px 100px 156px;
+  column-gap: 12px;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.pf-head-main {
+  grid-column: 1 / 5;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.pf-head-value {
+  grid-column: 5;
+  font-size: 0.93rem;
+}
+.pf-head-pl {
+  grid-column: 6;
+  font-size: 0.93rem;
+}
+.pf-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px 2px 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.pf-who:hover .pf-agent {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.pf-agent {
+  font-size: 0.93rem;
+  font-weight: 500;
+}
+.pf-meta {
+  font-size: 0.86rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.pf-cash {
+  height: 24px;
+  padding: 0 8px;
+  gap: 5px;
+}
+.pf-rows > li + li {
+  border-top: 1px solid var(--border);
+}
+.pf-row {
+  min-height: 38px;
+  padding: 7px 4px;
+  font-size: 0.93rem;
+}
+.pf-tk {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.pf-tk strong {
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+.pf-name {
+  min-width: 0;
+  font-size: 0.86rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.pf-value {
+  color: var(--text);
+}
+.pf-pl {
+  display: flex;
+  justify-content: flex-end;
+}
+.pf-sub {
+  display: none;
+}
+.pf-none {
+  padding: 10px 4px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+@media (max-width: 900px) {
+  .pf-cols,
+  .pf-group-head,
+  .pf-row {
+    grid-template-columns: minmax(0, 1fr) 64px 84px 84px 92px 140px;
+  }
+}
+@media (max-width: 760px) {
+  .pf-cols {
+    display: none;
+  }
+  .pf-list {
+    gap: 18px;
+  }
+  /* two lines a position: ticker and value, then shares · cost · price and the P/L */
+  .pf-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "tk value"
+      "sub pl";
+    row-gap: 2px;
+  }
+  .pf-tk {
+    grid-area: tk;
+  }
+  .pf-value {
+    grid-area: value;
+  }
+  .pf-pl {
+    grid-area: pl;
+  }
+  .pf-sub {
+    grid-area: sub;
+    display: block;
+    min-width: 0;
+    font-size: 0.82rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .pf-shares,
+  .pf-avg,
+  .pf-price {
+    display: none;
+  }
+  .pf-pl {
+    font-size: 0.86rem;
+  }
+  .pf-group-head {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+  .pf-head-main {
+    grid-column: 1;
+  }
+  .pf-head-value {
+    grid-column: 2;
+  }
+  .pf-head-pl {
+    grid-column: 3;
+  }
+}
+@media (max-width: 480px) {
+  /* the group head keeps who, realized and Cash out; each row says its own value and P/L */
+  .pf-name,
+  .pf-head-value,
+  .pf-head-pl {
+    display: none;
+  }
+  .pf-cash {
+    margin-left: auto;
+  }
+}
+
+/* ---------- Schedules view ---------- */
+.sc-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 28px;
+  font-size: 0.9rem;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.sc-paused {
+  margin-left: 6px;
+  vertical-align: 3px;
+}
+.sc-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) minmax(0, auto) auto 64px 84px;
+  align-items: center;
+  column-gap: 12px;
+  min-height: 44px;
+  padding: 6px 4px;
+}
+.sc-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sc-title {
+  font-size: 0.93rem;
+  font-weight: 500;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.sc-meta {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.sc-when {
+  min-width: 0;
+  font-size: 0.86rem;
+  color: var(--text-2);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.sc-next {
+  color: var(--muted);
+}
+.sc-marks {
+  display: inline-flex;
+  justify-content: flex-end;
+}
+.sc-fired {
+  font-size: 0.86rem;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.sc-act {
+  display: flex;
+  justify-content: flex-end;
+}
+.sc-done .sc-title {
+  color: var(--text-2);
+  font-weight: 400;
+}
+.sc-done .avatar {
+  opacity: 0.6;
+}
+@media (max-width: 760px) {
+  .sc-row {
+    grid-template-columns: 20px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "av main act"
+      ". when when";
+    row-gap: 2px;
+    align-items: start;
+  }
+  .sc-row > .avatar {
+    grid-area: av;
+    margin-top: 2px;
+  }
+  .sc-main {
+    grid-area: main;
+  }
+  .sc-act {
+    grid-area: act;
+  }
+  .sc-when {
+    grid-area: when;
+    text-align: left;
+  }
+  .sc-marks,
+  .sc-fired {
+    display: none;
+  }
+}
+
+/* the sidebar's quiet mark on Schedules while autonomy is paused */
+.nav-mark {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+/* ---------- rules (agent sheet) ---------- */
+.rule-row {
+  cursor: default;
+}
+.rule-row .grow-title {
+  cursor: pointer;
+}
+.money-input.rule-input {
+  flex: none;
+  width: 96px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 0.9rem;
+}
+.rule-input input {
+  text-align: right;
+  font-size: 0.9rem;
+}
+.rule-input input::placeholder {
+  color: var(--muted);
+}
+.rule-input input:disabled {
+  cursor: not-allowed;
+}
+.rules-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 28px;
+}
+.rules-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.rules-note svg {
+  color: var(--in);
+}
+.facts-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.facts-link:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 3px;
+}
+
+/* ---------- cash out ---------- */
+.co-receipt {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.co-receipt .ln-text {
+  font-size: 1rem;
+  color: var(--text-2);
+}

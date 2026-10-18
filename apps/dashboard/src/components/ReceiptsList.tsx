@@ -1,7 +1,7 @@
 /** The Receipts tab, and the receipt rows the bank and agent sheets reuse: the same line rules as the feed. */
 import { bankMarker, bankNote } from "../bank";
 import { shortHex } from "../format";
-import { receiptAmount, receiptLine, shortAgo } from "../lines";
+import { receiptColumn, receiptLine, shortAgo } from "../lines";
 import type { Receipt } from "../types";
 import { AgentAvatar } from "./Avatar";
 import { BankIcon, BankLine, BankProblem, LineRow } from "./Lines";
@@ -39,7 +39,7 @@ export function ReceiptRow({ r, now, bankLinked, showDetails = false, hideAgent 
   const note = mark ? bankNote(r, checkingLast4) : null;
   const full = receiptLine(r, { checkingLast4 });
   // In detail views the bank line says where a top-up came from; the sentence doesn't repeat it.
-  const line = bankText && r.kind === "topup" && note ? { ...full, tail: "" } : full;
+  const line = bankText && (r.kind === "topup" || r.kind === "cashout") && note ? { ...full, tail: "" } : full;
   return (
     <LineRow
       lead={hideAgent ? null : <AgentAvatar name={r.agentName} size="xs" />}
@@ -47,7 +47,7 @@ export function ReceiptRow({ r, now, bankLinked, showDetails = false, hideAgent 
       line={hideAgent ? { ...line, actor: undefined, verb: line.verb.replace(/^./, (c) => c.toUpperCase()) } : line}
       time={shortAgo(r.createdAt, now)}
       dateTime={r.createdAt}
-      amount={receiptAmount(r)}
+      amount={receiptColumn(r)}
       amountTitle={mark?.tone === "stopped" ? mark.text : undefined}
       marks={bankText ? null : <BankIcon marker={mark} note={note} />}
     >

@@ -17,6 +17,7 @@ import "./styles/services.css";
 import "./styles/sheets.css";
 import "./styles/embed.css";
 import "./styles/bank.css";
+import "./styles/invest.css";
 
 const embedId = embedApprovalId();
 const sheet = embedId ? null : embedSheet(location.search);

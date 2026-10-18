@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, type ProxyOptions } from "vite";
 import react from "@vitejs/plugin-react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -35,10 +35,22 @@ const securityHeaders = {
   "Content-Security-Policy": `frame-ancestors 'self' ${chatFrameAncestors()}`,
 };
 
-// The dashboard talks to the wallet-service only, always via relative /v1 URLs.
-// In dev, Vite proxies /v1 to the wallet-service; SSE (/v1/events) streams through
-// http-proxy unbuffered. In production, put the built files behind the same origin
-// as the wallet-service or any reverse proxy that forwards /v1.
+// Add the owner key only for requests the dashboard page itself makes. Browsers set Sec-Fetch-Site
+// and page scripts cannot forge it; a server-side fetch (e.g. an agent's fetch_url pointed at :4040)
+// does not send "same-origin", so it gets no owner powers. Every owner route goes through this.
+const ownerKeySameOrigin: NonNullable<ProxyOptions["configure"]> = (proxy) => {
+  proxy.on("proxyReq", (proxyReq, req) => {
+    proxyReq.removeHeader("x-owner-key");
+    const key = ownerApiKey();
+    if (key && req.headers["sec-fetch-site"] === "same-origin") proxyReq.setHeader("x-owner-key", key);
+  });
+};
+
+// The dashboard talks to the wallet-service via relative /v1 URLs, and (§20) to the paper brokerage
+// via /brokerage and the scheduler via /scheduler. In dev, Vite proxies them; SSE (/v1/events)
+// streams through http-proxy unbuffered. In production, put the built files behind the same origin
+// as these services or any reverse proxy that forwards the same paths (and adds the owner key the
+// same way).
 export default defineConfig({
   plugins: [react()],
   server: {
@@ -56,16 +68,20 @@ export default defineConfig({
       "/v1": {
         target: process.env.WALLET_SERVICE_URL ?? "http://localhost:4010",
         changeOrigin: true,
-        // Add the owner key only for requests the dashboard page itself makes. Browsers set
-        // Sec-Fetch-Site and page scripts cannot forge it; a server-side fetch (e.g. an agent's
-        // fetch_url pointed at :4040) does not send "same-origin", so it gets no owner powers.
-        configure: (proxy) => {
-          proxy.on("proxyReq", (proxyReq, req) => {
-            proxyReq.removeHeader("x-owner-key");
-            const key = ownerApiKey();
-            if (key && req.headers["sec-fetch-site"] === "same-origin") proxyReq.setHeader("x-owner-key", key);
-          });
-        },
+        configure: ownerKeySameOrigin,
+      },
+      // §20.1: the brokerage's own paths start with /brokerage.
+      "/brokerage": {
+        target: process.env.BROKERAGE_URL ?? "http://localhost:4110",
+        changeOrigin: true,
+        configure: ownerKeySameOrigin,
+      },
+      // §20.3: the scheduler serves /schedules, /rules, /pause… at its root.
+      "/scheduler": {
+        target: process.env.SCHEDULER_URL ?? "http://localhost:4100",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/scheduler(?=\/|$)/, "") || "/",
+        configure: ownerKeySameOrigin,
       },
     },
   },

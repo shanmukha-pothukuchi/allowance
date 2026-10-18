@@ -5,10 +5,11 @@
  */
 import { bankNote, feedMarker } from "../bank";
 import { shortHex } from "../format";
+import { firingLine, type Firing } from "../invest";
 import { activityLine, eventAmount, shortAgo } from "../lines";
 import type { WalletEvent } from "../types";
 import { AgentAvatar } from "./Avatar";
-import { Info } from "./Icons";
+import { Alarm, Chart, Info } from "./Icons";
 import { BankIcon, BankProblem, LineRow } from "./Lines";
 
 interface Props {
@@ -24,13 +25,46 @@ interface Props {
   retrying?: string[];
   /** The owner's checking (top-ups come from it). */
   checkingLast4?: string;
+  /** §20.3: times a schedule woke an agent. They come from the scheduler, not the wallet, and interleave by time. */
+  firings?: Firing[];
 }
 
-export function ActivityFeed({ events, pendingIds, showDetails, now, bankLinked = false, onRetryBank, retrying = [], checkingLast4 }: Props) {
+type FeedItem = { kind: "event"; at: number; e: WalletEvent } | { kind: "firing"; at: number; f: Firing };
+
+/** Wallet events and firings, newest first. Firings older than the oldest event shown are left out. */
+function merge(events: WalletEvent[], firings: Firing[]): FeedItem[] {
+  const ev: FeedItem[] = events.map((e) => ({ kind: "event", at: Date.parse(e.at), e }));
+  if (!firings.length) return ev;
+  const floor = events.length >= 50 ? Date.parse(events[events.length - 1].at) : 0;
+  const fi: FeedItem[] = firings.filter((f) => Date.parse(f.at) >= floor).map((f) => ({ kind: "firing", at: Date.parse(f.at), f }));
+  return [...ev, ...fi].sort((a, b) => b.at - a.at);
+}
+
+export function ActivityFeed({ events, pendingIds, showDetails, now, bankLinked = false, onRetryBank, retrying = [], checkingLast4, firings = [] }: Props) {
+  const items = merge(events, firings);
   return (
     <ol className="ln-list feed-list">
-      {events.length === 0 && <li className="empty">Waiting for the first payment&hellip;</li>}
-      {events.map((e) => {
+      {items.length === 0 && <li className="empty">Waiting for the first payment&hellip;</li>}
+      {items.map((it) => {
+        if (it.kind === "firing") {
+          const f = it.f;
+          const rule = f.source === "owner" || !!f.rule;
+          return (
+            <LineRow
+              key={`fire:${f.id}`}
+              className="feed-row"
+              lead={
+                <span className="ln-icon" title={rule ? "Your rule" : "A schedule the agent set"}>
+                  {rule ? <Chart width={12} height={12} /> : <Alarm width={12} height={12} />}
+                </span>
+              }
+              line={firingLine(f)}
+              time={shortAgo(f.at, now)}
+              dateTime={f.at}
+            />
+          );
+        }
+        const e = it.e;
         const approvalId = e.approval?.id;
         const asks = e.type === "payment.needs_approval" || e.type === "service.requested";
         const pending = asks && !!approvalId && pendingIds.has(approvalId);

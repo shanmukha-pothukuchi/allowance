@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { mockRequested, type WalletAdapter } from "./api/adapter";
 import { createHttpAdapter, walletServiceReachable } from "./api/httpAdapter";
-import { createMockAdapter, mockBankMode, mockChainMode } from "./api/mockAdapter";
+import { createMockAdapter, mockBankMode, mockChainMode, mockInvestMode } from "./api/mockAdapter";
 import { isBankEvent } from "./bank";
 import { serviceIdOfEvent } from "./format";
 import { initialState, isMoneyEvent, reducer, refreshesSummary, serviceKey, type DashboardState } from "./state";
@@ -116,7 +116,7 @@ export function useWallet(): { state: DashboardState; actions: WalletActions; ad
       if (mockRequested()) {
         // Only on explicit request (?mock=1). Never a silent fallback: fake activity on the
         // owner's screen would be worse than an honest "offline".
-        adapter = createMockAdapter({ chainMode: mockChainMode(), bank: mockBankMode() });
+        adapter = createMockAdapter({ chainMode: mockChainMode(), bank: mockBankMode(), ...mockInvestMode() });
       } else {
         while (!(await walletServiceReachable())) {
           if (cancelled) return;

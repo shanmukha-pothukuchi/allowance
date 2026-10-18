@@ -1,21 +1,23 @@
 /**
- * Tiny hash router: #/ (overview), #/services, #/services/<id>. Pure parse + a hook.
+ * Tiny hash router: #/ (overview), #/portfolio, #/schedules, #/services, #/services/<id>. Pure parse + a hook.
  * Owner sheets live in the query string instead (`?sheet=new-agent`, §14.3) so the same URL works
  * embedded; `useSheetRoute` reads and writes it.
  */
 import { useCallback, useEffect, useState } from "react";
 import { sheetFromSearch, withSheet, type SheetRoute } from "./sheets";
 
-export type Route = { view: "overview" } | { view: "services"; serviceId?: string };
+export type Route = { view: "overview" } | { view: "portfolio" } | { view: "schedules" } | { view: "services"; serviceId?: string };
 
 export function parseRoute(hash: string): Route {
   const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
   if (parts[0] === "services") return { view: "services", serviceId: parts[1] };
+  if (parts[0] === "portfolio" || parts[0] === "schedules") return { view: parts[0] };
   return { view: "overview" };
 }
 
 export function routeHash(r: Route): string {
   if (r.view === "services") return r.serviceId ? `#/services/${encodeURIComponent(r.serviceId)}` : "#/services";
+  if (r.view === "portfolio" || r.view === "schedules") return `#/${r.view}`;
   return "#/";
 }
 

@@ -23,6 +23,7 @@ import type {
   SummaryResponse,
   WalletEvent,
 } from "../types";
+import type { AgentRules, Portfolios, SchedulerState } from "../invest";
 
 /** A failed wallet call: HTTP status plus the contract's `error` code (both adapters throw these). */
 export class HttpError extends Error {
@@ -78,6 +79,21 @@ export interface WalletAdapter {
   retryBank(receiptId?: string): Promise<{ queued: number }>;
   /** `POST /v1/bank/link` (idempotent): create the owner and checking at Nessie. */
   linkBank(): Promise<BankSummary>;
+  /**
+   * §20.2: move USDC from the agent back to the owner (to checking, when Capital One is linked).
+   * `"all"` empties the wallet. Works even while the agent is frozen.
+   */
+  cashout(agentId: string, amount: string | "all"): Promise<Receipt>;
+  /** §20.1, owner view: every agent's paper portfolio, and the replay clock. */
+  getPortfolios(): Promise<Portfolios>;
+  /** §20.3, owner view: every schedule, recent firings, and whether autonomy is paused. */
+  getScheduler(): Promise<SchedulerState>;
+  /** Cancel any schedule (the agent's own, or an owner rule). */
+  cancelSchedule(id: string): Promise<void>;
+  /** Replace one agent's owner rules (take profit, stop loss, cash out profits above). Empty fields turn a rule off. */
+  setRules(agent: Pick<AgentPublic, "id" | "name">, rules: AgentRules): Promise<void>;
+  /** The autonomy switch: `true` pauses every schedule, `false` resumes. Answers the new state. */
+  setPaused(paused: boolean): Promise<boolean>;
   /** Live events. Returns an unsubscribe function. `onStatus` reports stream health. */
   subscribe(onEvent: (e: WalletEvent) => void, onStatus?: (s: ConnectionStatus) => void): () => void;
 }

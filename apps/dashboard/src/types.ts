@@ -86,4 +86,6 @@ export const EVENT_TYPES = [
   // Capital One (Nessie sandbox) mirror of a receipt (§16.3): they update a receipt's marker in place.
   "bank.posted",
   "bank.failed",
+  // §20.2: an agent's money went back to the owner.
+  "cashout",
 ] as const;
