@@ -22,9 +22,10 @@ type Draft = Required<{ [K in keyof AgentRules]: string }>;
 const draftOf = (r: AgentRules | undefined): Draft => ({ takeProfitPct: r?.takeProfitPct ?? "", stopLossPct: r?.stopLossPct ?? "", cashOutAbove: r?.cashOutAbove ? r.cashOutAbove.replace(/\.00$/, "") : "" });
 
 const ROWS: { key: keyof AgentRules; title: string; meta: string; unit: "%" | "$" }[] = [
-  { key: "takeProfitPct", title: "Take profit", meta: "Sells a position that's up", unit: "%" },
-  { key: "stopLossPct", title: "Stop loss", meta: "Sells a position that's down", unit: "%" },
-  { key: "cashOutAbove", title: "Cash out profits", meta: "Sends you realized profit above", unit: "$" },
+  // As the scheduler checks them (§20.3): on the whole portfolio's unrealized P/L.
+  { key: "takeProfitPct", title: "Take profit", meta: "Sells when the portfolio is up", unit: "%" },
+  { key: "stopLossPct", title: "Stop loss", meta: "Sells when the portfolio is down", unit: "%" },
+  { key: "cashOutAbove", title: "Cash out profits", meta: "Sends you the profit once it's over", unit: "$" },
 ];
 
 export function RulesField({ agent, current, unavailable, onSave }: Props) {

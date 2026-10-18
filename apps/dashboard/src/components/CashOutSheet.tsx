@@ -43,7 +43,8 @@ export function CashOutSheet({ adapter, agent, agentName, bank, invested, onClos
   const last4 = linked ? bank?.checkingLast4 : undefined;
   const balance = agent?.balance ?? "0.00";
   const check = checkCashout(choice, custom, balance);
-  const amountText = check.ok ? (check.amount === "all" ? money(balance) : shortMoney(check.amount)) : "";
+  // The balance is said once, in the header: the chip and the button say "all".
+  const amountText = check.ok ? (check.amount === "all" ? "all" : shortMoney(check.amount)) : "";
 
   const cashOut = async () => {
     if (!adapter || !agent) return;
@@ -140,7 +141,7 @@ export function CashOutSheet({ adapter, agent, agentName, bank, invested, onClos
             <div className="amount-picker">
               <div className="chips amount-chips" role="radiogroup" aria-label="Amount">
                 <button type="button" role="radio" aria-checked={choice === "all"} className={`chip amount-chip${choice === "all" ? " chip-on" : ""}`} onClick={() => setChoice("all")}>
-                  All · {money(balance)}
+                  All
                 </button>
                 {CHIPS.filter((c) => toCents(c) < toCents(balance)).map((c) => (
                   <button key={c} type="button" role="radio" aria-checked={choice === c} className={`chip amount-chip${choice === c ? " chip-on" : ""}`} onClick={() => setChoice(c)}>

@@ -1036,12 +1036,12 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
   }
   function doBuy(agent: AgentPublic, ticker: string, amount: string, live = true): Receipt {
     const fill = market.buy(agent.name, ticker, amount);
-    // The x402 payment names the service, not the stock (§20.1); the brokerage's order, matched by
-    // tx hash, says what was bought.
+    // As buy_stock describes the payment (apps/mcp/src/invest.ts); the brokerage's order, matched by
+    // tx hash, says how many shares.
     const r = makeReceipt(agent, {
       kind: "spend",
       status: live ? "signed" : "settled",
-      description: "Brokerage (paper)",
+      description: `Brokerage (paper) · ${fill.ticker}`,
       amount: fill.amount,
       counterparty: { ...BROKERAGE_PARTY },
       paymentId: id("pay"),
