@@ -120,7 +120,7 @@ export type VerifyChallenge = (
   url: string,
   method: "GET" | "POST" | undefined,
   requirements: X402PaymentRequirements,
-) => Promise<{ ok: true } | { ok: false; reason: string }>;
+) => Promise<{ ok: true } | { ok: false; reason: string; /** The site no longer asks for payment at all (not a different payee/amount). */ unconfirmed?: true }>;
 
 export interface LedgerTx {
   hash: string;
@@ -149,9 +149,11 @@ export function liveVerifyChallenge(fetchImpl: typeof fetch = fetch): VerifyChal
         signal: AbortSignal.timeout(5000),
       });
     } catch (err) {
-      return { ok: false, reason: `could not reach ${url}: ${(err as Error).message}` };
+      return { ok: false, reason: `could not reach ${url}: ${(err as Error).message}`, unconfirmed: true };
     }
-    if (res.status !== 402) return { ok: false, reason: `${url} answered ${res.status}, not 402` };
+    // No 402 at all (e.g. a computer-use session that just ended answers 410): nothing to sign, but
+    // not an attack signal either. A 402 that asks for a different payTo/amount still is.
+    if (res.status !== 402) return { ok: false, reason: `${url} answered ${res.status}, not 402`, unconfirmed: true };
     const header = res.headers.get("PAYMENT-REQUIRED");
     if (!header) return { ok: false, reason: "402 without PAYMENT-REQUIRED header" };
     let live: X402PaymentRequired;
@@ -1229,6 +1231,18 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     const match = al ? allowlistMatch(al, { to, origin, url: body.url }, agent.services) : null;
     if (match && match.via !== "address") {
       const v = await verifyChallenge(body.url, body.method, requirements as X402PaymentRequirements);
+      if (!v.ok && v.unconfirmed) {
+        // The site stopped asking for payment (or can't be reached): refuse, no receipt, no freeze.
+        console.warn(`${LOG} could not confirm the payment for ${agent.name} at ${body.url}: ${v.reason}`);
+        res.status(403).json({
+          error: "payment_not_confirmed",
+          status: "blocked",
+          reason: "payment_not_confirmed",
+          message: "Not paid: the site no longer asks for this payment (it may have ended or changed). Nothing was signed.",
+          frozen: agent.policy.frozen,
+        });
+        return;
+      }
       if (!v.ok) {
         console.warn(`${LOG} challenge verification failed for ${agent.name} at ${body.url}: ${v.reason}`);
         effectiveOrigin = undefined; // falls through to not_allowlisted (block + freeze)

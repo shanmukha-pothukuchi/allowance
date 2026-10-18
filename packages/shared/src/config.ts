@@ -82,6 +82,9 @@ export interface AppConfig {
   quantcommBridgePort: number;
   quantcommBridgeUrl: string;
   quantcommUrl: string;
+  /** Computer use (apps/computer-use, §19): a queued sandboxed desktop. Its own knobs live in that app. */
+  computerUsePort: number;
+  computerUseUrl: string;
   /** Agent chat server (apps/agent-chat). Binds to localhost by default: whoever can reach it can instruct agents. */
   agentChatPort: number;
   agentChatHost: string;
@@ -154,6 +157,8 @@ export function loadConfig(): AppConfig {
     quantcommBridgePort: Number(env.QUANTCOMM_BRIDGE_PORT ?? 4080),
     quantcommBridgeUrl: env.QUANTCOMM_BRIDGE_URL ?? `http://localhost:${Number(env.QUANTCOMM_BRIDGE_PORT ?? 4080)}`,
     quantcommUrl: (env.QUANTCOMM_URL || "http://127.0.0.1:8000").replace(/\/+$/, ""),
+    computerUsePort: Number(env.COMPUTER_USE_PORT ?? 4090),
+    computerUseUrl: (env.COMPUTER_USE_URL?.trim() || `http://localhost:${Number(env.COMPUTER_USE_PORT ?? 4090)}`).replace(/\/+$/, ""),
     directoryPort: Number(env.DIRECTORY_PORT ?? 4060),
     directoryUrl: env.DIRECTORY_URL ?? `http://localhost:${Number(env.DIRECTORY_PORT ?? 4060)}`,
     agentChatPort: Number(env.AGENT_CHAT_PORT ?? 4050),

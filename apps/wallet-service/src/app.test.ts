@@ -77,6 +77,8 @@ beforeAll(async () => {
     quantcommBridgePort: 0,
     quantcommBridgeUrl: "http://127.0.0.1:1",
     quantcommUrl: "http://127.0.0.1:1",
+    computerUsePort: 4090,
+    computerUseUrl: "http://127.0.0.1:1",
   });
   for (const level of ["log", "warn", "error"] as const) {
     vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
@@ -902,6 +904,23 @@ describe("connected services (§13)", () => {
       pr.accepts[0].payTo = ATTACKER;
       const pay = await api("POST", "/v1/pay", { paymentRequired: pr, url: PIZZA_URL, method: "POST" }, token);
       expect(pay.body).toMatchObject({ status: "blocked", reason: "not_allowlisted", frozen: true });
+    } finally {
+      verifyChallenge = async () => ({ ok: true });
+    }
+  });
+
+  it("a site that stopped asking for payment is refused without a freeze or a receipt", async () => {
+    const { agent, token } = await createAgent("svc-gone", shopperPolicy);
+    await connect(agent.id, "acme-pizza");
+    verifyChallenge = async () => ({ ok: false, reason: "answered 410, not 402", unconfirmed: true });
+    try {
+      const pay = await api("POST", "/v1/pay", { paymentRequired: paymentRequired("18.50", PIZZA_URL), url: PIZZA_URL, method: "POST" }, token);
+      expect(pay.status).toBe(403);
+      expect(pay.body).toMatchObject({ error: "payment_not_confirmed", status: "blocked", frozen: false });
+      const me = (await api("GET", "/v1/me", undefined, token)).body;
+      expect(me.agent.frozen).toBe(false);
+      expect(me.agent.spentToday).toBe("0.00");
+      expect((await api("GET", "/v1/receipts", undefined, token)).body.receipts.filter((r: { kind: string }) => r.kind === "spend")).toEqual([]);
     } finally {
       verifyChallenge = async () => ({ ok: true });
     }

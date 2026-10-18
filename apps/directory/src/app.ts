@@ -12,7 +12,7 @@ import { asShopifyStore, parseShopifyCap, shopifyManifest, shopifyServiceId, sto
 
 /** merchantUrl/directoryUrl/quantcommBridgeUrl/computerUseUrl build the catalog. dataDir persists added stores (memory only without it). */
 export type DirectoryConfig = Pick<AppConfig, "merchantUrl" | "directoryUrl"> &
-  Partial<Pick<AppConfig, "dataDir" | "shopifyBridgeUrl" | "quantcommBridgeUrl" | "ownerApiKey">> & { computerUseUrl?: string };
+  Partial<Pick<AppConfig, "dataDir" | "shopifyBridgeUrl" | "quantcommBridgeUrl" | "computerUseUrl" | "ownerApiKey">>;
 
 export interface DirectoryDeps {
   /** fetch used to call the Shopify bridge (tests). */

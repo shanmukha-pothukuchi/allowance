@@ -131,6 +131,8 @@ beforeAll(async () => {
     quantcommBridgePort: 0,
     quantcommBridgeUrl: "http://127.0.0.1:1",
     quantcommUrl: "http://127.0.0.1:1",
+    computerUsePort: 4090,
+    computerUseUrl: "http://127.0.0.1:1",
     ownerApiKey: KEY,
   };
   wallet = createApp(baseConfig, { verifyChallenge: async () => ({ ok: true }) });
