@@ -40,7 +40,7 @@ export function toneFor(type: EventType, e?: WalletEvent): Tone {
 }
 
 function IconFor({ type }: { type: EventType }) {
-  const p = { width: 14, height: 14, strokeWidth: 2.8 };
+  const p = { width: 14, height: 14, strokeWidth: 2.25 };
   switch (type) {
     case "earning.received":
       return <ArrowIn {...p} />;
