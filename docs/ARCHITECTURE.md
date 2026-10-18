@@ -515,7 +515,7 @@ the model to call `request_service` with the matching service id.
   `approvalKind`. The system prompt's services block is rebuilt each run and after
   `request_service` / `check_approval`.
 - `LogEntry` tool entries are unchanged; the UI derives cards from tool names (`fetch_url` paid →
-  receipt card, `request_service` → connection card, `transfer_usdc` blocked → blocked card).
+  receipt event line, `request_service` → one decision card that collapses to an event line once decided, `transfer_usdc` blocked → blocked card; see docs/ui-rules.md).
 
 ### 13.5 Approval embed (dashboard ↔ chat)
 

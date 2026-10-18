@@ -263,6 +263,59 @@
     return '<svg class="i' + (extra ? " " + extra : "") + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (P[name] || P.wrench) + "</svg>";
   }
 
+  // ================================================================ Linear-style parts (docs/ui-rules.md)
+  // Events are one muted line; cards are for decisions and results only, with a one-line header,
+  // a few body lines, one action and "Details" for the rest. Every argument here is HTML the
+  // caller already escaped (use strong() / esc() for raw strings).
+  function strong(s) {
+    return "<b>" + esc(s) + "</b>";
+  }
+  /** "Paid Acme News · tx 0x48a2…5b3b" … "$0.10": { ic, text, meta: [html], amt, amtCls, tone ("err" | "wait" | "ok"), title }. */
+  function evHtml(o) {
+    var meta = (o.meta || []).filter(Boolean);
+    return (
+      '<div class="ev' + (o.tone ? " " + o.tone : "") + '"' + (o.title ? ' title="' + esc(o.title) + '"' : "") + ">" +
+      '<span class="ev-ic">' + (o.ic || "") + "</span>" +
+      '<span class="ev-t">' + o.text + meta.map(function (m) { return '<span class="ev-m' + (m.indexOf('class="tx"') >= 0 ? " ev-tx" : "") + '"> · ' + m + "</span>"; }).join("") + "</span>" +
+      (o.amt ? '<span class="ev-amt' + (o.amtCls ? " " + o.amtCls : "") + '">' + esc(o.amt) + "</span>" : "") +
+      "</div>"
+    );
+  }
+  /** "tx 0x48a2…5b3b ↗", linking to the explorer when the receipt has a link. */
+  function txHtml(tx, url, label) {
+    if (!tx) return "";
+    var t = esc((label || "tx") + " " + tx);
+    return url ? '<a class="tx" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + t + icon("external") + "</a>" : '<span class="tx">' + t + "</span>";
+  }
+  /** Compact card: { cls, tile, title, meta, right, body, more (Details content), key, open, foot }. */
+  function cardHtml(o) {
+    var more = !!o.more;
+    return (
+      '<div class="card' + (o.cls ? " " + o.cls : "") + '">' +
+      '<div class="cd-h">' + (o.tile || "") + '<div class="cd-ht"><div class="cd-t">' + o.title + "</div>" + (o.meta ? '<div class="cd-m">' + o.meta + "</div>" : "") + "</div>" + (o.right || "") + "</div>" +
+      (o.body ? '<div class="cd-b">' + o.body + "</div>" : "") +
+      (more && o.open ? '<div class="cd-more">' + o.more + "</div>" : "") +
+      (o.foot || more
+        ? '<div class="cd-f"><span class="cd-fl">' + (o.foot || "") + "</span>" +
+          (more ? '<button type="button" class="cd-x" data-action="more" data-key="' + esc(o.key) + '" aria-expanded="' + !!o.open + '">' + (o.open ? "Hide details" : "Details") + icon("chev") + "</button>" : "") + "</div>"
+        : "") +
+      "</div>"
+    );
+  }
+  /** One body line of a card: an optional mark, the text, an optional right-aligned figure. */
+  function cdLine(text, right, cls) {
+    return '<div class="cd-l' + (cls ? " " + cls : "") + '"><span class="cd-lt">' + text + "</span>" + (right ? '<span class="cd-lr">' + right + "</span>" : "") + "</div>";
+  }
+  /** "2m ago" for event lines; "" for unknown times. */
+  function ago(t) {
+    if (!t) return "";
+    var s = (Date.now() - t) / 1000;
+    if (s < 45) return "just now";
+    if (s < 3600) return Math.max(1, Math.round(s / 60)) + "m ago";
+    if (dayDiff(t) <= 0) return clock(t);
+    return relTime(t);
+  }
+
   // ================================================================ state
   var state = { agents: {}, order: [], groupList: [], selected: null, connected: false, loaded: false, everOpen: false, logVer: 0 };
   var ui = {
@@ -281,7 +334,7 @@
     openAct: {},
     openStep: {},
     openSim: {}, // order confirmation key -> its "Simulated order" explanation is open
-    openQc: {}, // Quantcomm analyst view key -> its reasoning and evidence are open
+    openMore: {}, // card key -> its "Details" are open
     holdScroll: false,
     forceBottom: false,
     stick: true, // thread pinned to the bottom (tracked from the user's own scrolling)
@@ -1045,26 +1098,25 @@
   var SIM_WHY = "Your agent's USDC payment is real. The single-use Allowance Card that would pay the store through Shopify's agent checkout isn't issued in this demo, so the store didn't receive an order.";
 
   // ---------------------------------------------------------------- cards
+  /** Up to `max` lines, one row each: image, name · variant × qty, amount. */
   function linesHtml(lines, max) {
-    var shown = lines.slice(0, max || 6);
+    var shown = lines.slice(0, max || 3);
     return (
       '<ul class="lines">' +
       shown.map(function (l) {
-        var img = imgBox(l.image, 120, "sm", l.title);
+        var img = imgBox(l.image, 96, "sm", l.title);
         var name = '<span class="l-name">' + esc(l.title) + "</span>";
+        var sub = [l.variant, l.qty > 1 ? "× " + l.qty : ""].filter(Boolean).join(" · ");
         return (
           "<li>" + (l.url ? '<a class="l-img" href="' + esc(l.url) + '" target="_blank" rel="noopener noreferrer" tabindex="-1" aria-hidden="true">' + img + "</a>" : img) +
           '<span class="l-t">' + (l.url ? '<a class="l-link" href="' + esc(l.url) + '" target="_blank" rel="noopener noreferrer">' + name + "</a>" : name) +
-          '<span class="l-sub">' + esc((l.variant ? l.variant + " · " : "") + "Qty " + l.qty) + "</span></span>" +
+          (sub ? '<span class="l-sub"> · ' + esc(sub) + "</span>" : "") + "</span>" +
           '<span class="l-amt">' + esc(l.total != null ? money(l.total) : "") + "</span></li>"
         );
       }).join("") +
       (lines.length > shown.length ? '<li class="l-more">+' + esc(plural(lines.length - shown.length, "more item", "more items")) + "</li>" : "") +
       "</ul>"
     );
-  }
-  function totalsHtml(rows, cls) {
-    return '<dl class="totals' + (cls ? " " + cls : "") + '">' + rows.filter(function (r) { return r[1]; }).map(function (r) { return '<div class="' + (r[2] || "") + '"><dt>' + esc(r[0]) + "</dt><dd>" + (r[3] ? r[1] : esc(r[1])) + "</dd></div>"; }).join("") + "</dl>";
   }
   /** "weareallbirds.myshopify.com" that wraps only before "myshopify.com", never at its hyphens. */
   function domainHtml(d) {
@@ -1079,16 +1131,16 @@
     var label = domainHtml(ref.host || ref.domain);
     return href ? '<a class="site" href="' + esc(href) + '" target="_blank" rel="noopener noreferrer">' + label + "</a>" : label;
   }
-  function shopHead(info, title, sub, right, tileCls) {
-    return '<div class="c-row">' + tileHtml(info, tileCls || "t48") + '<div class="c-who"><div class="c-title">' + esc(title) + '</div><div class="c-k">' + sub + "</div></div>" + (right || "") + "</div>";
+  /** "Allbirds · allbirds.com" (the domain only when it says something the name doesn't). */
+  function storeMeta(store, ref) {
+    var site = ref && ref.host && ref.host.toLowerCase() !== str(store).toLowerCase() ? siteHtml(ref) : "";
+    return esc(store) + (site ? " · " + site : "");
   }
   function productTile(p) {
-    var opts = p.variants.length > 1 ? plural(p.variants.length, "option", "options") : "";
     var inner =
-      imgBox(p.image, 360, "", p.title) + (p.available ? "" : '<span class="p-flag">Sold out</span>') +
+      imgBox(p.image, 320, "", p.title) + (p.available ? "" : '<span class="p-flag">Sold out</span>') +
       '<span class="p-title">' + esc(p.title) + "</span>" +
-      '<span class="p-price">' + esc(priceLabel(p.min, p.max)) + "</span>" +
-      '<span class="p-opt">' + esc(opts) + "</span>";
+      '<span class="p-price">' + esc(priceLabel(p.min, p.max)) + "</span>";
     return p.url
       ? '<a class="prod" href="' + esc(p.url) + '" target="_blank" rel="noopener noreferrer" title="' + esc(p.title) + '">' + inner + "</a>"
       : '<div class="prod" title="' + esc(p.title) + '">' + inner + "</div>";
@@ -1098,40 +1150,46 @@
     var list = (Array.isArray(c.d.products) ? c.d.products : []).map(cleanProduct).filter(Boolean);
     var store = shopName(c.b.handle, c.d.store);
     var q = c.b.q;
-    if (!list.length) {
-      return '<div class="chip-card">' + icon("bag") + "<span>" + esc(q ? "Nothing matches “" + q + "” at " + store : "No products at " + store) + "</span></div>";
-    }
+    if (!list.length) return null;
     var n = list.length + (c.d.truncated ? "+" : "");
-    var sub = q ? n + (list.length === 1 && !c.d.truncated ? " result" : " results") + " for “" + q + "”" : n + (list.length === 1 && !c.d.truncated ? " product" : " products");
+    var one = list.length === 1 && !c.d.truncated;
+    var title = q ? n + (one ? " result" : " results") + " for “" + q + "”" : n + (one ? " product" : " products");
     var shown = list.slice(0, 6);
-    return (
-      '<div class="card wide shop-prods"><div class="sp-head">' + tileHtml(info, "t32") +
-      '<div class="c-who"><div class="c-name">' + esc(store) + '</div><div class="c-k">' + esc(sub) + (info.shopify ? " · " + siteHtml(info.shopify) : "") + "</div></div></div>" +
-      '<div class="prods">' + shown.map(productTile).join("") +
-      (list.length > shown.length ? '<div class="prod more"><span class="pimg">+' + (list.length - shown.length) + '</span><span class="p-title">more at ' + esc(store) + "</span></div>" : "") +
-      "</div></div>"
-    );
+    return cardHtml({
+      cls: "wide shop-prods",
+      tile: tileHtml(info, "t20"),
+      title: esc(title),
+      meta: storeMeta(store, info.shopify),
+      body:
+        '<div class="prods">' + shown.map(productTile).join("") +
+        (list.length > shown.length ? '<div class="prod more"><span class="pimg">+' + (list.length - shown.length) + '</span><span class="p-title">more at ' + esc(store) + "</span></div>" : "") +
+        "</div>",
+    });
   }
-  function productCard(c) {
+  function productCard(c, key) {
     var p = cleanProduct(c.d.product);
     if (!p) return "";
+    var info = svcInfo("shopify-" + c.b.handle);
     var store = shopName(c.b.handle, c.d.store);
     var named = p.variants.filter(function (v) { return v.title; });
     var mixed = named.some(function (v) { return v.price != null && p.min != null && Math.abs(v.price - p.min) > 0.005; });
-    var chips = named.slice(0, 10).map(function (v) {
+    var chips = named.slice(0, 24).map(function (v) {
       return '<span class="vchip' + (v.available ? "" : " out") + '" title="' + esc(v.available ? v.title : v.title + " · sold out") + '">' + esc(v.title + (mixed && v.price != null ? " · " + money(v.price) : "")) + "</span>";
     }).join("");
-    var where = siteHost(p.url) || (svcInfo("shopify-" + c.b.handle).shopify || {}).host || store;
-    var img = imgBox(p.image, 240, "lg", p.title);
-    return (
-      '<div class="card shop-prod"><div class="card-pad"><div class="pd">' + (p.url ? '<a class="pd-img" href="' + esc(p.url) + '" target="_blank" rel="noopener noreferrer" tabindex="-1" aria-hidden="true">' + img + "</a>" : img) +
-      '<div class="pd-txt"><div class="c-k">' + esc(store) + '</div><div class="c-name">' + esc(p.title) + "</div>" +
-      '<div class="pd-price">' + esc(priceLabel(p.min, p.max)) + (p.available ? "" : ' <span class="pd-out">Sold out</span>') + "</div>" +
-      (p.description ? '<div class="pd-desc">' + esc(p.description) + "</div>" : "") + "</div></div>" +
-      (chips ? '<div class="vchips">' + chips + (named.length > 10 ? '<span class="vchip more">+' + (named.length - 10) + "</span>" : "") + "</div>" : "") + "</div>" +
-      (p.url ? '<div class="c-foot"><a class="plain" href="' + esc(p.url) + '" target="_blank" rel="noopener noreferrer">View on ' + esc(where) + icon("external") + "</a><span>" + esc(p.variants.length > 1 ? plural(p.variants.length, "option", "options") : "") + "</span></div>" : "") +
-      "</div>"
-    );
+    var where = siteHost(p.url) || (info.shopify || {}).host || store;
+    var img = imgBox(p.image, 160, "md", p.title);
+    var meta = [esc(store), esc(priceLabel(p.min, p.max)), named.length > 1 ? esc(plural(named.length, "option", "options")) : "", p.available ? "" : '<span class="neg">Sold out</span>'].filter(Boolean).join(" · ");
+    return cardHtml({
+      cls: "shop-prod",
+      tile: p.url ? '<a class="pd-img" href="' + esc(p.url) + '" target="_blank" rel="noopener noreferrer" tabindex="-1" aria-hidden="true">' + img + "</a>" : img,
+      title: esc(p.title),
+      meta: meta,
+      body: p.description ? '<p class="cd-p clamp2">' + esc(p.description) + "</p>" : "",
+      more: chips ? '<div class="vchips">' + chips + (named.length > 24 ? '<span class="vchip more">+' + (named.length - 24) + "</span>" : "") + "</div>" : "",
+      key: key,
+      open: !!ui.openMore[key],
+      foot: p.url ? '<a class="cd-a" href="' + esc(p.url) + '" target="_blank" rel="noopener noreferrer">View on ' + esc(where) + icon("external") + "</a>" : "",
+    });
   }
   function cartCard(c, e) {
     var info = svcInfo("shopify-" + c.b.handle);
@@ -1142,22 +1200,21 @@
     var tot = num(c.d.total);
     var ship = num(c.d.shipping);
     var tax = num(c.d.tax != null ? c.d.tax : c.d.totalTax);
-    // Shopify's own totals. Subtotal only when it says something the lines and total don't.
-    var totals = totalsHtml([
-      ["Subtotal", sub != null && (lines.length > 1 || (tot != null && Math.abs(sub - tot) > 0.005)) ? money(sub) : ""],
-      ["Shipping", ship != null && ship > 0 ? money(ship) : ""],
-      ["Taxes", tax != null && tax > 0 ? money(tax) : ""],
-      ["Total", tot != null ? money(tot) : "", "tot"],
-    ]);
-    var notes = (Array.isArray(c.d.notes) ? c.d.notes : []).map(function (n) { return str(n).replace(/\s+/g, " ").trim().slice(0, 160); }).filter(Boolean).slice(0, 2);
-    if (!notes.length) notes = ["Shipping and taxes are added at checkout"];
+    // Shopify's own figures, once: the total in the header; the parts only when they differ from it.
+    var parts = [
+      sub != null && tot != null && Math.abs(sub - tot) > 0.005 ? "Subtotal " + money(sub) : "",
+      ship != null && ship > 0 ? "Shipping " + money(ship) : "",
+      tax != null && tax > 0 ? "Taxes " + money(tax) : "",
+    ].filter(Boolean);
+    var notes = (Array.isArray(c.d.notes) ? c.d.notes : []).map(function (n) { return str(n).replace(/\s+/g, " ").trim().slice(0, 160); }).filter(Boolean).slice(0, 1);
     var exp = ts(c.d.expiresAt);
-    return (
-      '<div class="card cart"><div class="card-pad">' + shopHead(info, "Cart", esc(store + " · " + plural(items, "item", "items")), "", "t32") +
-      linesHtml(lines) + totals +
-      notes.map(function (n) { return '<p class="cart-note">' + icon("info") + "<span>" + esc(n) + "</span></p>"; }).join("") + "</div>" +
-      '<div class="c-foot"><span>' + esc(exp ? "Held until " + clock(exp) : "Held for 30 minutes") + "</span><span>" + esc(e.name === "check_approval" ? "" : "Pays in USDC") + "</span></div></div>"
-    );
+    return cardHtml({
+      cls: "cart",
+      tile: tileHtml(info, "t20"),
+      title: "Cart" + (tot != null ? " · " + esc(money(tot)) : ""),
+      meta: [esc(store), esc(plural(items, "item", "items")), e.name === "check_approval" ? "" : esc(exp ? "held until " + clock(exp) : "held for 30 minutes")].filter(Boolean).join(" · "),
+      body: linesHtml(lines) + (parts.length || notes.length ? '<p class="cd-note">' + esc(parts.concat(notes).join(" · ")) + "</p>" : ""),
+    });
   }
   /**
    * The order confirmation (§15.5): store and storefront, items linking to their product pages, the
@@ -1196,42 +1253,85 @@
     // The USDC settlement: the receipt line fetch_url added, else the confirmation's own (once settled).
     var txv = rc && rc.tx ? rc.tx : /^0x[0-9a-fA-F]{8,}$/.test(str(d.txHash)) ? shortAddr(str(d.txHash)) : "";
     var txu = rc && rc.tx ? rc.url : safeUrl(str(d.explorerUrl));
-    var tx = txv ? (txu ? '<a href="' + esc(txu) + '" target="_blank" rel="noopener noreferrer">USDC tx ' + esc(txv) + icon("external") + "</a>" : '<span class="mono">USDC tx ' + esc(txv) + "</span>") : "<span>Paid in USDC</span>";
     var at = ts(d.paidAt) || ts(e.at) + (e.ms || 0);
     var badge = simulated
-      ? '<button type="button" class="pill sim-pill" data-action="sim" data-key="' + esc(key) + '" aria-expanded="' + open + '" title="' + esc(why) + '">' + icon("info") + "Simulated order</button>"
-      : '<span class="pill ok">' + icon("check") + "Paid</span>";
-    return (
-      '<div class="card shop-order' + (simulated ? " simulated" : "") + '"><div class="card-pad">' +
-      shopHead(info, "Order placed", esc(store) + (ref ? " · " + siteHtml(ref) : ""), badge) +
-      (simulated && open ? '<p class="sim-why">' + esc(why) + "</p>" : "") +
-      (lines.length ? linesHtml(lines) : "") +
-      totalsHtml([["Total", total, "tot"]]) +
-      totalsHtml([["Paid with", icon("card") + "<span>" + esc(cardLabel(d)) + "</span>", "", true], ["Reference", reference ? '<span class="mono">' + esc(reference) + "</span>" : "", "", true]], "paid") +
-      '</div><div class="c-foot">' + tx + "<span>" + esc(at ? clock(at) : "") + "</span></div></div>"
-    );
+      ? '<button type="button" class="chip-s sim-pill" data-action="sim" data-key="' + esc(key) + '" aria-expanded="' + open + '" title="' + esc(why) + '">' + icon("info") + "Simulated order</button>"
+      : "";
+    return cardHtml({
+      cls: "shop-order" + (simulated ? " simulated" : ""),
+      tile: tileHtml(info, "t20"),
+      title: "Order placed" + (total ? " · " + esc(total) : ""),
+      right: badge,
+      meta: storeMeta(store, ref),
+      body:
+        (simulated && open ? '<p class="sim-why">' + esc(why) + "</p>" : "") +
+        (lines.length ? linesHtml(lines) : "") +
+        '<p class="cd-note paid">' + icon("card") + "<span>" + esc(cardLabel(d)) + (reference ? ' · <span class="mono">' + esc(reference) + "</span>" : "") + "</span></p>",
+      foot: [txv ? txHtml(txv, txu, "USDC tx") : "Paid in USDC", esc(at ? clock(at) : "")].filter(Boolean).join(" · "),
+    });
   }
-  /** Cards for one bridge response, or null when this entry isn't one (blocked payments etc. stay generic). */
-  function shopCards(a, e, key) {
+  /**
+   * Items for one bridge response, or null when this entry isn't one (blocked payments etc. stay
+   * generic). Results are cards; "nothing matched" and "already paid" are event lines.
+   */
+  /** A later bridge answer in the same turn that passes `test`, if any. */
+  function laterShop(t, e, test) {
+    if (!t) return null;
+    for (var j = t.entries.indexOf(e) + 1; j > 0 && j < t.entries.length; j++) {
+      var x = shopCall(t.entries[j]);
+      if (x && test(x)) return x;
+    }
+    return null;
+  }
+  function placedCall(x) {
+    return x.b.op === "checkout" && x.h.status >= 200 && x.h.status < 300 && isPlaced(confirmationOf(x.d));
+  }
+  /**
+   * One card per result: within a turn, a later card supersedes the ones it repeats. An order hides
+   * the cart it paid, the product it bought and the search that found it; a cart hides the product
+   * it holds.
+   */
+  function shopSuperseded(t, e, c) {
+    var h = c.b.handle;
+    if (c.b.op === "products") return !!laterShop(t, e, function (x) { return x.b.handle === h && placedCall(x); });
+    if (c.b.op === "carts") return !!laterShop(t, e, function (x) { return x.b.handle === h && placedCall(x) && x.b.item === str(c.d.cartId); });
+    if (c.b.op === "product") {
+      var p = cleanProduct(c.d.product);
+      if (!p) return false;
+      return !!laterShop(t, e, function (x) {
+        if (x.b.handle !== h) return false;
+        var lines = x.b.op === "carts" ? linesOf(x.d.lines) : placedCall(x) ? linesOf(confirmationOf(x.d).items) : [];
+        return lines.some(function (l) { return l.title === p.title; });
+      });
+    }
+    return false;
+  }
+  function shopCards(a, e, key, t) {
     var c = shopCall(e);
     if (!c) return null;
     var ok = c.h.status >= 200 && c.h.status < 300;
     var out = [];
-    var html = "";
-    if (c.b.op === "products" && ok) html = productsCard(c);
-    else if (c.b.op === "product" && ok) html = productCard(c);
-    else if (c.b.op === "carts" && ok && c.d.cartId) html = cartCard(c, e);
+    if (ok && shopSuperseded(t, e, c)) return out;
+    if (c.b.op === "products" && ok) {
+      var pc = productsCard(c);
+      if (pc) out.push({ zone: "card", key: key("shop"), html: pc });
+      else {
+        var store = shopName(c.b.handle, c.d.store);
+        out.push({ zone: "event", key: key("shop0"), html: evHtml({ ic: icon("bag"), text: esc(c.b.q ? "Nothing matches “" + c.b.q + "” at " : "No products at ") + strong(store) }) });
+      }
+    } else if (c.b.op === "product" && ok) {
+      var one = productCard(c, key("prod"));
+      if (one) out.push({ zone: "card", key: key("shop"), html: one });
+    } else if (c.b.op === "carts" && ok && c.d.cartId) out.push({ zone: "card", key: key("shop"), html: cartCard(c, e) });
     else if (c.b.op === "checkout") {
       var o = confirmationOf(c.d);
-      if (ok && isPlaced(o)) html = shopOrderCard(a, e, c, parseReceipt(c.h.tail));
+      if (ok && isPlaced(o)) out.push({ zone: "card", key: key("shop"), html: shopOrderCard(a, e, c, parseReceipt(c.h.tail)) });
       else if (str(c.d.error) === "cart_already_paid") {
-        html = '<div class="chip-card ok">' + icon("check") + "<span>" + esc("Already paid" + (orderRef(o) ? " · order " + orderRef(o) : "")) + "</span></div>";
+        out.push({ zone: "event", key: key("paid"), html: evHtml({ ic: icon("check"), text: "This cart was already paid", meta: [orderRef(o) ? 'order <span class="mono">' + esc(orderRef(o)) + "</span>" : ""] }) });
       }
     }
-    if (html) out.push({ key: key("shop"), html: html });
     return out;
   }
-
   // ================================================================ Quantcomm research (ARCHITECTURE §17)
   // Quantcomm sells flood research per request through its bridge ({QUANTCOMM_BRIDGE_URL}/quantcomm).
   // Agents buy it with fetch_url, so, as with Shopify, the page sees the bridge's compact JSON (§17.1)
@@ -1319,6 +1419,8 @@
       return [((kind ? kind + " " : "") + str(s.name).slice(0, 30)).trim(), basin, wind != null ? Math.round(wind) + " kt" : ""].filter(Boolean).join(" · ");
     }).filter(Boolean);
   }
+  // The compact card shows the key facts (header, 2–4 lines, the paid line); the sections below
+  // are its "Details": every alert type, every bank, each location, each research panel.
   function qcSec(title, aside, body, cls) {
     return '<div class="qc-sec' + (cls ? " " + cls : "") + '"><div class="qc-h"><span>' + esc(title) + "</span>" + (aside || "") + "</div>" + body + "</div>";
   }
@@ -1336,67 +1438,68 @@
     var storms = qcStorms(b.activeStorms);
     return qcSec(
       "Live flood alerts",
-      "<b>" + esc(String(total)) + "</b>",
-      (types.length ? '<div class="qc-types">' + types.map(function (x) { return '<span class="qc-type"><b>' + esc(String(x[1])) + "</b>" + esc(x[0]) + "</span>"; }).join("") + "</div>" : total === 0 ? '<p class="qc-line"><span>No flood alerts right now.</span></p>' : "") +
-        (storms.length ? '<p class="qc-line qc-storm">' + icon("cloud") + "<span>" + esc(storms.join("; ")) + "</span></p>" : ""),
+      '<span class="qc-n">' + esc(String(total)) + "</span>",
+      (types.length ? '<ul class="qc-list">' + types.map(function (x) { return '<li><span>' + esc(x[0]) + '</span><span class="qc-n">' + esc(String(x[1])) + "</span></li>"; }).join("") + "</ul>" : total === 0 ? '<p class="qc-line">No flood alerts right now.</p>' : "") +
+        (storms.length ? '<p class="qc-line">' + esc("Active storms: " + storms.join("; ")) + "</p>" : ""),
     );
   }
-  function qcBankRow(r, mine) {
+  /** One bank under alerts: name, ticker, share of its deposits (with a thin bar), branches and dollars. */
+  function qcBankRow(r, mine, compact) {
     r = qcObj(r);
     if (!r || !str(r.bank).trim()) return "";
     var share = r.shareOfDeposits == null ? null : num(r.shareOfDeposits);
     var w = share == null ? 0 : Math.max(0, Math.min(100, share));
     var branches = num(r.branches);
-    var sub = [branches != null ? plural(Math.round(branches), "branch", "branches") : "", qcUsd(r.depositsUnderAlert) ? qcUsd(r.depositsUnderAlert) + " in deposits" : ""].filter(Boolean).join(" · ");
+    var sub = [branches != null ? plural(Math.round(branches), "branch", "branches") : "", qcUsd(r.depositsUnderAlert) ? qcUsd(r.depositsUnderAlert) : ""].filter(Boolean).join(" · ");
     var tk = str(r.ticker).replace(/[^A-Za-z0-9.-]/g, "").slice(0, 8);
     return (
-      '<li class="qc-bankrow' + (mine ? " mine" : "") + '"><div class="qc-bank-top"><span class="qc-bank">' + esc(qcBank(r.bank)) + "</span>" + (tk ? '<span class="qc-tk">' + esc(tk) + "</span>" : "") +
-      '<span class="qc-share">' + esc(qcPct(r.shareOfDeposits)) + "</span></div>" +
-      (share != null ? '<span class="qc-bar" role="img" aria-label="' + esc(qcPct(r.shareOfDeposits) + " of its deposits under alerts") + '"><i style="width:max(3px,' + w.toFixed(1) + '%)"></i></span>' : "") +
-      (sub ? '<span class="qc-bank-sub">' + esc(sub) + "</span>" : "") + "</li>"
+      '<li class="qc-bankrow' + (mine ? " mine" : "") + '"><div class="qc-bank-top"><span class="qc-bank">' + esc(qcBank(r.bank)) + "</span>" +
+      (tk ? '<span class="qc-tk">' + esc(tk) + "</span>" : "") + (sub && !compact ? '<span class="qc-bank-sub">' + esc(sub) + "</span>" : "") +
+      '<span class="qc-share">' + esc(qcPct(r.shareOfDeposits) || "—") + "</span></div>" +
+      (share != null ? '<span class="qc-bar" role="img" aria-label="' + esc(qcPct(r.shareOfDeposits) + " of its deposits under alerts") + '"><i style="width:max(2px,' + w.toFixed(1) + '%)"></i></span>' : "") + "</li>"
     );
   }
-  /** The banks under alerts with share-of-deposits bars (top 5, the rest counted). `mine`: this company's rows. */
+  /** Every bank under alerts (the bridge sends the top 10), the rest counted. `mine`: this company's rows. */
   function qcBanksHtml(block, mine, title) {
     block = qcObj(block) || {};
     var top = qcArr(block.top, 10).filter(qcObj);
     var own = qcArr(mine, 3).filter(qcObj);
     var count = num(block.count);
-    if (!top.length && !own.length) return count === 0 ? qcSec(title || "Banks under alerts", "<b>0</b>", '<p class="qc-line"><span>No bank branches sit under these alerts.</span></p>') : "";
+    if (!top.length && !own.length) return count === 0 ? qcSec(title || "Banks under alerts", '<span class="qc-n">0</span>', '<p class="qc-line">No bank branches sit under these alerts.</p>') : "";
     var isMine = function (r) { return own.some(function (o) { return str(o.bank) === str(r.bank); }); };
-    var shown = top.slice(0, 5);
-    var extra = own.filter(function (o) { return !shown.some(function (r) { return str(r.bank) === str(o.bank); }); });
-    var more = (count != null ? count : top.length) - shown.length - extra.length;
+    var extra = own.filter(function (o) { return !top.some(function (r) { return str(r.bank) === str(o.bank); }); });
+    var more = (count != null ? count : top.length) - top.length - extra.length;
     return qcSec(
       title || "Banks under alerts",
-      (count != null ? "<b>" + esc(String(count)) + "</b>" : "") + '<small class="qc-aside">share of deposits</small>',
-      '<ol class="qc-banks">' + shown.map(function (r) { return qcBankRow(r, isMine(r)); }).join("") + extra.map(function (r) { return qcBankRow(r, true); }).join("") + "</ol>" +
-        (more > 0 ? '<p class="qc-more-n">+' + esc(plural(more, "more bank", "more banks")) + " under alerts</p>" : ""),
+      '<span class="qc-aside">share of deposits</span>',
+      '<ol class="qc-banks">' + top.map(function (r) { return qcBankRow(r, isMine(r)); }).join("") + extra.map(function (r) { return qcBankRow(r, true); }).join("") + "</ol>" +
+        (more > 0 ? '<p class="qc-line">+' + esc(plural(more, "more bank", "more banks")) + " under alerts</p>" : ""),
     );
   }
-  /** Capital One's sandbox branches and ATMs under alerts, or "0 of 220". */
-  function qcCapOneHtml(c1) {
-    c1 = qcObj(c1);
-    if (!c1) return "";
+  /** "0 of 220": Capital One's sandbox locations under alerts. */
+  function qcC1Count(c1) {
     var checked = num(c1.locationsChecked);
     var hit = num(c1.underAlert);
     if (hit == null) hit = qcArr(c1.locations).length;
+    return { hit: hit, text: checked != null ? hit + " of " + checked : String(hit) };
+  }
+  /** Capital One's sandbox branches and ATMs under alerts, one per line, and Quantcomm's note. */
+  function qcCapOneHtml(c1) {
+    c1 = qcObj(c1);
+    if (!c1) return "";
     var locs = qcArr(c1.locations, 10).filter(qcObj);
-    var line = (checked != null ? "<b>" + esc(hit + " of " + checked) + "</b> Capital One locations under alerts" : "<b>" + esc(String(hit)) + "</b> Capital One locations under alerts");
     return qcSec(
-      "Capital One",
+      "Capital One locations",
       qcTag("Sandbox", "sbx"),
-      '<p class="qc-line qc-c1' + (hit ? " hit" : "") + '">' + icon(hit ? "warn" : "check") + "<span>" + line + "</span></p>" +
-        (locs.length
-          ? '<ul class="qc-locs">' + locs.map(function (l) {
-            var kind = /atm/i.test(str(l.kind)) ? "ATM" : "Branch";
-            var where = [qcTitle(l.city), str(l.state).toUpperCase().slice(0, 2)].filter(Boolean).join(", ");
-            var types = qcArr(l.alertTypes, 3).map(str).filter(Boolean).join(", ");
-            return "<li><b>" + esc(kind + " · " + qcTitle(l.name)) + "</b><span>" + esc([where, types].filter(Boolean).join(" · ")) + "</span></li>";
-          }).join("") + "</ul>"
-          : "") +
-        '<p class="qc-note">' + esc(str(c1.note).trim().slice(0, 160) || "Capital One's Nessie sandbox branches and ATMs") + "</p>",
-      "qc-capone",
+      (locs.length
+        ? '<ul class="qc-list">' + locs.map(function (l) {
+          var kind = /atm/i.test(str(l.kind)) ? "ATM" : "Branch";
+          var where = [qcTitle(l.city), str(l.state).toUpperCase().slice(0, 2)].filter(Boolean).join(", ");
+          var types = qcArr(l.alertTypes, 3).map(str).filter(Boolean).join(", ");
+          return "<li><span>" + esc(kind + " · " + qcTitle(l.name)) + '</span><span class="qc-sub">' + esc([where, types].filter(Boolean).join(" · ")) + "</span></li>";
+        }).join("") + "</ul>"
+        : '<p class="qc-line">' + esc(qcC1Count(c1).text + " under alerts") + "</p>") +
+        '<p class="qc-line">' + esc(str(c1.note).trim().slice(0, 160) || "Capital One's Nessie sandbox branches and ATMs") + "</p>",
     );
   }
   function qcKv(rows) {
@@ -1418,7 +1521,7 @@
         ["Expected loss", qcUsd(p.baselineExpectedLoss)],
         ["Added by the storm", qcUsd(p.incrementalExpectedLoss)],
         ["Under live alerts", live],
-      ]) + (str(p.note).trim() ? '<p class="qc-note">' + esc(str(p.note).trim().slice(0, 200)) + "</p>" : ""),
+      ]) + (str(p.note).trim() ? '<p class="qc-line">' + esc(str(p.note).trim().slice(0, 200)) + "</p>" : ""),
     );
   }
   function qcFloodMapHtml(p) {
@@ -1440,24 +1543,29 @@
     );
   }
   /** How the stock moved after past hurricanes: one diverging bar per storm. */
-  function qcHistoryHtml(p) {
+  function qcHistory(p) {
     p = qcObj(p);
-    if (!p) return "";
+    if (!p) return null;
     var storms = qcArr(p.storms, 24).filter(qcObj).map(function (s) { return { name: str(s.storm).slice(0, 24), year: num(s.year), x: num(s.excessPct) }; }).filter(function (s) { return s.x != null; });
     var mean = num(p.meanExcessPct);
-    var bench = str(p.bench).slice(0, 10) || "its benchmark";
+    if (mean == null && storms.length) mean = storms.reduce(function (t, s) { return t + s.x; }, 0) / storms.length;
+    return { storms: storms, mean: mean, bench: str(p.bench).replace(/[^\w .&-]/g, "").slice(0, 10) || "its benchmark", window: str(p.window).slice(0, 40), under: str(p.underperformed).slice(0, 20) };
+  }
+  function qcHistoryHtml(p) {
+    var h = qcHistory(p);
+    if (!h) return "";
+    var storms = h.storms;
     var max = storms.reduce(function (m, s) { return Math.max(m, Math.abs(s.x)); }, 0) || 1;
     var bars = storms.length
       ? '<div class="qc-hist" role="img" aria-label="' + esc(storms.map(function (s) { return s.name + " " + qcPct(s.x, true); }).join(", ")) + '">' +
         storms.map(function (s) {
-          var h = Math.max(3, Math.round((Math.abs(s.x) / max) * 100));
-          return '<span class="qc-hb ' + (s.x < 0 ? "neg" : "pos") + '" title="' + esc(s.name + (s.year ? " " + s.year : "") + ": " + qcPct(s.x, true) + " vs " + bench) + '"><i style="height:' + h + '%"></i></span>';
+          var hh = Math.max(3, Math.round((Math.abs(s.x) / max) * 100));
+          return '<span class="qc-hb ' + (s.x < 0 ? "neg" : "pos") + '" title="' + esc(s.name + (s.year ? " " + s.year : "") + ": " + qcPct(s.x, true) + " vs " + h.bench) + '"><i style="height:' + hh + '%"></i></span>';
         }).join("") + "</div>" +
         (storms[0].year && storms[storms.length - 1].year ? '<div class="qc-years"><span>' + esc(storms[0].name + " " + storms[0].year) + "</span><span>" + esc(storms[storms.length - 1].name + " " + storms[storms.length - 1].year) + "</span></div>" : "")
       : "";
-    var n = storms.length;
-    var said = [mean != null ? "Averaged <b>" + esc(qcPct(mean, true)) + "</b> vs " + esc(bench) + (n ? " over " + esc(plural(n, "storm", "storms")) : "") : "", str(p.underperformed) ? "underperformed in " + esc(str(p.underperformed).slice(0, 20)) : ""].filter(Boolean).join(" · ");
-    return qcSec("After past hurricanes", str(p.window) ? '<small class="qc-aside">' + esc(str(p.window).slice(0, 40)) + "</small>" : "", (said ? '<p class="qc-line"><span>' + said + "</span></p>" : "") + bars);
+    var said = [h.mean != null ? "Averaged " + qcPct(h.mean, true) + " vs " + h.bench + (storms.length ? " over " + plural(storms.length, "storm", "storms") : "") : "", h.under ? "underperformed in " + h.under : ""].filter(Boolean).join(" · ");
+    return qcSec("After past hurricanes", h.window ? '<span class="qc-aside">' + esc(h.window) + "</span>" : "", (said ? '<p class="qc-line">' + esc(said) + "</p>" : "") + bars);
   }
   function qcParkingHtml(p) {
     p = qcObj(p);
@@ -1465,54 +1573,79 @@
     var verdict = str(p.verdict).trim().slice(0, 200);
     var caveats = qcArr(p.caveats, 3).map(str).filter(Boolean);
     if (!verdict && !caveats.length) return "";
-    return qcSec("Parking lots from above", "", (verdict ? '<p class="qc-line"><span>' + esc(verdict) + "</span></p>" : "") + (caveats.length ? '<ul class="qc-caveats">' + caveats.map(function (c) { return "<li>" + esc(c.slice(0, 200)) + "</li>"; }).join("") + "</ul>" : ""));
+    return qcSec("Parking lots from above", "", (verdict ? '<p class="qc-line">' + esc(verdict) + "</p>" : "") + (caveats.length ? '<ul class="qc-caveats">' + caveats.map(function (c) { return "<li>" + esc(c.slice(0, 200)) + "</li>"; }).join("") + "</ul>" : ""));
   }
-  function qcFoot(rc, e) {
-    if (!rc) return '<div class="c-foot"><span>Quantcomm</span><span>' + esc(clock(ts(e.at) + (e.ms || 0))) + "</span></div>";
-    var tx = rc.tx ? (rc.url ? '<a href="' + esc(rc.url) + '" target="_blank" rel="noopener noreferrer">tx ' + esc(rc.tx) + icon("external") + "</a>" : '<span class="mono">tx ' + esc(rc.tx) + "</span>") : "";
-    return '<div class="c-foot"><span class="qc-paid">' + esc("Paid " + (rc.amount || "")) + (tx ? " · " + tx : "") + "</span><span>" + esc(clock(ts(e.at) + (e.ms || 0))) + "</span></div>";
+  /** The paid footer: one muted line, "Paid $0.05 · tx 0x4e42…". */
+  function qcFoot(rc) {
+    if (!rc) return "Quantcomm";
+    return esc("Paid " + (rc.amount || "")) + (rc.tx ? " · " + txHtml(rc.tx, rc.url) : "");
   }
   function qcAsOf(d) {
     var when = qcWhen(d.asOf);
     var age = num(d.ageHours);
     return when ? "as of " + when : age != null ? Math.round(age) + " h old" : "";
   }
+  /** Quantcomm's own caveat about old data, as a quiet line (it is a caveat, not an alarm). */
+  function qcNoteLine(note) {
+    return note ? '<p class="cd-note">' + icon("clock") + "<span>" + esc(note) + "</span></p>" : "";
+  }
+  /** A bank row for the compact view: name and ticker, the share right-aligned, a thin bar. */
+  function qcTopBanks(block, n) {
+    var top = qcArr((qcObj(block) || {}).top, n).filter(qcObj);
+    return top.length ? '<ol class="qc-banks compact">' + top.map(function (r) { return qcBankRow(r, false, true); }).join("") + "</ol>" : "";
+  }
+  function qcC1Line(c1, label) {
+    c1 = qcObj(c1);
+    if (!c1) return "";
+    var k = qcC1Count(c1);
+    // The sandbox label sits right after the name, so a narrow card can never clip it.
+    return cdLine((label || "Capital One") + " " + qcTag("Sandbox", "sbx"), esc(k.text) + " under alerts", k.hit ? "warn" : "");
+  }
   /** The flood research card (§17.4) for /quantcomm/alerts and /companies/:ticker/flood. */
-  function qcFloodCard(c, e) {
+  function qcFloodCard(c, e, key) {
     var d = c.d;
     var info = svcInfo(QC_ID);
     var rc = parseReceipt(c.h.tail);
-    var body = "";
-    var title;
-    var sub;
     var note = str(d.note).replace(/\s+/g, " ").trim().slice(0, 320);
+    var src = str(d.source).trim().slice(0, 140);
+    var title, meta, body, more;
     if (c.q.op === "alerts") {
-      title = "Flood alerts and banks";
-      sub = ["Quantcomm", qcAsOf(d)];
-      body = qcAlertsHtml(d) + qcBanksHtml(d.banksUnderAlerts) + qcCapOneHtml(d.capitalOne);
+      var count = num((qcObj(d.banksUnderAlerts) || {}).count);
+      var total = num((qcObj(d.alerts) || {}).total);
+      title = count != null ? plural(count, "bank", "banks") + " under flood alerts" : total != null ? plural(total, "flood alert", "flood alerts") : "Flood alerts";
+      meta = ["Quantcomm", count != null && total != null ? plural(total, "alert", "alerts") : "", qcAsOf(d)];
+      body = qcNoteLine(note) + qcTopBanks(d.banksUnderAlerts, 3) + qcC1Line(d.capitalOne);
+      more = qcAlertsHtml(d) + qcBanksHtml(d.banksUnderAlerts, null, "All banks under alerts") + qcCapOneHtml(d.capitalOne);
     } else {
       var p = qcObj(d.panels) || {};
       var tk = str(d.ticker).toUpperCase().slice(0, 10) || c.q.ticker;
-      title = "Flood research · " + tk;
-      sub = [str(d.name).slice(0, 60), "Quantcomm", qcAsOf(d)];
       var am = qcObj(p.alerts_map);
       var ae = qcObj(p.alert_exposure);
+      var cs = qcObj(p.customer_stress);
+      var fm = qcObj(p.flood_map);
+      var hist = qcHistory(p.storm_history);
       if (!note && am) note = str(am.note).trim().slice(0, 320);
-      body =
+      title = "Flood research · " + tk;
+      meta = [str(d.name).slice(0, 60), "Quantcomm", qcAsOf(d)];
+      var own = ae ? qcArr(ae.company, 1).filter(qcObj)[0] : null;
+      var lines = [
+        qcC1Line(p.branch_map, "Capital One"),
+        own ? cdLine(esc(qcBank(own.bank)) + " · " + esc(qcUsd(own.depositsUnderAlert) || "—") + " under alerts", esc(qcPct(own.shareOfDeposits) || "")) : ae && num(ae.banksUnderAlerts) != null ? cdLine(esc(plural(num(ae.banksUnderAlerts), "bank", "banks") + " under alerts")) : "",
+        cs ? cdLine("Stress test" + (cs.synthetic === false ? "" : " " + qcTag("SYNTHETIC", "syn")) + " · added loss", esc(qcUsd(cs.incrementalExpectedLoss) || "—")) : "",
+        hist && hist.mean != null ? cdLine("After past hurricanes", esc(qcPct(hist.mean, true) + " vs " + hist.bench)) : "",
+        fm && num(fm.floodedKm2) != null ? cdLine("Satellite flood map" + (str(fm.storm) ? " · " + esc(qcTitle(fm.storm)) : ""), esc(num(fm.floodedKm2) + " km²")) : "",
+        am && num((qcObj(am.alerts) || {}).total) != null ? cdLine(esc(plural(num(am.alerts.total), "live flood alert", "live flood alerts"))) : "",
+      ].filter(Boolean);
+      body = qcNoteLine(note) + lines.slice(0, 4).join("");
+      more =
         qcCapOneHtml(p.branch_map) +
         (ae ? qcBanksHtml({ top: ae.top, count: ae.banksUnderAlerts }, ae.company, "Banks under alerts") : "") +
         (am ? qcAlertsHtml(am) + (am.banksUnderAlerts ? qcBanksHtml(am.banksUnderAlerts) : "") : "") +
         qcStressHtml(p.customer_stress) + qcFloodMapHtml(p.flood_map) + qcHistoryHtml(p.storm_history) + qcParkingHtml(p.parking_lot);
+      if (!lines.length && !more) return "";
     }
-    if (!body) return "";
-    var src = str(d.source).trim().slice(0, 140);
-    return (
-      '<div class="card qc qc-flood"><div class="card-pad">' +
-      '<div class="c-row">' + tileHtml(info, "t32") + '<div class="c-who"><div class="c-title">' + esc(title) + '</div><div class="c-k">' + esc(sub.filter(Boolean).join(" · ")) + "</div></div></div>" +
-      (note ? '<p class="qc-stale">' + icon("clock") + "<span>" + esc(note) + "</span></p>" : "") +
-      body + (src ? '<p class="qc-src">' + esc(src) + "</p>" : "") +
-      "</div>" + qcFoot(rc, e) + "</div>"
-    );
+    if (src) more += '<p class="qc-src">' + esc(src) + "</p>";
+    return cardHtml({ cls: "qc qc-flood", tile: tileHtml(info, "t20"), title: esc(title), meta: esc(meta.filter(Boolean).join(" · ")), body: body, more: more, key: key, open: !!ui.openMore[key], foot: qcFoot(rc) });
   }
   /**
    * The forecast range: the bridge's { horizonDays, fromDate, fromPrice, returnPct, lowPct, highPct }
@@ -1540,14 +1673,12 @@
   }
   var QC_VIEW = { positive: "Positive", neutral: "Neutral", negative: "Negative" };
   /** Quantcomm's AI analyst view (§17.4): Quantcomm's words and Quantcomm's call, calmly, with its disclaimer. */
-  function qcViewCard(a, c, e) {
+  function qcViewCard(a, c, e, key) {
     var d = c.d;
     var v = str(d.view).toLowerCase();
     if (!QC_VIEW[v] && !str(d.headline)) return "";
     var tk = str(d.ticker).toUpperCase().slice(0, 10) || c.q.ticker;
     var rc = parseReceipt(c.h.tail);
-    var key = a.name + ":" + e.id;
-    var open = !!ui.openQc[key];
     var conf = num(d.confidence);
     conf = conf == null ? null : Math.max(0, Math.min(100, Math.round(conf)));
     var fc = qcForecast(d.forecast);
@@ -1557,44 +1688,47 @@
     var note = str(d.note).trim().slice(0, 160) || (d.stale === true ? "Quantcomm's data changed since this view was generated." : "");
     var when = qcWhen(String(d.generatedAt || "").slice(0, 10));
     var model = str(d.model).replace(/[^\w .:/-]/g, "").slice(0, 24);
-    var rows = [
-      ["Expected move", cap(str(d.expectedMove).slice(0, 24))],
-      ["Confidence", conf != null ? String(conf) : "", conf != null ? '<span class="qc-conf" aria-hidden="true"><i style="width:' + conf + '%"></i></span>' : ""],
-      [fc ? "Forecast" + (fc.horizon ? " · " + fc.horizon : "") : "", fc ? fc.range : ""],
-    ].filter(function (r) { return r[0] && r[1]; });
+    var facts = [
+      conf != null ? "Confidence " + conf : "",
+      str(d.expectedMove).trim() ? "expected move " + str(d.expectedMove).trim().slice(0, 24) : "",
+      fc ? "forecast" + (fc.horizon ? " " + fc.horizon : "") + " " + fc.range : "",
+    ].filter(Boolean).join(" · ");
     var evidence = qcArr(d.evidence, 8).map(str).filter(Boolean);
     var gaps = qcArr(d.dataGaps, 6).map(str).filter(Boolean);
     var reasoning = str(d.reasoning).trim().slice(0, 1200);
-    var more = reasoning || evidence.length || gaps.length;
-    return (
-      '<div class="card qc qc-view"><div class="card-pad">' +
-      '<div class="c-row">' + tileHtml(svcInfo(QC_ID), "t32") + '<div class="c-who"><div class="c-title">' + esc("Quantcomm's view on " + tk) + '</div><div class="c-k"' + (model ? ' title="' + esc("Generated by Quantcomm's AI analyst (" + model + ")" + (qcWhen(d.generatedAt) ? ", " + qcWhen(d.generatedAt) : "")) + '"' : "") + ">" + esc([str(d.name).slice(0, 60), "AI analyst", when].filter(Boolean).join(" · ")) + "</div></div>" +
-      (QC_VIEW[v] ? '<span class="pill qc-vchip ' + v + '">' + QC_VIEW[v] + "</span>" : "") + "</div>" +
-      (note ? '<p class="qc-stale">' + icon("clock") + "<span>" + esc(note) + "</span></p>" : "") +
-      (str(d.headline).trim() ? '<p class="qc-headline">' + esc(str(d.headline).trim().slice(0, 200)) + "</p>" : "") +
-      (rows.length ? '<dl class="qc-kv qc-vkv">' + rows.map(function (r) { return "<div><dt>" + esc(r[0]) + "</dt><dd>" + esc(r[1]) + (r[2] || "") + "</dd></div>"; }).join("") + "</dl>" : "") +
-      (pAct
-        ? '<div class="qc-pick"><div class="qc-pick-top"><span class="qc-pick-k">Quantcomm\'s call</span><span class="qc-call">' + esc(cap(pAct)) + "</span>" + (pConf != null ? '<span class="qc-pick-c">confidence ' + esc(String(Math.round(pConf))) + "</span>" : "") + "</div>" +
-          (str(pick.reason).trim() ? '<p class="qc-pick-r">' + esc(str(pick.reason).trim().slice(0, 300)) + "</p>" : "") + "</div>"
-        : "") +
-      (more ? '<button type="button" class="qc-more" data-action="qc-more" data-key="' + esc(key) + '" aria-expanded="' + open + '">' + icon("chev") + "Reasoning and evidence</button>" : "") +
-      (more && open
-        ? '<div class="qc-why">' + (reasoning ? "<p>" + esc(reasoning) + "</p>" : "") +
-          (evidence.length ? "<small>Evidence</small><ul>" + evidence.map(function (x) { return "<li>" + esc(x.slice(0, 200)) + "</li>"; }).join("") + "</ul>" : "") +
-          (gaps.length ? "<small>What it couldn't see</small><ul>" + gaps.map(function (x) { return "<li>" + esc(x.slice(0, 200)) + "</li>"; }).join("") + "</ul>" : "") + "</div>"
-        : "") +
-      '<p class="qc-disc">' + icon("info") + "<span>" + esc(QC_DISCLAIMER) + "</span></p>" +
-      "</div>" + qcFoot(rc, e) + "</div>"
-    );
+    var pickReason = pick ? str(pick.reason).trim().slice(0, 300) : "";
+    var more =
+      (reasoning ? "<p>" + esc(reasoning) + "</p>" : "") +
+      (pickReason ? "<small>Why " + esc(pAct || "this call") + "</small><p>" + esc(pickReason) + "</p>" : "") +
+      (evidence.length ? "<small>Evidence</small><ul>" + evidence.map(function (x) { return "<li>" + esc(x.slice(0, 200)) + "</li>"; }).join("") + "</ul>" : "") +
+      (gaps.length ? "<small>What it couldn't see</small><ul>" + gaps.map(function (x) { return "<li>" + esc(x.slice(0, 200)) + "</li>"; }).join("") + "</ul>" : "");
+    return cardHtml({
+      cls: "qc qc-view",
+      tile: tileHtml(svcInfo(QC_ID), "t20"),
+      title: esc("Quantcomm's view on " + tk),
+      right: QC_VIEW[v] ? '<span class="chip-s qc-vchip ' + v + '">' + QC_VIEW[v] + "</span>" : "",
+      meta: '<span' + (model ? ' title="' + esc("Generated by Quantcomm's AI analyst (" + model + ")" + (qcWhen(d.generatedAt) ? ", " + qcWhen(d.generatedAt) : "")) + '"' : "") + ">" + esc([str(d.name).slice(0, 60), "AI analyst", when].filter(Boolean).join(" · ")) + "</span>",
+      body:
+        qcNoteLine(note) +
+        (str(d.headline).trim() ? '<p class="qc-headline clamp2">' + esc(str(d.headline).trim().slice(0, 200)) + "</p>" : "") +
+        (facts ? cdLine(esc(facts)) : "") +
+        (pAct ? cdLine("Quantcomm's call · <b>" + esc(cap(pAct)) + "</b>" + (pConf != null ? " · confidence " + esc(String(Math.round(pConf))) : "")) : "") +
+        '<p class="cd-note qc-disc">' + icon("info") + "<span>" + esc(QC_DISCLAIMER) + "</span></p>",
+      more: more ? '<div class="qc-why">' + more + "</div>" : "",
+      key: key,
+      open: !!ui.openMore[key],
+      foot: qcFoot(rc),
+    });
   }
   /** Cards for one Quantcomm answer, or null when this entry isn't one. Failures are steps only. */
   function qcCards(a, e, key) {
     var c = qcCall(e);
     if (!c) return null;
     if (c.h.status < 200 || c.h.status >= 300) return [];
-    var html = c.q.op === "view" ? qcViewCard(a, c, e) : c.q.op === "alerts" || c.q.op === "flood" ? qcFloodCard(c, e) : "";
-    // An answer we can't draw still gets its receipt card (below), like any other paid call.
-    return html ? [{ key: key("qc"), html: html }] : null;
+    var k = key("qc");
+    var html = c.q.op === "view" ? qcViewCard(a, c, e, k) : c.q.op === "alerts" || c.q.op === "flood" ? qcFloodCard(c, e, k) : "";
+    // An answer we can't draw still gets its receipt line (below), like any other paid call.
+    return html ? [{ zone: "card", key: k, html: html }] : null;
   }
   /**
    * Steps on the Quantcomm bridge: "Checked live flood alerts · Quantcomm · $0.05", "Read Quantcomm's
@@ -1730,7 +1864,7 @@
   function connStatusFromText(r) {
     r = str(r);
     if (/^(Connected|Owner connected) /.test(r) || /is already connected/.test(r) || /always available; it does not need connecting/.test(r)) return "connected";
-    if (/^Waiting for the owner to approve (?:connecting|adding)/.test(r) || /^Asked your owner to add/.test(r)) return "pending";
+    if (/^Waiting for the owner to approve (?:connecting|adding)/.test(r) || /^Asked your owner to (?:add|connect)/.test(r)) return "pending";
     if (/denied (?:connecting|adding)|^The owner denied/.test(r)) return "declined";
     if (/expired without a decision/.test(r)) return "expired";
     return "";
@@ -1745,39 +1879,72 @@
     for (var i = entries.length - 1; i >= 0; i--) if (entries[i].kind === "tool" && entries[i].result == null) return entries[i];
     return null;
   }
-  /** request_service with a store link instead of a directory id (§15.4): what we know of the store. */
+  /** "Asked your owner to connect Acme Weather (localhost:4321)" and the other request texts (§18) → { name, host }. */
+  function namedInText(r) {
+    r = str(r);
+    var m = r.match(/(?:^Asked your owner to (?:connect|add)|approve (?:connecting|adding)|^(?:Owner connected|Connected)|denied (?:connecting|adding)|request to (?:connect|add)|^The wallet did not accept this request:) (?:the Shopify store )?(.{1,80}?) \(([^()\n]{2,120})\)/) || r.match(/^(.{1,80}?) \(([^()\n]{2,120})\) is already connected/);
+    return m && !/^Shopify store /.test(m[2]) ? { name: m[1].trim(), host: m[2].trim() } : null;
+  }
+  /** The wallet turned the link down before it reached the owner (§18): its reason in a few words, else "". */
+  var REFUSED_RE = /^Allowance can't use |isn't something Allowance can pay|^The wallet did not accept this request|can't be added:/;
+  function refusalOf(r) {
+    r = firstLine(str(r).replace(/^ERROR:\s*/, ""));
+    if (/isn't something Allowance can pay|unrecognized_service_url/.test(r)) return "Not something Allowance can pay";
+    var over = r.match(/^The wallet did not accept this request: .{1,80}? \([^()]{2,120}\) (asks .+?)(?:\.\s+[A-Z]|\.?$)/);
+    if (over) return cap(over[1]);
+    return r.replace(/^The wallet did not accept this request:\s*/, "").replace(/^.*?can't be added:\s*/, "");
+  }
+  /**
+   * request_service by link (§18 `url`; §15.4 `shopify_store_url` is its older name): what we know.
+   * The wallet works out what the link is: a directory service, a Shopify store or an x402 API.
+   * { is, link: { host, handle }, handle, named, sid, host, kind: "shopify" | "x402" | "directory" | "", price, refused }
+   */
   function storeRequest(e) {
     var args = objArgs(e);
-    var link = storeLink(args.shopify_store_url);
+    var raw = str(args.url || args.shopify_store_url).trim();
+    var link = storeLink(raw);
+    if (!link.host && raw) link = { host: hostOnly(raw).toLowerCase(), handle: "" };
     var r = e && e.result != null ? str(e.result) : "";
-    var idm = r.match(/service_id: "shopify-([a-z0-9][a-z0-9-]{0,62})"/);
+    var sid = (r.match(/service_id: "([A-Za-z0-9._-]{1,80})"/) || [])[1] || "";
     var said = storeInText(r);
-    var nm = said ? null : r.match(/approve (?:connecting|adding) (.{1,80}?)\. Approval id/) || r.match(/^(?:Owner connected|Connected) (.{1,80}?)\.(?:\s|$)/) || r.match(/denied (?:connecting|adding) (.{1,80}?)\./) || r.match(/request to (?:connect|add) (.{1,80}?) expired/);
+    var nh = said ? null : namedInText(r);
+    var nm = said || nh ? null : r.match(/approve (?:connecting|adding) (.{1,80}?)\. Approval id/) || r.match(/^(?:Owner connected|Connected) (.{1,80}?)\.(?:\s|$)/) || r.match(/denied (?:connecting|adding) (.{1,80}?)\./) || r.match(/request to (?:connect|add) (.{1,80}?) expired/);
+    var handle = /^shopify-/.test(sid) ? sid.slice(8) : said && said.handle ? said.handle : link.handle;
+    var kind = /^shopify-/.test(sid) || said || link.handle || (!args.url && args.shopify_store_url) ? "shopify" : /^custom-/.test(sid) ? "x402" : sid ? "directory" : "";
+    var price = (r.match(/(?:up to )?\$([\d,]+(?:\.\d+)?) (?:per|a|each) (?:request|call)/) || [])[1] || str(args.max_price).replace(/^\$/, "");
+    // Refused before it reached the owner (not payable, over the limit, not a store, password-protected, an admin link).
+    var refused = r && !connStatusFromText(r) && (e.isError || REFUSED_RE.test(r)) ? refusalOf(r) : "";
     return {
-      is: !!str(args.shopify_store_url).trim() && !str(args.service_id).trim(),
+      is: !!raw && !str(args.service_id).trim() && !(args.custom && typeof args.custom === "object"),
       link: link,
-      handle: idm ? idm[1] : said && said.handle ? said.handle : link.handle,
-      named: said ? said.name : nm ? nm[1].trim() : "",
+      handle: HANDLE_RE.test(handle) ? handle : "",
+      named: said ? said.name : nh ? nh.name : nm ? nm[1].trim() : "",
+      sid: sid,
+      host: nh ? nh.host : "",
+      kind: kind,
+      price: num(price) != null ? String(num(price)) : "",
+      refused: refused,
     };
   }
-  /** The service a request_service call is about: its directory id, or the Shopify store it adds. */
+  /** The service a request_service call is about: its directory id, or the one its link resolved to. */
   function requestedId(e) {
     var id = str(objArgs(e).service_id).trim();
     if (id) return id;
     var rq = storeRequest(e);
-    return rq.is && rq.handle ? "shopify-" + rq.handle : "";
+    if (!rq.is) return "";
+    return rq.sid || (rq.kind === "shopify" && rq.handle ? "shopify-" + rq.handle : "");
   }
   function serviceNameOfRequest(e) {
     var a = objArgs(e);
     if (a.custom && typeof a.custom === "object") return str(a.custom.name).slice(0, 60) || "a new service";
     var rq = storeRequest(e);
-    if (rq.is) return rq.named || (rq.handle && (shops[rq.handle] || {}).name) || rq.link.host || "a Shopify store";
+    if (rq.is) return rq.named || (rq.handle && (shops[rq.handle] || {}).name) || (rq.kind === "directory" ? svcInfo(rq.sid).name : "") || rq.host || rq.link.host || "a service";
     return svcInfo(str(a.service_id)).name;
   }
   function waitingText(a, e) {
     var args = objArgs(e);
     if (!e) return "Waiting for your approval";
-    if (e.name === "request_service") return "Waiting for you to " + (storeRequest(e).is ? "add " : "connect ") + serviceNameOfRequest(e);
+    if (e.name === "request_service") return "Waiting for you to connect " + serviceNameOfRequest(e);
     if (e.name === "fetch_url") {
       var svc = serviceForUrl(str(args.url));
       var due = checkoutTotal(a, str(args.url));
@@ -1785,7 +1952,7 @@
     }
     if (e.name === "transfer_usdc") return "Waiting for your OK to send " + money(args.amount);
     var ap = approvals[str(args.approval_id).trim()] || approvals[str(((a && a.status) || {}).approvalId)];
-    if (ap && ap.subject) return ap.kind === "service" ? "Waiting for you to " + ap.subject.replace(/^Connect/, "connect").replace(/^Add/, "add") : "Waiting for your OK: " + ap.subject;
+    if (ap && ap.verb) return ap.kind === "service" ? "Waiting for you to " + ap.verb + " " + ap.obj : "Waiting for your OK to " + ap.verb + " " + ap.obj;
     return "Waiting for your approval";
   }
   function stepOf(a, e) {
@@ -1822,17 +1989,23 @@
       }
       case "request_service": {
         var nm = serviceNameOfRequest(e);
-        var adding = storeRequest(e).is;
-        s.icon = adding || handleOfId(args.service_id) ? "bag" : "plug";
-        s.label = (adding ? "Asked you to add " : "Asked you to connect ") + nm;
-        s.live = (adding ? "Asking you to add " : "Asking you to connect ") + nm;
+        var srq = storeRequest(e);
+        s.icon = srq.kind === "shopify" || handleOfId(args.service_id) ? "bag" : "plug";
+        s.label = "Asked you to connect " + nm;
+        s.live = "Asking you to connect " + nm;
         if (r) {
           var cs = connStatusFromText(r);
           // Resolved later (check_approval, or the owner decided while it was between waits)?
           if (cs === "pending" && a) cs = connStatus(a, e);
-          s.detail = { connected: adding ? "Added" : "Connected", pending: "Waiting for you", declined: "You declined", expired: "Request expired" }[cs] || (e.isError ? first : "");
+          s.detail = { connected: "Connected", pending: "Waiting for you", declined: "You declined", expired: "Request expired" }[cs] || "";
           if (cs === "pending") s.st = "wait";
-          if (cs === "declined" || cs === "expired") s.st = "err";
+          if (cs === "declined" || cs === "expired") s.st = "soft";
+          if (!cs && (e.isError || srq.refused)) {
+            // The wallet refused the link before it reached you: a calm line, nothing to do.
+            s.label = "Asked to connect " + nm;
+            s.detail = srq.refused || first;
+            s.st = "soft";
+          }
         }
         break;
       }
@@ -1879,7 +2052,7 @@
           var b = parseBlocked(r);
           if (b) { s.icon = "shield"; s.label = "Tried to send " + amt + " to " + to; s.detail = "Blocked · " + b.title + (b.frozen ? " · agent frozen" : ""); s.st = "err"; }
           else if (/^Waiting for the owner/.test(r)) { s.label = "Asked you to approve " + amt + " to " + to; s.st = "wait"; }
-          else if (/^The owner denied/.test(r)) { s.label = "Tried to send " + amt + " to " + to; s.detail = "You declined"; s.st = "err"; }
+          else if (/^The owner denied/.test(r)) { s.label = "Tried to send " + amt + " to " + to; s.detail = "You declined"; s.st = "soft"; }
           else if (e.isError) { s.label = "Tried to send " + amt + " to " + to; s.detail = first; }
         }
         break;
@@ -1908,10 +2081,15 @@
             if (s.st === "ok") s.detail = "You approved" + (s.detail ? " · " + s.detail : "");
             break;
           }
-          var said = /^Owner connected/.test(r) ? storeInText(r) : null;
+          var said = /^Owner connected/.test(r) ? storeInText(r) || namedInText(r) : null;
           s.detail = said ? "You connected " + said.name : rc2 ? rc2.verb + " " + rc2.amount + " " + rc2.prep + " " + rc2.party : /^Owner connected (.+?)\./.test(r) ? "You connected " + r.match(/^Owner connected (.+?)\./)[1] : /denied/.test(r) ? "You declined" : /expired/.test(r) ? "Expired" : /^Waiting/.test(r) ? "Still waiting for you" : first;
-          if (/^Waiting/.test(r)) s.st = "wait";
-          if (/denied|expired/.test(r) && !rc2) s.st = "err";
+          if (/^Waiting/.test(r)) {
+            // Settled since in the embed (the agent had stopped checking): say how it ended.
+            var dap = approvals[str(args.approval_id).trim()];
+            if (dap && dap.phase === "decided") s.detail = dap.status === "approved" ? "You approved later" : dap.status === "expired" ? "Expired later" : "You declined later";
+            else s.st = "wait";
+          }
+          if (/denied|expired/.test(r) && !rc2) s.st = "soft";
         }
         break;
       case "list_receipts":
@@ -1924,6 +2102,8 @@
       s.st = "wait";
       s.live = waitingText(a, e);
     }
+    // The waiting mark means "waiting on you now": once the run is over, the words are enough.
+    if (s.st === "wait" && !(a && a.busy)) s.st = "soft";
     return s;
   }
   function fetchStep(s, args, r, e) {
@@ -1969,7 +2149,7 @@
       s.st = "wait";
       return;
     }
-    if (/^The owner denied/.test(r)) { s.icon = "card"; s.label = "You declined the payment"; s.st = "err"; return; }
+    if (/^The owner denied/.test(r)) { s.icon = "card"; s.label = "You declined the payment"; s.st = "soft"; return; }
     if (/^Refused:/.test(r)) { s.icon = "shield"; s.label = "Refused to open " + where; s.detail = "Off-limits to agents"; s.st = "err"; return; }
     if (/^The site did not accept the payment/.test(r)) { s.icon = "card"; s.label = "Payment to " + where + " failed"; s.st = "err"; return; }
     var hm = r.match(/^HTTP (\d{3})/);
@@ -2062,99 +2242,45 @@
     return true;
   }
 
-  // ================================================================ cards (rich attachments derived from tool results)
-  function receiptFoot(rc, e) {
-    var tx = rc.tx
-      ? rc.url
-        ? '<a href="' + esc(rc.url) + '" target="_blank" rel="noopener noreferrer">tx ' + esc(rc.tx) + icon("external") + "</a>"
-        : '<span class="mono">tx ' + esc(rc.tx) + "</span>"
-      : "<span>No tx hash yet</span>";
-    return '<div class="c-foot">' + tx + "<span>" + esc(clock(ts(e.at) + (e.ms || 0))) + "</span></div>";
-  }
-  function receiptCard(rc, e) {
+  // ================================================================ event lines and cards (derived from tool results)
+  // A payment is an event: one muted line with the amount right-aligned. A blocked payment, an order
+  // and research are cards. A connection request is a decision card while it waits for the owner,
+  // then one line.
+  function receiptLine(rc, e) {
     var args = objArgs(e);
-    var sent = rc.verb === "Sent";
-    var svc = sent ? null : (e.name === "fetch_url" && serviceForUrl(str(args.url))) || serviceForParty(rc.party);
-    var name = svc ? svc.name : rc.party;
-    var tile = tileHtml(sent ? { glyph: "send" } : svc || { glyph: "receipt" });
-    var n = num(rc.amount);
-    if (!sent && n != null && n < 1) {
-      // Micropayments: one compact row, so a few API calls don't fill the screen.
-      var tx = rc.tx ? (rc.url ? '<a class="rr-tx" href="' + esc(rc.url) + '" target="_blank" rel="noopener noreferrer" title="View transaction">' + esc(rc.tx) + "</a>" : '<span class="rr-tx">' + esc(rc.tx) + "</span>") : "";
-      return (
-        '<div class="card rgroup"><div class="rrow">' + tileHtml(svc || { glyph: "receipt" }, "t28") +
-        '<span class="rr-what"><span class="rr-name">Paid ' + esc(name) + '</span><span class="rr-sub">' + esc(clock(ts(e.at) + (e.ms || 0))) + (tx ? " · " : "") + tx + "</span></span>" +
-        '<span class="rr-amt">' + esc(rc.amount) + "</span></div></div>"
-      );
-    }
-    return (
-      '<div class="card receipt"><div class="card-pad"><div class="c-row">' + tile +
-      '<div class="c-who"><div class="c-k">' + (sent ? "Sent to" : "Payment to") + '</div><div class="c-name">' + esc(name) + "</div></div>" +
-      '<span class="pill ok">' + icon("check") + (sent ? "Sent" : "Paid") + "</span></div>" +
-      '<div class="c-amt">' + esc(rc.amount || "—") + "</div></div>" + receiptFoot(rc, e) + "</div>"
-    );
+    if (rc.verb === "Sent") return evHtml({ ic: icon("send"), text: "Sent to " + '<b class="mono">' + esc(rc.party) + "</b>", meta: [txHtml(rc.tx, rc.url)], amt: rc.amount });
+    var svc = (e.name === "fetch_url" && serviceForUrl(str(args.url))) || serviceForParty(rc.party);
+    return evHtml({ ic: svc ? tileHtml(svc, "t16") : icon("receipt"), text: "Paid " + strong(svc ? svc.name : rc.party), meta: [txHtml(rc.tx, rc.url)], amt: rc.amount });
   }
-  function earnedCard(rc, e) {
-    var title = rc.party.replace(/^Bounty:\s*/, "");
+  function earnedLine(rc, e) {
     var site = hostOnly(objArgs(e).submit_url);
-    return (
-      '<div class="card earned"><div class="card-pad"><div class="c-row">' + tileHtml({ glyph: "coins", color: "#1E8E3E" }) +
-      '<div class="c-who"><div class="c-k">Earned</div><div class="c-name">' + esc(title) + "</div></div>" +
-      '<span class="pill ok">' + icon("check") + "Paid out</span></div>" +
-      '<div class="c-amt">+' + esc(rc.amount || "—") + "</div>" + (site ? '<div class="c-sub">Bounty on ' + esc(site) + "</div>" : "") + "</div>" + receiptFoot(rc, e) + "</div>"
-    );
+    return evHtml({ ic: icon("coins"), text: "Earned " + strong(rc.party.replace(/^Bounty:\s*/, "")), meta: [site ? esc(site) : "", txHtml(rc.tx, rc.url)], amt: "+" + (rc.amount || "—"), amtCls: "pos" });
   }
+  /** Stopped by the wallet: a problem, so it gets words, and a card (the owner may want to act on it). */
   function blockedCard(b) {
-    var what = b.amount ? esc(b.amount) + (b.to ? " <span>to " + esc(b.to) + "</span>" : "") : "";
-    return (
-      '<div class="card blocked"><div class="card-pad"><div class="c-row"><span class="shield">' + icon("shieldX") + "</span>" +
-      '<div class="c-who"><div class="c-title">Blocked by your wallet</div><div class="c-k">' + (b.kind === "transfer" ? "Transfer stopped" : "Payment stopped") + " · nothing was sent</div></div></div>" +
-      (what ? '<div class="c-what">' + what + "</div>" : "") +
-      '<div class="c-reason">' + esc(b.title) + "</div>" + (b.message ? '<div class="c-msg">' + esc(b.message) + "</div>" : "") + "</div>" +
-      (b.frozen ? '<div class="c-foot"><span class="pill red">' + icon("lock") + "Agent frozen</span><span>Owner notified</span></div>" : '<div class="c-foot"><span>Policy: ' + esc(b.reason) + "</span><span>Owner notified</span></div>") +
-      "</div>"
-    );
+    var what = b.amount ? b.amount + (b.to ? " to " + b.to : "") : "";
+    return cardHtml({
+      cls: "blocked",
+      tile: '<span class="cd-mark err">' + icon("shieldX") + "</span>",
+      title: "Blocked" + (what ? " · " + esc(what) : ""),
+      meta: '<span title="' + esc(b.message || b.reason) + '">' + esc(b.title + " · nothing was " + (b.kind === "transfer" ? "sent" : "paid") + (b.frozen ? " · agent frozen" : "")) + "</span>",
+    });
   }
-  function orderCard(o, e) {
+  /** Acme Pizza's order (simulated fulfillment), with the payment that bought it in its footer. */
+  function orderCard(o, e, rc) {
     var od = o.order && typeof o.order === "object" ? o.order : {};
     var svc = serviceForUrl(str(objArgs(e).url)) || svcInfo("acme-pizza");
     var tops = Array.isArray(od.toppings) ? od.toppings.map(str).filter(Boolean).slice(0, 8) : [];
     var what = [cap(str(od.size || o.size)) || "Order"].concat(tops).join(" · ");
-    var rows = [["Order", what], ["Deliver to", str(od.address)], ["ETA", str(o.eta)], ["Total", od.total ? money(od.total) : ""], ["Order id", str(o.orderId)]];
-    return (
-      '<div class="card order"><div class="card-pad"><div class="c-row">' + tileHtml(svc, "t48") +
-      '<div class="c-who"><div class="c-title">Order placed</div><div class="c-k">' + esc(svc.name) + "</div></div>" +
-      '<span class="pill ok">' + esc(cap(str(o.status) || "placed")) + "</span></div>" +
-      '<dl class="c-lines">' + rows.filter(function (x) { return x[1]; }).map(function (x) { return "<dt>" + x[0] + "</dt><dd>" + esc(x[1]) + "</dd>"; }).join("") + "</dl></div>" +
-      (o.simulated ? '<div class="c-foot"><span class="sim">' + icon("info") + "Simulated fulfillment · no real pizza is on its way</span></div>" : "") +
-      "</div>"
-    );
-  }
-  function connStatus(a, e) {
-    var id = requestedId(e);
-    if (e.result == null) {
-      var ap = approvalForAnchor(a, e.id);
-      if (ap && ap.phase === "decided") return ap.status === "approved" ? "connected" : ap.status === "expired" ? "expired" : "declined";
-      return "pending";
-    }
-    var r = str(e.result);
-    var st = connStatusFromText(r);
-    if (st === "pending") {
-      var apr = approvalIdIn(r);
-      var log = a.log || [];
-      var idx = log.indexOf(e);
-      for (var i = idx + 1; i < log.length; i++) {
-        var x = log[i];
-        if (x.kind === "tool" && x.name === "check_approval" && x.result != null && (!apr || str(objArgs(x).approval_id).trim() === apr)) {
-          var s2 = connStatusFromText(x.result);
-          if (s2 && s2 !== "pending") st = s2;
-        }
-      }
-      if (st === "pending" && apr && approvals[apr] && approvals[apr].phase === "decided") st = approvals[apr].status === "approved" ? "connected" : approvals[apr].status === "expired" ? "expired" : "declined";
-      if (st === "pending" && agentHasService(a, id)) st = "connected";
-    }
-    if (!st) st = e.isError ? "failed" : agentHasService(a, id) ? "connected" : "pending";
-    return st;
+    var total = od.total ? money(od.total) : rc && rc.amount ? rc.amount : "";
+    return cardHtml({
+      cls: "order",
+      tile: tileHtml(svc, "t20"),
+      title: "Order placed" + (total ? " · " + esc(total) : ""),
+      meta: [esc(svc.name), str(o.eta) ? "ETA " + esc(str(o.eta).slice(0, 40)) : ""].filter(Boolean).join(" · "),
+      body: cdLine(esc(what)) + (str(od.address) ? cdLine(esc(str(od.address).slice(0, 120))) : "") + (o.simulated ? '<p class="cd-note">' + icon("info") + "<span>Simulated fulfillment · no real pizza is on its way</span></p>" : ""),
+      foot: [rc ? txHtml(rc.tx, rc.url) : "", str(o.orderId) ? 'order <span class="mono">' + esc(str(o.orderId).slice(0, 40)) + "</span>" : ""].filter(Boolean).join(" · "),
+    });
   }
   /** What a store-link request (§15.4) is about, before and after the wallet discovered the store. */
   function storeRequestInfo(a, e) {
@@ -2164,7 +2290,6 @@
     var info = rq.handle
       ? svcInfo("shopify-" + rq.handle)
       : { id: "", name: host || "A Shopify store", provider: "Shopify store", glyph: "bag", color: SHOP_GREEN, shopify: { handle: "", domain: host, site: host ? siteUrl("https://" + host) : "", host: host }, permissions: [], maxPrice: "" };
-    var described = !!info.id && !!((svcFromAgents(info.id) || {}).permissions || (learned[info.id] || {}).permissions);
     if (rq.named) info.name = rq.named;
     // Until the wallet has discovered it, the store's link is the only honest name we have.
     else if (host && !(shops[rq.handle] || {}).name && !learned[info.id] && !svcFromAgents(info.id)) info.name = host;
@@ -2176,84 +2301,157 @@
     // The wallet caps a store an agent asks for at the agent's max per payment (§15.3).
     var lim = (a && a.wallet && a.wallet.limits) || {};
     if (!num(info.maxPrice) && num(lim.maxPerTx)) info.maxPrice = String(num(lim.maxPerTx));
-    if (!described) info.permissions = shopPerms(info.name, info.maxPrice);
     return info;
   }
-  function connCard(a, e) {
+  /**
+   * The service a request_service call names (§18: a directory id, a custom proposal, or a link
+   * that resolved to a store or an x402 API): { info, kind, reason }. Raw strings.
+   */
+  function requestInfo(a, e) {
     var args = objArgs(e);
     var custom = args.custom && typeof args.custom === "object" ? args.custom : null;
-    var adding = !custom && storeRequest(e).is;
-    var info = custom
-      ? { name: str(custom.name).slice(0, 60) || "New service", provider: "Proposed by " + a.name + " · " + hostOnly(custom.base_url), glyph: "globe", color: "#7C8799", permissions: ["Pay up to " + money(custom.max_price) + " per request under " + hostPath(custom.base_url)] }
-      : adding
-        ? storeRequestInfo(a, e)
-        : svcInfo(str(args.service_id));
-    var shop = !custom && info.shopify;
-    var st = connStatus(a, e);
-    var badge = { connected: ["ok", "check", adding ? "Added" : "Connected"], pending: ["wait", "clock", "Pending"], declined: ["err", "x", "Declined"], expired: ["err", "clock", "Expired"], failed: ["err", "x", "Not sent"] }[st];
-    var fail = st === "failed" && e.result != null ? firstLine(e.result).replace(/^ERROR:\s*/, "") : "";
-    // Shopify: the tile already says Shopify, so the subtitle is the storefront's domain and its cap.
-    var sub = shop
-      ? shop.host && shop.host !== info.name.toLowerCase() ? siteHtml(shop) : ""
-      : esc(custom ? info.provider : (info.provider ? "by " + info.provider : "") + (info.pricing ? " · " + info.pricing : ""));
-    if (shop && !fail && num(info.maxPrice)) sub += (sub ? " · " : "") + "up to " + esc(money(info.maxPrice)) + " an order";
-    var name = shop && info.name === shop.host ? domainHtml(info.name) : esc(info.name);
-    return (
-      '<div class="card conn ' + st + (shop ? " shopc" : "") + '"><div class="rrow">' + tileHtml(info, "t28") +
-      '<span class="rr-what"><span class="rr-name">' + (adding ? "Asked to add " : "Asked to connect ") + name + "</span>" + (sub ? '<span class="rr-sub">' + sub + "</span>" : "") + "</span>" +
-      '<span class="pill ' + badge[0] + '">' + icon(badge[1]) + badge[2] + "</span></div>" +
-      (custom ? '<div class="c-flag">' + icon("warn") + "Not in the directory · proposed by the agent</div>" : "") +
-      (adding && st === "pending" ? '<div class="c-note">Not in your services yet. Approving adds it and connects it to ' + esc(a.name) + ".</div>" : "") +
-      (fail ? '<div class="c-fail">' + esc(fail.slice(0, 200)) + "</div>" : "") +
-      "</div>"
-    );
+    var rq = storeRequest(e);
+    var info;
+    var kind = "directory";
+    if (custom) {
+      kind = "x402";
+      info = { id: "", name: str(custom.name).slice(0, 60) || "New service", provider: "", host: hostOnly(custom.base_url), glyph: "globe", color: "#7C8799", maxPrice: str(custom.max_price).replace(/^\$/, "") };
+    } else if (!rq.is) {
+      info = svcInfo(str(args.service_id));
+      if (info.shopify) kind = "shopify";
+    } else if (rq.kind === "shopify") {
+      kind = "shopify";
+      info = storeRequestInfo(a, e);
+    } else if (rq.kind === "directory") info = svcInfo(rq.sid, rq.named);
+    else {
+      // An x402 API (or not known yet): its host until the wallet names it.
+      kind = "x402";
+      var known = rq.sid ? svcInfo(rq.sid, rq.named) : null;
+      var host = rq.host || rq.link.host;
+      info = { id: rq.sid, name: rq.named || (known && known.name !== prettyId(rq.sid) ? known.name : "") || host || "a service", provider: "", host: host, glyph: "globe", color: "#7C8799", maxPrice: rq.price || (known ? known.maxPrice : "") };
+    }
+    return { info: info, kind: kind, custom: !!custom, reason: str(args.reason).replace(/\s+/g, " ").trim().slice(0, 400) };
   }
-  function cardsFor(a, e) {
+  /**
+   * One meta line (§18): a store its storefront domain; an x402 API its host and price; a directory
+   * service its provider and cap. HTML.
+   */
+  function requestMeta(rq) {
+    var info = rq.info;
+    var capv = num(info.maxPrice);
+    if (rq.kind === "shopify") return info.shopify ? siteHtml(info.shopify) : esc(info.name);
+    if (rq.kind === "x402") return [esc(info.host), capv != null ? "up to " + esc(money(capv)) + " per request" : ""].filter(Boolean).join(" · ");
+    return [esc(info.provider), capv != null ? "up to " + esc(money(capv)) + " per request" : esc(info.pricing)].filter(Boolean).join(" · ");
+  }
+  function requestName(rq) {
+    return rq.info.shopify && rq.info.name === rq.info.shopify.host ? domainHtml(rq.info.name) : esc(rq.info.name);
+  }
+  /** How a connection request ended, from the log alone: connected / declined / expired / failed / pending / "". */
+  function logConnStatus(a, e) {
+    if (e.result == null) return "pending";
+    var r = str(e.result);
+    if (/^There is no service|^Give service_id|always available; it does not need/.test(r)) return "";
+    var st = connStatusFromText(r);
+    if (st === "pending") {
+      var id = approvalIdIn(r);
+      var res = id ? resolvedBy(a, e, id) : null;
+      var rr = res ? str(res.result) : "";
+      var s2 = /^Owner approved/.test(rr) ? "connected" : connStatusFromText(rr);
+      if (s2 && s2 !== "pending") st = s2;
+      if (st === "pending" && agentHasService(a, requestedId(e))) st = "connected";
+    }
+    if (!st) st = e.isError || REFUSED_RE.test(r) ? "failed" : agentHasService(a, requestedId(e)) ? "connected" : "";
+    return st;
+  }
+  /** The same, with what the owner decided in the embed since (for the step list). */
+  function connStatus(a, e) {
+    var st = logConnStatus(a, e);
+    if (st !== "pending") return st;
+    var ap = approvals[waitIdOf(a, e)];
+    if (ap && ap.phase === "decided") return ap.status === "approved" ? "connected" : ap.status === "expired" ? "expired" : "declined";
+    return "pending";
+  }
+  function connLine(a, e, st) {
+    var rq = requestInfo(a, e);
+    var nm = "<b>" + requestName(rq) + "</b>";
+    if (st === "connected") return evHtml({ ic: tileHtml(rq.info, "t16"), text: "Connected " + nm });
+    if (st === "declined") return evHtml({ ic: icon("x"), text: "You declined connecting " + nm });
+    return evHtml({ ic: icon("clock"), text: "Request to connect " + nm + " expired" });
+  }
+  /**
+   * What one tool entry adds to the thread: [{ zone: "event" | "card", key, html }] or a decision
+   * ({ zone: "decide", id, e }) while it waits for the owner.
+   */
+  function entryItems(a, e, t) {
     var out = [];
     if (e.kind !== "tool") return out;
     var r = e.result == null ? null : str(e.result);
     var key = function (s) { return "c:" + a.name + ":" + e.id + ":" + s; };
     if (e.name === "request_service") {
-      if (r == null || !/^There is no service|^Give service_id|always available; it does not need/.test(r)) out.push({ key: key("conn"), html: connCard(a, e) });
+      var st = logConnStatus(a, e);
+      if (st === "pending") {
+        var wid = waitIdOf(a, e);
+        if (wid) out.push({ zone: "decide", id: wid, e: e });
+      } else if (st && st !== "failed") out.push({ zone: "event", key: key("conn"), html: connLine(a, e, st) });
+      // "failed": the wallet refused the link before it reached you. It stays a calm step.
       return out;
+    }
+    if (e.name !== "check_approval") {
+      var w = waitIdOf(a, e);
+      if (w) {
+        // A payment waiting for the owner. The check_approval that resolves it shows the outcome.
+        if (!resolvedBy(a, e, w)) out.push({ zone: "decide", id: w, e: e });
+        return out;
+      }
     }
     if (r == null) return out;
     var rc, b;
     // Shopify bridge responses get their own cards; a paid checkout's order card carries the receipt.
-    var sc = shopCards(a, e, key);
+    var sc = shopCards(a, e, key, t);
     if (sc) return sc;
-    // Quantcomm research cards carry their own receipt line (§17.4).
+    // Quantcomm research cards carry their own paid line (§17.4).
     var qcs = qcCards(a, e, key);
     if (qcs) return qcs;
     if (e.name === "fetch_url" || e.name === "check_approval") {
       rc = parseReceipt(r);
-      if (rc && rc.verb === "Sent") out.push({ key: key("rcpt"), html: receiptCard(rc, e) });
-      else if (rc && rc.prep === "to") {
-        out.push({ key: key("rcpt"), html: receiptCard(rc, e) });
-        var o = parseOrder(r);
-        if (o) out.push({ key: key("order"), html: orderCard(o, e) });
-      }
+      var o = rc && rc.prep === "to" ? parseOrder(r) : null;
+      if (o) out.push({ zone: "card", key: key("order"), html: orderCard(o, e, rc) });
+      else if (rc && (rc.verb === "Sent" || rc.prep === "to")) out.push({ zone: "event", key: key("rcpt"), html: receiptLine(rc, e) });
       b = parseBlocked(r);
-      if (b) out.push({ key: key("blocked"), html: blockedCard(b) });
+      if (b) out.push({ zone: "card", key: key("blocked"), html: blockedCard(b) });
+      if (!rc && !b && e.name === "check_approval") {
+        // A payment the owner declined, or that expired. Service outcomes show on the request itself.
+        var pd = r.match(/^The owner denied the (\$[\d,.]+) payment to (.{1,80}?)\. /);
+        var pe = r.match(/^The approval request for (\$[\d,.]+) to (.{1,80}?) expired/);
+        if (pd) out.push({ zone: "event", key: key("deny"), html: evHtml({ ic: icon("x"), text: "You declined paying " + strong(pd[1] + " to " + pd[2]) }) });
+        else if (pe) out.push({ zone: "event", key: key("exp"), html: evHtml({ ic: icon("clock"), text: "Approval for " + strong(pe[1] + " to " + pe[2]) + " expired" }) });
+      }
     } else if (e.name === "transfer_usdc") {
       b = parseBlocked(r);
-      if (b) out.push({ key: key("blocked"), html: blockedCard(b) });
-      else if ((rc = parseReceipt(r))) out.push({ key: key("rcpt"), html: receiptCard(rc, e) });
+      if (b) out.push({ zone: "card", key: key("blocked"), html: blockedCard(b) });
+      else if ((rc = parseReceipt(r))) out.push({ zone: "event", key: key("rcpt"), html: receiptLine(rc, e) });
+      else if (/^The owner denied/.test(r)) out.push({ zone: "event", key: key("deny"), html: evHtml({ ic: icon("x"), text: "You declined sending " + strong(money(objArgs(e).amount) + " to " + shortAddr(objArgs(e).to)) }) });
     } else if (e.name === "submit_bounty") {
       rc = parseReceipt(r);
-      if (rc) out.push({ key: key("earn"), html: earnedCard(rc, e) });
-      else if (/^Work rejected/.test(r)) out.push({ key: key("rej"), html: '<div class="chip-card warn">' + icon("x") + "<span>Work rejected · " + esc(firstLine(r).replace(/^Work rejected \(not paid\):\s*/, "")) + "</span></div>" });
+      if (rc) out.push({ zone: "event", key: key("earn"), html: earnedLine(rc, e) });
+      else if (/^Work rejected/.test(r)) out.push({ zone: "event", key: key("rej"), html: evHtml({ ic: icon("x"), tone: "err", text: "Work rejected", meta: [esc(firstLine(r).replace(/^Work rejected \(not paid\):\s*/, ""))] }) });
     } else if (e.name === "claim_bounty") {
       var title = bountyTitles[str(objArgs(e).bounty_id)] || "";
       var cm = r.match(/^Claimed "(.{1,160}?)"/);
-      if (cm) out.push({ key: key("claim"), html: '<div class="chip-card ok">' + icon("hand") + "<span>Claimed a slot · " + esc(cm[1]) + "</span></div>" });
-      else if (/All slots on this bounty are taken|bounty_full/.test(r)) out.push({ key: key("full"), html: '<div class="chip-card lost">' + icon("flag") + "<span>No slots left" + (title ? " · " + esc(title) : "") + "</span></div>" });
+      if (cm) out.push({ zone: "event", key: key("claim"), html: evHtml({ ic: icon("hand"), text: "Claimed a slot on " + strong(cm[1]) }) });
+      else if (/All slots on this bounty are taken|bounty_full/.test(r)) out.push({ zone: "event", key: key("full"), html: evHtml({ ic: icon("flag"), text: "No slots left" + (title ? " on " + strong(title) : ""), meta: ["another agent got there first"] }) });
     }
     return out;
   }
 
   // ================================================================ approvals (inline dashboard embed, ARCHITECTURE §13.5)
-  /** The approval this agent is waiting on right now, if any. */
+  // An approval is a decision card while the owner may still decide it, even after the agent's
+  // run ended: the approval id comes from the tool result text. The dashboard's embed draws the
+  // card (title, meta, reason, Approve / Deny); the chat adds only the frame, plus a head of its own
+  // while the frame loads or if it can't load. Once decided it collapses to one event line.
+  var APPROVAL_TTL_MS = 10 * 60 * 1000; // wallet-service expires approvals after 10 minutes (APPROVAL_TTL_MS)
+  var WAIT_RE = /^Waiting for the owner|^Asked your owner to (?:add|connect)/;
+  /** The approval this agent's live run is waiting on right now, if any. */
   function activeApprovalId(a) {
     if (!a) return null;
     var s = a.status || {};
@@ -2266,87 +2464,167 @@
       var e = log[i];
       if (e.kind === "user") break;
       if (e.kind !== "tool" || e.result == null) continue;
-      var id = /^Waiting for the owner|^Asked your owner to add/.test(str(e.result)) ? approvalIdIn(e.result) : "";
+      var id = WAIT_RE.test(str(e.result)) ? approvalIdIn(e.result) : "";
       return validApprovalId(id) ? id : null;
     }
     return null;
   }
-  function approvalSubject(a, anchor, kind, id) {
-    var src = anchor;
-    if (anchor && anchor.name === "check_approval") {
-      (a.log || []).forEach(function (e) { if (e.kind === "tool" && e !== anchor && e.result != null && str(e.result).indexOf(id) >= 0 && e.name !== "check_approval") src = e; });
+  /** The approval a tool entry asked for: from its result, or (still running) from the live status. */
+  function waitIdOf(a, e) {
+    if (!e || e.kind !== "tool" || e.name === "check_approval") return "";
+    if (e.result == null) {
+      var s = a.status || {};
+      return a.busy && s.state === "waiting_approval" && validApprovalId(s.approvalId) && runningToolOf(a.log || []) === e ? s.approvalId : "";
     }
-    var args = objArgs(src);
-    if (kind === "service") return src && src.name === "request_service" ? (storeRequest(src).is ? "Add " : "Connect ") + serviceNameOfRequest(src) : "Connect a service";
-    if (src && src.name === "transfer_usdc") return "Send " + money(args.amount) + " to " + shortAddr(args.to);
-    if (src && src.name === "fetch_url") {
-      var w = str(src.result).match(/approve (\$[\d,.]+) to (.{1,60}?)\. Approval id/);
-      var svc = serviceForUrl(str(args.url));
-      var due = w ? w[1] : checkoutTotal(a, str(args.url));
-      return "Pay " + (due ? due + " to " : "") + (svc ? svc.name : w ? w[2] : hostOnly(args.url));
-    }
-    return "Payment";
+    var r = str(e.result);
+    if (!WAIT_RE.test(r)) return "";
+    var id = approvalIdIn(r);
+    return validApprovalId(id) ? id : "";
   }
-  function ensureApproval(a, id) {
-    if (approvals[id]) return approvals[id];
+  /** The entry that asked for this approval: the first whose result names it, else the running one. */
+  function anchorOf(a, id) {
     var log = a.log || [];
-    var anchor = null;
-    for (var i = log.length - 1; i >= 0; i--) {
+    for (var i = 0; i < log.length; i++) {
       var e = log[i];
-      if (e.kind === "user") break;
-      if (e.kind === "tool" && (e.result == null || str(e.result).indexOf(id) >= 0)) { anchor = e; break; }
+      if (e.kind === "tool" && e.name !== "check_approval" && e.result != null && str(e.result).indexOf(id) >= 0) return e;
     }
-    var s = a.status || {};
-    var kind = s.approvalId === id && s.approvalKind === "service" ? "service" : s.approvalId === id && s.approvalKind === "payment" ? "payment" : null;
-    if (!kind) {
-      if (anchor && anchor.name === "request_service") kind = "service";
-      else if (anchor && anchor.name === "transfer_usdc") kind = "transfer";
-      else {
-        kind = "payment";
-        log.forEach(function (x) { if (x.kind === "tool" && x.result != null && str(x.result).indexOf(id) >= 0 && /connecting|connect|adding|add the Shopify store/.test(str(x.result))) kind = "service"; });
-      }
+    return (a.status || {}).approvalId === id ? runningToolOf(log) : null;
+  }
+  /** The later check_approval that settled this approval (approved, paid, denied, expired), if any. */
+  function resolvedBy(a, anchor, id) {
+    var log = a.log || [];
+    for (var i = log.indexOf(anchor) + 1; i > 0 && i < log.length; i++) {
+      var x = log[i];
+      if (x.kind === "tool" && x.name === "check_approval" && x.result != null && !WAIT_RE.test(str(x.result)) && (str(objArgs(x).approval_id).trim() === id || str(x.result).indexOf(id) >= 0)) return x;
     }
-    approvals[id] = { id: id, agent: a.name, anchor: anchor ? anchor.id : null, kind: kind, subject: approvalSubject(a, anchor, kind, id), phase: DASH ? "loading" : "failed", height: 0, status: "", gotSize: false };
-    return approvals[id];
-  }
-  function syncApprovals() {
-    state.order.forEach(function (n) {
-      var a = state.agents[n];
-      var id = activeApprovalId(a);
-      if (id) ensureApproval(a, id);
-    });
-  }
-  function approvalVisible(ap) {
-    return ap.phase === "decided" || activeApprovalId(state.agents[ap.agent]) === ap.id;
-  }
-  function approvalForAnchor(a, entryId) {
-    for (var id in approvals) if (approvals[id].agent === a.name && approvals[id].anchor === entryId) return approvals[id];
     return null;
   }
-  function approvalsAnchoredTo(a, entryId) {
-    return Object.keys(approvals).map(function (k) { return approvals[k]; }).filter(function (ap) { return ap.agent === a.name && ap.anchor === entryId && approvalVisible(ap); });
+  /** Approvals the log never saw settled: [{ id, e }] in log order. */
+  function openApprovals(a) {
+    var out = [];
+    var seen = {};
+    (a.log || []).forEach(function (e) {
+      var id = waitIdOf(a, e);
+      if (!id || seen[id]) return;
+      seen[id] = 1;
+      if (resolvedBy(a, e, id)) return;
+      if (e.name === "request_service" && agentHasService(a, requestedId(e))) return;
+      out.push({ id: id, e: e });
+    });
+    return out;
   }
-  function approvalHtml(ap) {
-    if (ap.phase === "decided") {
-      var d = ap.status === "approved" ? ["ok", "check", "You approved · "] : ap.status === "expired" ? ["exp", "clock", "This request expired · "] : ["err", "x", "You declined · "];
-      return '<div class="it them k-approval"><div class="approval phase-decided" data-approval="' + esc(ap.id) + '"><div class="ap-body"><div class="ap-done ' + d[0] + '">' + icon(d[1]) + esc(d[2] + ap.subject) + "</div></div></div></div>";
+  /** Only the latest few undecided approvals load the embed; older ones are a line. */
+  function embedSet(a) {
+    var s = {};
+    openApprovals(a).slice(-3).forEach(function (o) { s[o.id] = 1; });
+    return s;
+  }
+  /** The agent may be waiting on the owner: a live wait, or a young approval nobody decided yet. */
+  function waitingOnYou(a) {
+    if (activeApprovalId(a)) return true;
+    return openApprovals(a).some(function (o) {
+      var ap = approvals[o.id];
+      return !(ap && ap.phase === "decided") && Date.now() - ts(o.e.at) < APPROVAL_TTL_MS;
+    });
+  }
+  /** What the approval is for, as the chat knows it (the head while the frame loads, and the event lines). Raw strings except meta. */
+  function describeApproval(a, ap, e) {
+    var s = a.status || {};
+    var args = objArgs(e);
+    ap.reason = "";
+    ap.flag = "";
+    ap.meta = "";
+    if (e && e.name === "request_service") {
+      var rq = requestInfo(a, e);
+      ap.kind = "service";
+      ap.verb = "connect";
+      ap.obj = rq.info.name;
+      ap.info = rq.info;
+      ap.meta = requestMeta(rq);
+      ap.reason = rq.reason;
+      ap.flag = rq.custom ? "Not in the directory: the agent wrote this service itself." : rq.kind === "x402" ? "Not in the directory: an API the agent found." : "";
+    } else if (e && e.name === "transfer_usdc") {
+      ap.kind = "transfer";
+      ap.verb = "send";
+      ap.obj = money(args.amount) + " to " + shortAddr(args.to);
+      ap.info = { glyph: "send" };
+      ap.meta = "Transfer from " + esc(a.name) + "'s wallet";
+    } else if (e && e.name === "fetch_url") {
+      var w = e.result != null ? str(e.result).match(/approve (\$[\d,.]+) to (.{1,60}?)\. Approval id/) : null;
+      var svc = serviceForUrl(str(args.url));
+      var due = w ? w[1] : checkoutTotal(a, str(args.url));
+      ap.kind = "payment";
+      ap.verb = "pay";
+      ap.obj = (due ? due + " to " : "") + (svc ? svc.name : w ? w[2] : hostOnly(args.url));
+      ap.info = svc || { glyph: "card" };
+      ap.meta = svc && svc.shopify ? "Shopify checkout · " + siteHtml(svc.shopify) : svc && svc.provider ? esc(svc.provider) : esc(hostOnly(args.url));
+    } else {
+      var service = s.approvalId === ap.id && s.approvalKind === "service";
+      ap.kind = service ? "service" : "payment";
+      ap.verb = service ? "connect" : "pay";
+      ap.obj = service ? "a service" : "a payment";
+      ap.info = { glyph: service ? "plug" : "card" };
     }
+  }
+  function ensureApproval(a, id, anchor) {
+    var ap = approvals[id];
+    if (!ap) ap = approvals[id] = { id: id, agent: a.name, phase: DASH ? "loading" : "failed", height: 0, status: "", gotSize: false, decidedAt: 0 };
+    anchor = anchor || anchorOf(a, id);
+    // Described once, so the frame's markup (and the iframe in it) never changes under the owner.
+    if (anchor && ap.anchor !== anchor.id) {
+      ap.anchor = anchor.id;
+      ap.at = ts(anchor.at);
+      describeApproval(a, ap, anchor);
+    } else if (!ap.verb) describeApproval(a, ap, null);
+    return ap;
+  }
+  function approvalTitle(ap) {
+    return cap(ap.verb) + " " + ap.obj + "?";
+  }
+  /** Past the wallet's 10 minutes: it can't still be pending, so it shows as a line while the frame checks. */
+  function approvalStale(ap) {
+    return !!ap.at && Date.now() - ap.at > APPROVAL_TTL_MS + 30000 && activeApprovalId(state.agents[ap.agent]) !== ap.id;
+  }
+  function staleLine(ap) {
+    var nm = strong(ap.obj);
+    return ap.kind === "service"
+      ? { ic: tileHtml(ap.info, "t16"), text: "Asked to connect " + nm, meta: ["not connected"] }
+      : { ic: icon("clock"), text: "Asked you to approve " + (ap.verb === "send" ? "sending " : "paying ") + nm, meta: ["not paid"] };
+  }
+  function decidedLine(ap) {
+    var nm = strong(ap.obj);
+    var t = ago(ap.decidedAt);
+    var svc = ap.kind === "service";
+    if (ap.status === "approved") return evHtml({ ic: svc ? tileHtml(ap.info, "t16") : icon("check"), text: svc ? "Connected " + nm : "You approved " + (ap.verb === "send" ? "sending " : "paying ") + nm, meta: [svc ? "you" : "", t] });
+    if (ap.status === "expired") return evHtml({ ic: icon("clock"), text: svc ? "Request to connect " + nm + " expired" : "Approval for " + nm + " expired", meta: [t] });
+    return evHtml({ ic: icon("x"), text: "You declined " + (svc ? "connecting " : ap.verb === "send" ? "sending " : "paying ") + nm, meta: [t] });
+  }
+  /** Stable markup (id, subject and theme only), so a re-render never re-creates the iframe. Phases are classes. */
+  function approvalHtml(ap) {
     // theme= keeps the embed's color-scheme equal to ours, so Chrome doesn't paint an opaque backdrop.
     var src = DASH ? DASH + "/?approval=" + encodeURIComponent(ap.id) + "&embed=1&theme=" + effectiveTheme() : "";
     var open = DASH ? DASH + "/?approval=" + encodeURIComponent(ap.id) : "";
     return (
-      '<div class="it them k-approval"><div class="approval" data-approval="' + esc(ap.id) + '">' +
-      '<div class="ap-head">' + icon("shieldCheck") + "<span>Needs your approval</span>" + '<span class="ap-sub">' + esc(ap.subject) + "</span></div>" +
-      '<div class="ap-body">' +
-      (src ? '<div class="ap-skel"><span></span><span></span><span></span></div><iframe class="ap-frame" title="Approve or deny" src="' + esc(src) + '" sandbox="allow-scripts allow-same-origin allow-forms" referrerpolicy="no-referrer"></iframe>' : "") +
-      '<div class="ap-fallback"><div class="ap-fb-what">' + esc(ap.subject) + '</div><div class="ap-fb-text">Waiting for your approval. Approve on your phone or the dashboard.</div>' +
-      (open ? '<a class="btn-pill" href="' + esc(open) + '" target="_blank" rel="noopener">' + icon("layout") + "Open dashboard</a>" : "") +
-      "</div></div></div></div>"
+      '<div class="approval" data-approval="' + esc(ap.id) + '">' +
+      '<div class="ap-wait"><div class="ap-head">' + tileHtml(ap.info, "t20") + '<div class="ap-ht"><div class="ap-title">' + esc(approvalTitle(ap)) + "</div>" + (ap.meta ? '<div class="ap-meta">' + ap.meta + "</div>" : "") + "</div></div>" +
+      '<div class="ap-skel"><span></span><span></span></div>' +
+      '<div class="ap-fallback">' +
+      (ap.flag ? '<p class="ap-flag">' + icon("warn") + "<span>" + esc(ap.flag) + "</span></p>" : "") +
+      (ap.reason ? '<button type="button" class="ap-reason" data-action="ap-reason" title="Show all">“' + esc(ap.reason) + "”</button>" : "") +
+      '<div class="ap-fb"><span>Approve on your phone or the dashboard.</span>' + (open ? '<a class="btn-2" href="' + esc(open) + '" target="_blank" rel="noopener">Open dashboard' + icon("external") + "</a>" : "") + "</div>" +
+      "</div></div>" +
+      (src ? '<iframe class="ap-frame" title="' + esc(approvalTitle(ap)) + '" src="' + esc(src) + '" sandbox="allow-scripts allow-same-origin allow-forms" referrerpolicy="no-referrer"></iframe>' : "") +
+      '<div class="ap-stale">' + evHtml(staleLine(ap)) + "</div>" +
+      "</div>"
     );
   }
-  function approvalItem(ap, at) {
-    // Stable HTML (depends on id + decided only) so the iframe is never re-created by a re-render.
-    return { key: "ap:" + ap.id + (ap.phase === "decided" ? ":done" : ""), side: "them", who: ap.agent, kind: "approval", at: at, stable: true, html: approvalHtml(ap) };
+  /** The decision card (stable while undecided), or one event line once decided. */
+  function decisionItem(a, d, opts) {
+    var ap = ensureApproval(a, d.id, d.e);
+    var scope = opts.scope || "";
+    if (ap.phase === "decided") return { key: scope + "apd:" + ap.id, kind: "event", html: decidedLine(ap) };
+    if (activeApprovalId(a) !== ap.id && opts.embed && !opts.embed[ap.id]) return { key: scope + "aps:" + ap.id, kind: "event", html: evHtml(staleLine(ap)) };
+    return { key: "ap:" + ap.id, kind: "decision", stable: true, html: '<div class="it them k-decision">' + approvalHtml(ap) + "</div>" };
   }
   function applyApprovals() {
     document.querySelectorAll(".approval[data-approval]").forEach(function (el) {
@@ -2354,15 +2632,24 @@
       if (!ap || ap.phase === "decided") return;
       var f = el.querySelector("iframe");
       if (f && !f.__wired) {
+        // A new frame (first render, or the theme changed): it has to tell us its size again.
         f.__wired = true;
-        if (ap.phase !== "ready" && ap.phase !== "failed") ap.phase = "loading";
-        setTimeout(function () {
-          if (!ap.gotSize && ap.phase === "loading") {
+        ap.phase = "loading";
+        ap.gotSize = false;
+        var t0 = Date.now();
+        var check = function () {
+          if (ap.phase !== "loading" || !f.isConnected) return;
+          // No word from the dashboard in 3 s: it isn't running. A slow approval gets 12 s.
+          if ((!ap.gotSize && Date.now() - t0 >= EMBED_TIMEOUT_MS) || Date.now() - t0 >= 12000) {
             ap.phase = "failed";
             applyApprovals();
+            return;
           }
-        }, EMBED_TIMEOUT_MS);
+          setTimeout(check, 500);
+        };
+        setTimeout(check, EMBED_TIMEOUT_MS);
       }
+      el.classList.toggle("stale", approvalStale(ap));
       ["loading", "ready", "failed"].forEach(function (p) { el.classList.toggle("phase-" + p, ap.phase === p); });
       if (f) f.style.height = ap.phase === "ready" ? ap.height + "px" : "";
     });
@@ -2383,19 +2670,36 @@
       if (!isFinite(h) || h <= 0) return;
       ap.gotSize = true;
       ap.height = Math.max(60, Math.min(640, Math.ceil(h)));
-      if (ap.phase !== "decided") ap.phase = "ready";
-      applyApprovals();
+      if (ap.phase === "ready") applyApprovals();
+      else if (ap.phase !== "decided" && h >= 110) {
+        // A real card, not the embed's "Loading…" note. Wait a beat: an approval decided earlier
+        // announces its status right after its first size, and then it never shows as a card.
+        // Past the wallet's 10 minutes it is surely decided: give its status longer to arrive.
+        clearTimeout(ap.readyT);
+        ap.readyT = setTimeout(function () {
+          if (ap.phase === "loading" || ap.phase === "failed") {
+            ap.phase = "ready";
+            applyApprovals();
+          }
+        }, approvalStale(ap) ? 1500 : 250);
+      }
     } else if (d.type === "allowance:approval") {
       var st = str(d.status);
       if (st !== "approved" && st !== "denied" && st !== "expired") return;
+      // Seen as a card first: decided just now. Found decided while loading: when is unknown.
+      ap.decidedAt = ap.phase === "ready" ? Date.now() : 0;
       ap.phase = "decided";
       ap.status = st;
+      clearTimeout(ap.readyT);
       schedule();
     }
     if (sc && sc.__stick) requestAnimationFrame(function () { sc.scrollTop = sc.scrollHeight; });
   });
 
   // ================================================================ turns → thread items
+  // One turn reads like Linear's agent panel: the owner's message, "Worked for 1m 40s ▸" (every
+  // step and every interim sentence inside), the lines for what happened (payments, connections),
+  // the agent's final reply, then at most one card per result and the decisions waiting on you.
   function buildTurns(a) {
     var log = a.log || [];
     var turns = [];
@@ -2417,39 +2721,62 @@
     turns.forEach(function (t) {
       t.start = ts(t.user ? t.user.at : t.entries.length ? t.entries[0].at : 0);
       var end = t.start;
+      var lastTool = -1;
       t.error = null;
-      t.entries.forEach(function (e) {
+      t.entries.forEach(function (e, i) {
         var x = ts(e.at) + (e.kind === "tool" && e.ms ? e.ms : 0);
         if (x > end) end = x;
         if (e.kind === "error") t.error = e;
+        if (e.kind === "tool") lastTool = i;
       });
       t.end = end;
       t.tools = t.entries.filter(function (e) { return e.kind === "tool"; });
       t.thoughts = t.entries.filter(function (e) { return e.kind === "assistant" && str(e.reasoning).trim(); });
+      // An assistant sentence followed by more tool calls is narration ("I'll look for…"): it goes
+      // inside "Worked for…". Only what it said after its last tool call is the reply.
+      t.interim = {};
+      t.finals = [];
+      t.entries.forEach(function (e, i) {
+        if (e.kind !== "assistant" || !str(e.text).trim()) return;
+        if (i < lastTool) t.interim[e.id] = 1;
+        else t.finals.push(e);
+      });
     });
     return turns;
+  }
+  /** Model time in a turn: everything that wasn't a tool running. */
+  function thinkMs(t) {
+    var prev = t.start;
+    var total = 0;
+    t.entries.forEach(function (e) {
+      var at = ts(e.at);
+      if (at > prev) total += at - prev;
+      var end = at + (e.kind === "tool" && e.ms ? e.ms : 0);
+      if (end > prev) prev = end;
+    });
+    return total;
   }
   function liveLabel(a, t) {
     var s = a.status || {};
     var run = runningToolOf(t.entries);
     if (s.state === "waiting_approval") return { text: waitingText(a, run), tone: "amber" };
-    if (s.state === "retrying") return { text: "Model busy, retrying" + (s.attempt ? " (attempt " + str(s.attempt) + ")" : ""), tone: "amber", until: a.retryUntil || 0 };
+    if (s.state === "retrying") return { text: "Model busy, retrying" + (s.attempt ? " (attempt " + str(s.attempt) + ")" : ""), until: a.retryUntil || 0 };
     if (run) return { text: stepOf(a, run).live };
     if (s.state === "thinking") return { text: t.tools.length ? "Thinking about what it found" : "Thinking" };
     return { text: "Working" };
   }
-  function errorNote(a, e) {
+  function errorLine(a, e) {
     var t = str(e.text);
-    if (/^Stopped by owner/.test(t)) return '<div class="note">' + icon("stop") + "<span>You stopped " + esc(a.name) + "</span></div>";
-    return '<div class="note err">' + icon("warn") + "<span>" + esc(t) + "</span></div>";
+    if (/^Stopped by owner/.test(t)) return evHtml({ ic: icon("stop"), text: "You stopped " + strong(a.name) });
+    return evHtml({ ic: icon("warn"), tone: "err", text: esc(t) });
   }
-  function stepRow(a, e, live) {
+  /** One muted line per step: "Searched the directory for “flood” · 1 result". Marks only for waiting or failed. */
+  function stepRow(a, e) {
     var open = !!ui.openStep[e.id];
     var info = stepOf(a, e);
     var st = info.st;
-    var stIcon = st === "run" ? '<span class="spin"></span>' : st === "ok" ? icon("check") : st === "err" ? icon("x") : st === "soft" ? icon("info") : icon("clock");
+    var mark = st === "run" ? '<span class="spin"></span>' : st === "err" ? icon("x") : st === "wait" ? icon("clock") : "";
     var label = st === "run" || (st === "wait" && e.result == null) ? info.live : info.label;
-    var ms = e.ms != null ? (e.ms / 1000).toFixed(1) + "s" : e.result == null && live ? '<span data-since="' + ts(e.at) + '"></span>' : "";
     var args = e.args;
     var argText = typeof args === "string" ? args : JSON.stringify(args == null ? {} : args, null, 2);
     var raw = open
@@ -2458,90 +2785,92 @@
       : "";
     return (
       '<div class="step ' + st + '"><button class="step-head" data-action="step" data-id="' + esc(e.id) + '" aria-expanded="' + open + '">' +
-      '<span class="step-ic' + (info.icon === "card" ? " pay" : "") + '">' + icon(info.icon) + "</span>" +
-      '<span class="step-txt"><span class="step-label">' + esc(label) + "</span>" + (info.detail ? '<span class="step-detail">' + esc(info.detail) + "</span>" : "") + "</span>" +
-      '<span class="step-ms">' + ms + '</span><span class="step-st">' + stIcon + "</span></button>" + raw + "</div>"
+      '<span class="step-mark">' + mark + '</span><span class="step-txt">' + esc(label) + (info.detail ? '<span class="step-detail"> · ' + esc(info.detail) + "</span>" : "") + "</span></button>" + raw + "</div>"
     );
   }
-  function thoughtRow(e) {
-    var id = "r:" + e.id;
+  /** Every "Thought it through" folded into one line; it opens to the model's reasoning. */
+  function thoughtRow(a, t) {
+    var id = "think:" + a.name + ":" + t.id;
     var open = !!ui.openStep[id];
+    var ms = thinkMs(t);
     return (
       '<div class="step ok"><button class="step-head" data-action="step" data-id="' + esc(id) + '" aria-expanded="' + open + '">' +
-      '<span class="step-ic">' + icon("spark") + '</span><span class="step-txt"><span class="step-label">Thought it through</span><span class="step-detail">' + esc(firstLine(e.reasoning)) + "</span></span>" +
-      '<span class="step-ms"></span><span class="step-st">' + icon("check") + "</span></button>" +
-      (open ? '<div class="step-raw"><div class="k">Model reasoning</div><pre>' + esc(e.reasoning) + "</pre></div>" : "") + "</div>"
+      '<span class="step-mark"></span><span class="step-txt">' + esc(ms >= 1000 ? "Thought for " + dur(ms) : "Thought it through") + "</span></button>" +
+      (open ? '<div class="step-raw"><pre>' + esc(t.thoughts.map(function (e) { return str(e.reasoning).trim(); }).join("\n\n")) + "</pre></div>" : "") + "</div>"
     );
   }
   function activityHtml(a, t, live, scope) {
     var key = scope + a.name + ":" + t.id;
     var open = !!ui.openAct[key];
-    var nSteps = t.tools.length;
+    var hasBody = t.tools.length > 0 || t.thoughts.length > 0 || Object.keys(t.interim).length > 0;
     var cls = "act" + (open ? " open" : "");
     var head;
     if (live) {
       var L = liveLabel(a, t);
       cls += " live" + (L.tone ? " " + L.tone : "");
       head =
-        '<span class="spin"></span><span class="act-text">' + esc(L.text) + "…</span>" +
-        (L.until ? '<span class="act-time" data-until="' + L.until + '"></span>' : '<span class="act-time" data-since="' + t.start + '"></span>') +
-        (nSteps || t.thoughts.length ? '<span class="chev">' + icon("chev") + "</span>" : "");
+        (L.tone === "amber" ? '<span class="act-mark">' + icon("clock") + "</span>" : '<span class="spin"></span>') + '<span class="act-text">' + esc(L.text) + "…</span>" +
+        (L.until ? '<span class="act-time" data-until="' + L.until + '"></span>' : '<span class="act-time" data-since="' + t.start + '"></span>');
     } else {
-      var blocked = t.tools.filter(function (e) { return e.result != null && parseBlocked(e.result); }).length;
       var stopped = t.error && /^Stopped by owner/.test(str(t.error.text));
       var d = dur(t.end - t.start);
-      var text = nSteps ? (stopped ? "Stopped after " : "Worked for ") + d + " · " + plural(nSteps, "step", "steps") : "Thought for " + d;
-      head = '<span class="act-ic">' + icon(nSteps ? "check" : "spark") + '</span><span class="act-text">' + esc(text) + "</span>" + (blocked ? '<span class="act-flag">· ' + blocked + " blocked</span>" : "") + '<span class="chev">' + icon("chev") + "</span>";
+      head = '<span class="act-text">' + esc(t.tools.length ? (stopped ? "Stopped after " : "Worked for ") + d : "Thought for " + d) + "</span>";
     }
+    if (hasBody) head += '<span class="chev">' + icon("chev") + "</span>";
     var body = "";
-    if (open) {
+    if (open && hasBody) {
       var rows = [];
+      if (t.thoughts.length) rows.push(thoughtRow(a, t));
       t.entries.forEach(function (e) {
-        if (e.kind === "assistant" && str(e.reasoning).trim()) rows.push(thoughtRow(e));
-        else if (e.kind === "tool") rows.push(stepRow(a, e, live));
+        if (e.kind === "assistant" && t.interim[e.id]) rows.push('<div class="step say">' + md(e.text) + "</div>");
+        else if (e.kind === "tool") rows.push(stepRow(a, e));
       });
-      if (rows.length) body = '<div class="steps">' + rows.join("") + "</div>";
+      body = '<div class="steps">' + rows.join("") + "</div>";
     }
-    return '<div class="' + cls + '"><button class="act-head" data-action="act" data-key="' + esc(key) + '" aria-expanded="' + open + '">' + head + "</button>" + body + "</div>";
-  }
-  function typingHtml() {
-    return '<div class="typing" aria-label="typing"><span></span><span></span><span></span></div>';
+    return '<div class="' + cls + '">' + (hasBody ? '<button class="act-head" data-action="act" data-key="' + esc(key) + '" aria-expanded="' + open + '">' + head + "</button>" : '<div class="act-head">' + head + "</div>") + body + "</div>";
   }
   function turnItems(a, t, live, opts) {
     var who = a.name;
     var scope = opts.scope || "";
     var pre = scope + who + ":";
-    var items = [];
-    if (t.tools.length || t.thoughts.length || live) items.push({ key: "act:" + pre + t.id, side: "them", who: who, kind: "act", at: t.start + 1, html: activityHtml(a, t, live, scope) });
-    var anchored = {};
+    var head = [];
+    var events = [];
+    var cards = [];
+    var decide = [];
+    var tail = [];
+    if (t.tools.length || t.thoughts.length || Object.keys(t.interim).length || live) head.push({ key: "act:" + pre + t.id, kind: "act", at: t.start + 1, html: activityHtml(a, t, live, scope) });
+    var asked = {};
     t.entries.forEach(function (e) {
-      if (e.kind === "assistant") {
-        if (str(e.text).trim()) items.push({ key: "a:" + pre + e.id, side: "them", who: who, kind: "bubble", at: ts(e.at), text: e.text });
-      } else if (e.kind === "tool") {
-        var end = ts(e.at) + (e.ms || 0);
-        cardsFor(a, e).forEach(function (c) { items.push({ key: scope + c.key, side: "them", who: who, kind: "card", at: end, html: c.html, rrow: c.html.indexOf('<div class="card rgroup">') === 0 }); });
-        approvalsAnchoredTo(a, e.id).forEach(function (ap) {
-          anchored[ap.id] = 1;
-          items.push(approvalItem(ap, end + 1));
+      if (e.kind === "tool") {
+        entryItems(a, e, t).forEach(function (x) {
+          if (x.zone === "decide") {
+            if (!asked[x.id]) {
+              asked[x.id] = 1;
+              decide.push(decisionItem(a, x, opts));
+            }
+          } else (x.zone === "event" ? events : cards).push({ key: scope + x.key, kind: x.zone, html: x.html });
         });
-      } else if (e.kind === "error") {
-        items.push({ key: "e:" + pre + e.id, side: "them", who: who, kind: "note", at: ts(e.at), html: errorNote(a, e) });
-      }
+      } else if (e.kind === "error") tail.push({ key: "e:" + pre + e.id, kind: "event", html: errorLine(a, e) });
     });
     if (live) {
+      // Waiting on an approval whose request isn't in this turn (a check_approval after a restart).
       var id = activeApprovalId(a);
-      if (id && approvals[id] && !anchored[id]) items.push(approvalItem(approvals[id], Date.now()));
-      var s = a.status || {};
-      if (!opts.noTyping && (s.state === "thinking" || s.state === "retrying")) items.push({ key: "typing:" + pre, side: "them", who: who, kind: "typing", at: null, html: typingHtml() });
+      if (id && !asked[id]) decide.push(decisionItem(a, { id: id, e: anchorOf(a, id) || runningToolOf(t.entries) }, opts));
     }
-    return items;
+    var finals = t.finals.map(function (e) { return { key: "a:" + pre + e.id, kind: "reply", at: ts(e.at), text: e.text }; });
+    return head.concat(events, finals, cards, decide, tail).map(function (it) {
+      it.side = "them";
+      it.who = who;
+      return it;
+    });
   }
   function agentItems(a, opts) {
     var turns = buildTurns(a);
+    var o = { scope: opts.scope || "", embed: embedSet(a) };
     var items = [];
     turns.forEach(function (t, i) {
-      if (t.user) items.push({ key: "u:" + (opts.scope || "") + a.name + ":" + t.user.id, side: "me", kind: "bubble", at: ts(t.user.at), text: t.user.text });
-      items = items.concat(turnItems(a, t, i === turns.length - 1 && !!a.busy, opts));
+      if (t.user) items.push({ key: "u:" + o.scope + a.name + ":" + t.user.id, side: "me", kind: "user", at: ts(t.user.at), text: t.user.text });
+      items = items.concat(turnItems(a, t, i === turns.length - 1 && !!a.busy, o));
     });
     return items;
   }
@@ -2608,104 +2937,50 @@
       return clusterGroup(c).indexOf(def.id) >= 0 && def.members.some(function (n) { return c.members[n]; });
     });
   }
-  function mergeByAt(lists) {
-    var out = [];
-    var idx = lists.map(function () { return 0; });
-    for (;;) {
-      var best = -1;
-      var bestAt = Infinity;
-      for (var i = 0; i < lists.length; i++) {
-        var it = lists[i][idx[i]];
-        if (!it) continue;
-        var t = it.at == null ? Infinity : it.at;
-        if (best < 0 || t < bestAt) { best = i; bestAt = t; }
-      }
-      if (best < 0) return out;
-      out.push(lists[best][idx[best]++]);
-    }
-  }
+  /** A broadcast thread: your message once, then each agent's reply as one block (Grid shows the race). */
   function groupItems(def, names) {
     var maps = {};
+    var embs = {};
     names.forEach(function (n) {
       var a = state.agents[n];
       var turns = buildTurns(a);
       var m = {};
       turns.forEach(function (t, i) { if (t.user) m[t.user.id] = { t: t, live: i === turns.length - 1 && !!a.busy }; });
       maps[n] = m;
+      embs[n] = embedSet(a);
     });
     var items = [];
     broadcastClusters(def).forEach(function (c) {
-      items.push({ key: "gu:" + c.key, side: "me", kind: "bubble", at: c.t, text: c.text });
+      items.push({ key: "gu:" + c.key, side: "me", kind: "user", at: c.t, text: c.text });
       var got = Object.keys(c.members).filter(function (n) { return state.agents[n]; });
-      items.push({
-        key: "gm:" + c.key,
-        kind: "meta",
-        html: '<div class="it me k-meta"><div class="meta bc">' + icon("megaphone") + "<span>Your message went to " + esc(plural(got.length, "agent", "agents")) + "</span>" + stackHtml(got, 14, 6) + "</div></div>",
-      });
-      var lists = [];
+      items.push({ key: "gm:" + c.key, kind: "meta", html: '<div class="it me k-meta"><div class="meta bc">' + stackHtml(got, 14, 6) + "<span>Sent to " + esc(plural(got.length, "agent", "agents")) + "</span></div></div>" });
       names.forEach(function (n) {
         var u = c.members[n];
         var tm = u && maps[n][u.id];
-        if (tm) lists.push(turnItems(state.agents[n], tm.t, tm.live, { scope: "g:", noTyping: true }));
+        if (!tm) return;
+        var ti = turnItems(state.agents[n], tm.t, tm.live, { scope: "g:", embed: embs[n] });
+        if (!ti.length) return;
+        items.push({ key: "gw:" + c.key + ":" + n, kind: "who", html: '<div class="it them k-who"><div class="who">' + avatarHtml(n, 18) + "<b>" + esc(n) + "</b></div></div>" });
+        items = items.concat(ti);
       });
-      items = items.concat(mergeByAt(lists));
     });
-    var typers = names.filter(function (n) {
-      var a = state.agents[n];
-      var s = a.status || {};
-      return a.busy && (s.state === "thinking" || s.state === "retrying");
-    });
-    if (typers.length) {
-      items.push({
-        key: "gtyping",
-        side: "them",
-        who: typers.length === 1 ? typers[0] : "",
-        kind: "typing",
-        at: null,
-        html: '<div class="typing-row">' + (typers.length > 1 ? '<span class="typing-avs">' + typers.map(function (n) { return avatarHtml(n, 24); }).join("") + "</span>" : "") + typingHtml() + "</div>",
-      });
-    }
     return items;
   }
-  /** Separators, sender runs, tails, group labels, "Delivered". */
-  function finalize(items, opts) {
+  /** Day separators, then each item in its row. Spacing between kinds is CSS (adjacent siblings). */
+  function finalize(items) {
     var list = [];
     var lastAt = 0;
     items.forEach(function (it) {
-      if (it.at != null && it.kind !== "typing" && it.kind !== "approval") {
+      if (it.at != null) {
         if (!lastAt || it.at - lastAt > GAP_MS) list.push({ key: "sep:" + it.key, kind: "sep", html: '<div class="sep">' + sepLabel(it.at) + "</div>" });
         if (it.at > lastAt) lastAt = it.at;
       }
       list.push(it);
     });
-    // Back-to-back micropayments read as one short statement, not a stack of cards.
-    for (var g = list.length - 1; g > 0; g--) {
-      var x = list[g], y = list[g - 1];
-      if (x.rrow && y.rrow && x.who === y.who) {
-        y.html = y.html.replace(/<\/div>$/, "") + x.html.replace(/^<div class="card rgroup">/, "");
-        y.key += "+" + x.key;
-        list.splice(g, 1);
-      }
-    }
-    var same = function (x, y) { return x && y && x.kind !== "sep" && y.kind !== "sep" && x.side === y.side && (x.who || "") === (y.who || ""); };
-    var neighbor = function (i, step) {
-      for (var j = i + step; j >= 0 && j < list.length; j += step) {
-        if (list[j].kind === "meta") continue;
-        return list[j];
-      }
-      return null;
-    };
-    return list.map(function (it, i) {
-      if (it.kind === "sep" || it.kind === "meta") return { key: it.key, html: it.html };
-      var p = neighbor(i, -1);
-      var q = neighbor(i, 1);
-      var first = !same(p, it);
-      var last = !same(q, it);
-      if (it.stable) return { key: it.key, html: it.html };
-      var cont = first ? "" : p.kind === "bubble" && it.kind === "bubble" ? " cont" : " cont2";
-      var label = first && it.side === "them" && it.who ? '<div class="who">' + avatarHtml(it.who, 24) + "<b>" + esc(it.who) + "</b>" + (it.at ? '<span class="who-t">' + esc(clock(it.at)) + "</span>" : "") + "</div>" : "";
-      var inner = it.kind === "bubble" ? '<div class="bub ' + it.side + (last ? " tail" : "") + '">' + md(it.text) + "</div>" : it.html;
-      return { key: it.key, html: '<div class="it ' + it.side + cont + " k-" + it.kind + '">' + label + inner + "</div>" };
+    return list.map(function (it) {
+      if (it.kind === "sep" || it.kind === "meta" || it.kind === "who" || it.stable) return { key: it.key, html: it.html };
+      var inner = it.kind === "user" ? '<div class="bub me">' + md(it.text) + "</div>" : it.kind === "reply" ? '<div class="bub them">' + md(it.text) + "</div>" : it.html;
+      return { key: it.key, html: '<div class="it ' + (it.side || "them") + " k-" + it.kind + '">' + inner + "</div>" };
     });
   }
 
@@ -2775,9 +3050,9 @@
   function rowStatus(a) {
     var w = a.wallet || {};
     var s = a.status || {};
-    if (w.frozen) return { tone: "red", badge: "red", text: "Frozen by wallet policy" };
-    if (s.state === "waiting_approval" || activeApprovalId(a)) return { tone: "amber", badge: "amber", text: "Waiting for you" };
-    if (s.state === "retrying") return { tone: "amber", badge: "green", text: "Model busy, retrying…" };
+    if (w.frozen) return { tone: "red", badge: "red", text: "Frozen" };
+    if (s.state === "waiting_approval" || waitingOnYou(a)) return { tone: "amber", badge: "amber", text: "Waiting for you" };
+    if (s.state === "retrying") return { tone: "blue", badge: "green", text: "Model busy, retrying…" };
     if (a.busy || (s.state && s.state !== "idle")) {
       var turns = buildTurns(a);
       var t = turns[turns.length - 1];
@@ -2791,13 +3066,13 @@
     var lm = lastMsg(a);
     var bal = (a.wallet || {}).balance;
     var fresh = ui.fresh[n] && ui.fresh[n] > Date.now();
+    // One line under the name: what it is doing when that matters (the dot carries the color), else its last message.
     return (
       '<button class="row' + (state.selected === n ? " sel" : "") + (fresh ? " fresh" : "") + '" data-select="' + esc(n) + '" data-tip="' + esc(n) + '" data-tip2="' + esc(st ? st.text : money(bal)) + '">' +
       avatarHtml(n, 0, st ? st.badge : "") +
       '<span class="r-main"><span class="r-top"><span class="r-name">' + esc(n) + "</span>" +
       '<span class="r-time">' + esc(relTime(lm.at)) + "</span></span>" +
-      (st ? '<span class="r-status ' + st.tone + '"><span class="sdot"></span>' + esc(st.text) + "</span>" : "") +
-      '<span class="r-prev">' + esc(lm.text) + "</span></span></button>"
+      '<span class="r-prev' + (st ? " r-st" : "") + '">' + esc(st ? st.text : lm.text) + "</span></span></button>"
     );
   }
   function groupSummary(names) {
@@ -2806,7 +3081,7 @@
       var a = state.agents[n];
       var w = a.wallet || {};
       if (w.frozen) frozen++;
-      else if ((a.status || {}).state === "waiting_approval") waiting++;
+      else if ((a.status || {}).state === "waiting_approval" || waitingOnYou(a)) waiting++;
       else if (a.busy) busy++;
       earned += num(w.earnedToday) || 0;
     });
@@ -2822,11 +3097,10 @@
   function groupRowHtml(def) {
     var sel = "group:" + def.id;
     var names = groupMembersOf(def);
-    var g = groupSummary(names);
     var st = groupStatus(names);
     var cl = broadcastClusters(def);
     var last = cl[cl.length - 1];
-    var lm = last ? { text: "You: " + plainPreview(last.text), at: last.t } : { text: names.length ? broadcastLabel(names.length) + ": " + names.join(", ") : "No members here. Tap to edit.", at: 0 };
+    var lm = last ? { text: "You: " + plainPreview(last.text), at: last.t } : { text: names.length ? names.join(", ") : "No members yet", at: 0 };
     if (last) {
       // The latest reply to this group's last broadcast, attributed to the agent who sent it.
       names.forEach(function (n) {
@@ -2844,10 +3118,9 @@
     return (
       '<button class="row grp' + (state.selected === sel ? " sel" : "") + '" ' + attrs + ' data-tip="' + esc(def.name) + '" data-tip2="' + esc(st ? st.text : broadcastLabel(names.length)) + '">' +
       groupAvatarHtml(def, 0, st ? st.badge : "", true) +
-      '<span class="r-main"><span class="r-top"><span class="r-name"><span class="r-bc" title="Broadcast">' + icon("megaphone") + "</span>" + esc(def.name) + "</span>" +
-      (g.earned ? '<span class="r-bal">+' + esc(money(g.earned)) + "</span>" : "") + '<span class="r-time">' + esc(relTime(lm.at)) + "</span></span>" +
-      (st ? '<span class="r-status ' + st.tone + '"><span class="sdot"></span>' + esc(st.text) + "</span>" : "") +
-      '<span class="r-prev">' + esc(lm.text) + "</span></span></button>"
+      '<span class="r-main"><span class="r-top"><span class="r-name">' + esc(def.name) + "</span>" +
+      '<span class="r-time">' + esc(relTime(lm.at)) + "</span></span>" +
+      '<span class="r-prev' + (st ? " r-st" : "") + '">' + esc(st ? st.text : lm.text) + "</span></span></button>"
     );
   }
   function inviteRowHtml(action, ic, title, sub) {
@@ -2895,59 +3168,67 @@
     var tip = b.provider + " allowance account" + (b.account ? " “" + b.account + "”" : "") + " ••" + b.last4 + " (Nessie sandbox). Every payment shows on its statement.";
     return '<span class="hbank" title="' + esc(tip) + '">' + icon("bank") + '<span class="hbank-name">' + esc(b.provider) + " </span>••" + esc(b.last4) + "</span>";
   }
+  /** "$20.00 · Capital One ••0015", then a status mark only when it isn't the quiet normal state. */
   function subtitleHtml(a) {
     var w = a.wallet || {};
     var s = a.status || {};
     var up = ui.balUp[a.name] && ui.balUp[a.name] > Date.now();
+    var parts = [];
+    if (w.balance != null) parts.push('<span class="hb' + (up ? " up" : "") + '">' + esc(money(w.balance)) + "</span>");
     var bank = bankTagHtml(a);
-    var bal = w.balance != null ? '<span class="hb' + (up ? " up" : "") + '">' + esc(money(w.balance)) + "</span> · " + (bank ? bank + " · " : "") : bank ? bank + " · " : "";
-    if (w.frozen) return bal + '<span class="frz">frozen by wallet policy</span>';
-    if (s.state === "waiting_approval" || activeApprovalId(a)) return bal + '<span class="wait">waiting for you</span>';
-    if (s.state === "retrying") return bal + '<span class="wait">model busy, retrying…</span>';
-    if (a.busy || (s.state && s.state !== "idle")) return bal + '<span class="live">working…</span>';
-    if (w.error) return bal + "<span>" + esc(w.error) + "</span>";
-    return bal + "active";
+    if (bank) parts.push(bank);
+    var st = w.frozen ? null : s.state === "waiting_approval" || waitingOnYou(a) ? ["amber", "Waiting for you"] : s.state === "retrying" ? ["blue", "Retrying"] : a.busy || (s.state && s.state !== "idle") ? ["blue", "Working"] : null;
+    if (st) parts.push('<span class="hst ' + st[0] + '" title="' + esc(st[1]) + '"><i></i><span class="hst-w">' + esc(st[1]) + "</span></span>");
+    return parts.join('<span class="dot-sep">·</span>');
   }
   function addMoneyBtn(name, cls) {
     if (!DASH) return "";
-    return '<button class="' + (cls || "sub-act") + '" data-action="add-money" data-agent="' + esc(name) + '" title="Add money from your wallet">' + icon("plusCircle") + "Add money</button>";
+    return '<button class="' + (cls || "btn-2") + '" data-action="add-money" data-agent="' + esc(name) + '" title="Add money to ' + esc(name) + '">' + icon("plus") + "<span>Add money</span></button>";
   }
   function headHtml() {
     var names = selectedNames();
-    var left = '<div class="head-l">' + (!state.connected && state.everOpen ? '<span class="conn-pill">Reconnecting…</span>' : "") + "</div>";
-    var info = '<button class="icon-btn info-btn' + (ui.infoOpen ? " on" : "") + '" data-action="info" title="Details" aria-label="Details">' + icon("info") + "</button>";
-    if (!names.length) return left + '<div class="head-c"></div><div class="head-r"></div>';
+    var info = '<button class="icon-btn info-btn' + (ui.infoOpen ? " on" : "") + '" data-action="info" title="Details" aria-label="Details">' + icon("sidebar") + "</button>";
+    if (!names.length) return '<div class="head-c"></div><div class="head-r"></div>';
     if (isGroup(state.selected)) {
       var def = groupDef(state.selected);
       var g = groupSummary(names);
-      var sub = '<span class="bc">' + icon("megaphone") + esc(broadcastLabel(names.length)) + "</span>" + (g.busy ? ' · <span class="live">' + g.busy + " working…</span>" : "") + (g.waiting ? ' · <span class="wait">' + g.waiting + " waiting for you</span>" : "") + (g.frozen ? ' · <span class="frz">' + g.frozen + " frozen</span>" : "") + (g.earned ? ' · <span class="ok">+' + esc(money(g.earned)) + " today</span>" : "");
-      var seg = '<div class="seg" role="tablist"><button class="' + (ui.view === "thread" ? "on" : "") + '" data-action="view" data-view="thread">' + icon("bubble") + 'Thread</button><button class="' + (ui.view === "grid" ? "on" : "") + '" data-action="view" data-view="grid">' + icon("grid") + "Grid</button></div>";
+      var sub = [esc(plural(names.length, "agent", "agents"))];
+      if (g.frozen) sub.push('<span class="hst red"><i></i>' + g.frozen + " frozen</span>");
+      if (g.waiting) sub.push('<span class="hst amber"><i></i>' + g.waiting + " waiting for you</span>");
+      if (g.busy) sub.push('<span class="hst blue"><i></i>' + g.busy + " working</span>");
+      if (g.earned) sub.push('<span class="pos">+' + esc(money(g.earned)) + " today</span>");
+      var seg = '<div class="seg" role="tablist"><button class="' + (ui.view === "thread" ? "on" : "") + '" data-action="view" data-view="thread">' + icon("bubble") + '<span>Thread</span></button><button class="' + (ui.view === "grid" ? "on" : "") + '" data-action="view" data-view="grid">' + icon("grid") + "<span>Grid</span></button></div>";
       return (
-        left + '<div class="head-c"><button class="head-who" data-action="info" title="Broadcast details">' + stackHtml(names, 26, 6) +
-        '<span class="head-txt"><span class="head-name">' + esc(def.name) + '<span class="chev">' + icon("chev") + '</span></span><span class="head-sub">' + sub + "</span></span></button></div>" +
+        '<div class="head-c"><button class="head-who" data-action="info" title="Broadcast details">' + stackHtml(names, 20, 4) +
+        '<span class="head-name">' + esc(def.name) + '</span><span class="head-sub">' + sub.join('<span class="dot-sep">·</span>') + "</span></button></div>" +
         '<div class="head-r">' + seg + info + "</div>"
       );
     }
     var a = state.agents[names[0]];
     return (
-      left + '<div class="head-c"><button class="head-who" data-action="info" title="Details">' + avatarHtml(a.name, 34) +
-      '<span class="head-txt"><span class="head-name">' + esc(a.name) + '<span class="chev">' + icon("chev") + "</span></span>" +
-      '<span class="head-sub">' + subtitleHtml(a) + "</span></span></button></div>" + '<div class="head-r">' + addMoneyBtn(a.name) + info + "</div>"
+      '<div class="head-c"><button class="head-who" data-action="info" title="Details">' + avatarHtml(a.name, 24) +
+      '<span class="head-name">' + esc(a.name) + '</span><span class="head-sub">' + subtitleHtml(a) + "</span></button></div>" +
+      '<div class="head-r">' + addMoneyBtn(a.name) + info + "</div>"
     );
   }
+  /** One calm line each: a small mark, what is wrong, one action. */
   function bannersHtml() {
     var out = "";
-    if (CFG.llmConfigured === false) out += '<div class="banner red">' + icon("warn") + '<span class="grow"><b>LLM_API_KEY is not set.</b> Get an NRP token at https://nrp.ai/llmtoken/, put LLM_API_KEY=… in .env, and restart npm run dev.</span></div>';
-    if (!state.connected && state.everOpen) out += '<div class="banner amber">' + icon("warn") + '<span class="grow">Lost the connection to the agent server. Reconnecting…</span></div>';
+    var line = function (tone, ic, html, action) {
+      return '<div class="banner"><span class="b-ic ' + tone + '">' + ic + '</span><span class="grow">' + html + "</span>" + (action || "") + "</div>";
+    };
+    if (CFG.llmConfigured === false) out += line("red", icon("warn"), "<b>LLM_API_KEY isn't set</b> · put an NRP token (nrp.ai/llmtoken) in .env and restart");
+    if (!state.connected && state.everOpen) out += line("", '<span class="spin"></span>', "Reconnecting to the agent server…");
     var names = selectedNames();
     var frozen = names.filter(function (n) { return (state.agents[n].wallet || {}).frozen; });
     if (frozen.length) {
       var w = state.agents[frozen[0]].wallet || {};
-      var who = frozen.length === 1 ? frozen[0] + " is" : frozen.join(", ") + " are";
-      out += '<div class="banner red">' + icon("lock") + '<span class="grow"><b>' + esc(who) + " frozen by wallet policy.</b> " + (frozen.length === 1 && w.frozenReason ? '<span class="muted">' + esc(w.frozenReason) + " </span>" : "") + '<span class="muted">It can still talk, but it can\'t spend until you unfreeze it.</span></span>' + (DASH ? '<a href="' + esc(DASH) + '" target="_blank" rel="noopener">Open dashboard</a>' : "") + "</div>";
+      var who = frozen.length === 1 ? frozen[0] + " is frozen" : frozen.join(", ") + " are frozen";
+      var why = frozen.length === 1 && w.frozenReason ? str(w.frozenReason) : "";
+      out += line("red", icon("lock"), "<b>" + esc(who) + "</b>" + '<span class="muted"> · ' + esc(why || "it can't spend until you unfreeze it") + "</span>", DASH ? '<a href="' + esc(DASH) + '" target="_blank" rel="noopener" title="Unfreeze on the dashboard">Unfreeze' + icon("external") + "</a>" : "");
     }
     var offline = names.filter(function (n) { var w2 = state.agents[n].wallet || {}; return w2.error && !w2.frozen; });
-    if (offline.length && !isGroup(state.selected)) out += '<div class="banner amber">' + icon("warn") + '<span class="grow">' + esc((state.agents[offline[0]].wallet || {}).error) + "</span></div>";
+    if (offline.length && !isGroup(state.selected)) out += line("red", icon("warn"), esc((state.agents[offline[0]].wallet || {}).error));
     return out;
   }
   function allWorkers(names) {
@@ -2955,21 +3236,20 @@
   }
   function emptyHtml(names) {
     if (!names.length) {
-      if (!state.loaded) return '<div class="empty"><h2>Loading…</h2></div>';
+      if (!state.loaded) return '<div class="empty"><div class="hint">Loading…</div></div>';
       return (
         '<div class="empty"><span class="empty-ic">' + icon("userPlus") + "</span><h2>No agents yet</h2>" +
-        '<div class="hint">Create an agent in your wallet, give it some money, and it shows up here, ready to chat. It does nothing until you ask.</div>' +
-        (DASH ? '<div class="empty-acts"><button class="btn-pill" data-action="new-agent">' + icon("plus") + "Create an agent</button></div>" : "") +
-        '<div class="hint small">Or run <code>npm run setup</code> for the demo agents, then reload.</div></div>'
+        '<div class="hint">Create one in your wallet, or run <code>npm run setup</code> for the demo agents.</div>' +
+        (DASH ? '<div class="empty-acts"><button class="btn-1" data-action="new-agent">' + icon("plus") + "Create an agent</button></div>" : "") + "</div>"
       );
     }
     if (isGroup(state.selected)) {
       var def = groupDef(state.selected);
       return (
-        '<div class="empty">' + groupAvatarHtml(def, 72) + "<h2>" + esc(def.name) + '</h2><div class="role bc">' + icon("megaphone") + esc(broadcastLabel(names.length)) + "</div>" +
-        '<div class="members-row">' + names.map(function (n) { return '<span class="mr">' + avatarHtml(n, 34) + "<span>" + esc(n) + "</span></span>"; }).join("") + "</div>" +
-        '<div class="hint">Your message goes to each agent on its own, at the same moment. Each one replies separately, right here.' + (allWorkers(names) ? " Workers race each other for the same bounty slots, for real. Try Grid view for the race." : "") + "</div>" +
-        '<div class="empty-acts"><button class="btn-ghost" data-action="group-edit" data-group="' + esc(def.id) + '">' + icon("pencil") + "Edit broadcast</button></div></div>"
+        '<div class="empty">' + groupAvatarHtml(def, 40) + "<h2>" + esc(def.name) + "</h2>" +
+        '<div class="members-row">' + stackHtml(names, 20, 8) + "<span>" + esc(names.join(", ")) + "</span></div>" +
+        '<div class="hint">Each agent gets your message on its own and replies here.' + (allWorkers(names) ? " Grid shows them racing for the same bounty slots." : "") + "</div>" +
+        '<div class="empty-acts"><button class="btn-2" data-action="group-edit" data-group="' + esc(def.id) + '">' + icon("pencil") + "Edit broadcast</button></div></div>"
       );
     }
     var a = state.agents[names[0]];
@@ -2980,36 +3260,37 @@
     // A custom agent's purpose (the owner wrote it), but not the server's generic default role.
     var custom = avatarOf(a.name).label === "Agent" && a.role && !/^You are a general-purpose assistant/.test(str(a.role));
     return (
-      '<div class="empty">' + avatarHtml(a.name, 72) + "<h2>" + esc(a.name) + '</h2><div class="role">' + esc(custom ? str(a.role).slice(0, 160) : kindLabel(a.name)) + "</div>" +
-      (svcs.length ? '<div class="svc-row">' + svcs.map(function (s) { return '<span title="' + esc(s.name) + '">' + tileHtml(s, "t32") + "</span>"; }).join("") + "</div>" : "") +
-      '<div class="hint">It does nothing until you ask. Every payment goes through your wallet policy' + (lim.approvalThreshold ? "; anything over " + esc(money(lim.approvalThreshold)) + " waits for you" : "") + ".</div>" +
-      (broke && DASH ? '<div class="empty-acts"><span class="hint">Its wallet is empty.</span>' + addMoneyBtn(a.name, "btn-pill") + "</div>" : "") +
+      '<div class="empty">' + avatarHtml(a.name, 40) + "<h2>" + esc(a.name) + '</h2><div class="role">' + esc(custom ? str(a.role).slice(0, 160) : kindLabel(a.name)) + "</div>" +
+      (svcs.length ? '<div class="svc-row">' + svcs.map(function (s) { return '<span title="' + esc(s.name) + '">' + tileHtml(s, "t20") + "</span>"; }).join("") + "</div>" : "") +
+      '<div class="hint">It does nothing until you ask' + (lim.approvalThreshold ? ". Payments over " + esc(money(lim.approvalThreshold)) + " wait for you" : "") + ".</div>" +
+      (broke && DASH ? '<div class="empty-acts">' + addMoneyBtn(a.name, "btn-1") + "</div>" : "") +
       "</div>"
     );
   }
+  /** Linear's issue sidebar: one property per row, label left, value right. */
 
   // ================================================================ details panel
   function infoHtml() {
     var names = selectedNames();
     if (!names.length) return "";
     var close = '<button class="icon-btn info-close" data-action="info" aria-label="Close">' + icon("x") + "</button>";
+    var row = function (k, v, extra, cls) { return '<div class="prop' + (cls ? " " + cls : "") + '"><span class="pk">' + k + '</span><span class="pv">' + v + "</span>" + (extra || "") + "</div>"; };
     if (isGroup(state.selected)) {
       var def = groupDef(state.selected);
       var g = groupSummary(names);
       var total = names.reduce(function (s, n) { return s + (num((state.agents[n].wallet || {}).balance) || 0); }, 0);
       return (
-        close + '<div class="info-hero">' + groupAvatarHtml(def, 72) + "<h2>" + esc(def.name) + '</h2><div class="role bc">' + icon("megaphone") + esc(broadcastLabel(names.length)) + "</div>" +
-        '<button class="pill-btn" data-action="group-edit" data-group="' + esc(def.id) + '">' + icon("pencil") + "Edit</button></div>" +
-        '<div class="info-sec"><div class="stats"><div class="stat"><div class="k">Their balances</div><div class="v">' + esc(money(total)) + '</div></div><div class="stat"><div class="k">Earned today</div><div class="v in">+' + esc(money(g.earned)) + "</div></div></div></div>" +
-        '<div class="info-sec"><h3>' + esc(plural(names.length, "member", "members")) + "</h3>" +
+        '<div class="info-head">' + groupAvatarHtml(def, 28) + '<div class="ih-t"><b>' + esc(def.name) + "</b><span>" + esc(broadcastLabel(names.length)) + "</span></div>" + close + "</div>" +
+        '<div class="info-sec">' + row("Their balances", esc(money(total))) + (g.earned ? row("Earned today", '<span class="pos">+' + esc(money(g.earned)) + "</span>") : "") + "</div>" +
+        '<div class="info-sec"><h3>Members</h3>' +
         names.map(function (n) {
           var a = state.agents[n];
           var st = rowStatus(a);
-          return '<button class="member" data-select="' + esc(n) + '" style="width:100%;text-align:left">' + avatarHtml(n, 34, st ? st.badge : "") + '<span><span class="m-name">' + esc(n) + '</span><br><span class="m-st">' + esc(st ? st.text : "Idle") + '</span></span><span class="m-bal">' + esc(money((a.wallet || {}).balance)) + "</span></button>";
+          return '<button class="member" data-select="' + esc(n) + '">' + avatarHtml(n, 24, st ? st.badge : "") + '<span class="m-name">' + esc(n) + "</span>" + (st ? '<span class="m-st">' + esc(st.text) + "</span>" : "") + '<span class="m-bal">' + esc(money((a.wallet || {}).balance)) + "</span></button>";
         }).join("") + "</div>" +
-        '<div class="info-text pad">' + icon("info") + "<span>Each agent gets your message on its own and replies separately. A broadcast can't spend: every payment still goes through that agent's own wallet policy.</span></div>" +
+        '<p class="info-note">A broadcast can\'t spend: each agent\'s own wallet policy still applies.</p>' +
         '<div class="info-actions">' +
-        '<button data-action="group-edit" data-group="' + esc(def.id) + '">' + icon("users") + "Edit name and members</button>" +
+        '<button data-action="group-edit" data-group="' + esc(def.id) + '">' + icon("pencil") + "Edit name and members</button>" +
         (LINKS.board && allWorkers(names) ? '<a href="' + esc(safeUrl(LINKS.board)) + '" target="_blank" rel="noopener">' + icon("trophy") + "Open the bounty board</a>" : "") +
         (def.builtIn ? "" : '<button class="danger" data-action="group-delete" data-group="' + esc(def.id) + '">' + icon("trash") + "Delete broadcast</button>") +
         "</div>"
@@ -3020,25 +3301,28 @@
     var lim = w.limits || {};
     var st = rowStatus(a);
     var svcs = agentServices(a);
-    var pill = w.frozen ? '<span class="pill err">' + icon("lock") + "Frozen</span>" : st ? '<span class="pill ' + (st.tone === "amber" ? "wait" : "") + '">' + esc(st.text) + "</span>" : '<span class="pill ok">' + icon("check") + "Active</span>";
-    var tiles = svcs.length
-      ? '<div class="tiles">' + svcs.map(function (s) { return '<div class="app-tile" title="' + esc(s.name + (s.pricing ? " · " + s.pricing : "")) + '">' + tileHtml(s, "t56") + "<span>" + esc(s.name.replace(/^Acme /, "")) + "</span></div>"; }).join("") + "</div>"
-      : '<div class="tiles-empty">None yet. It can search the directory and ask you to connect one.</div>';
-    var kv = function (k, v) { return '<div class="kv"><span class="k">' + k + '</span><span class="v">' + v + "</span></div>"; };
+    var bank = bankOf(a);
+    var svcRows = svcs.length
+      ? svcs.map(function (s) { return '<div class="svc" title="' + esc(s.name + (s.pricing ? " · " + s.pricing : "")) + '">' + tileHtml(s, "t16") + '<span class="svc-n">' + esc(s.name) + "</span>" + (s.pricing ? '<span class="svc-p">' + esc(s.pricing.split(" · ")[0]) + "</span>" : "") + "</div>"; }).join("")
+      : '<p class="info-note">None yet. It can search the directory and ask you to connect one.</p>';
     return (
-      close +
-      '<div class="info-hero">' + avatarHtml(a.name, 72) + "<h2>" + esc(a.name) + '</h2><div class="role">' + esc(kindLabel(a.name)) + "</div>" + pill + "</div>" +
-      '<div class="info-sec"><div class="stats"><div class="stat big"><div class="k">Balance</div><div class="bal-row"><div class="v">' + esc(money(w.balance)) + "</div>" + addMoneyBtn(a.name, "pill-btn") + "</div>" +
-      (bankOf(a) ? '<div class="bank-line">' + icon("bank") + "<span>Funded from " + esc(bankOf(a).provider) + " ••" + esc(bankOf(a).last4) + " · Nessie sandbox</span>" + (DASH ? '<button class="bank-view" data-action="bank">View</button>' : "") + "</div>" : "") + '</div><div class="stat"><div class="k">Spent today</div><div class="v">' + esc(money(w.spentToday)) + '</div></div><div class="stat"><div class="k">Earned today</div><div class="v in">' + esc(money(w.earnedToday)) + "</div></div></div></div>" +
-      '<div class="info-sec"><h3>Connected services</h3>' + tiles + "</div>" +
-      '<div class="info-sec"><h3>Limits</h3>' +
-      kv("Max per payment", esc(money(lim.maxPerTx))) +
-      kv("Daily cap", esc(money(lim.dailyCap)) + (lim.remainingToday != null ? " <small>· " + esc(money(lim.remainingToday)) + " left</small>" : "")) +
-      kv("Asks you above", esc(money(lim.approvalThreshold))) +
+      '<div class="info-head">' + avatarHtml(a.name, 28, st ? st.badge : "") + '<div class="ih-t"><b>' + esc(a.name) + "</b><span>" + esc(kindLabel(a.name)) + "</span></div>" + close + "</div>" +
+      '<div class="info-sec">' +
+      (st ? row("Status", '<span class="hst ' + st.tone + '"><i></i>' + esc(st.text) + "</span>") : "") +
+      (w.frozen && w.frozenReason ? row("Frozen because", esc(w.frozenReason), "", "wrap") : "") +
+      row("Balance", esc(money(w.balance)), addMoneyBtn(a.name, "btn-2 sm")) +
+      (bank ? row("Bank", esc(bank.provider + " ••" + bank.last4) + '<span class="pv-sub">Nessie sandbox</span>', DASH ? '<button class="btn-2 sm" data-action="bank">View</button>' : "", "wrap") : "") +
+      row("Spent today", esc(money(w.spentToday))) +
+      (num(w.earnedToday) ? row("Earned today", '<span class="pos">+' + esc(money(w.earnedToday)) + "</span>") : "") +
       "</div>" +
+      '<div class="info-sec"><h3>Limits</h3>' +
+      row("Max per payment", esc(money(lim.maxPerTx))) +
+      row("Daily cap", esc(money(lim.dailyCap)) + (lim.remainingToday != null ? ' <span class="muted">· ' + esc(money(lim.remainingToday)) + " left</span>" : "")) +
+      row("Asks you above", esc(money(lim.approvalThreshold))) +
+      "</div>" +
+      '<div class="info-sec"><h3>Services' + (DASH ? '<button class="btn-2 sm" data-action="add-service" data-agent="' + esc(a.name) + '">' + icon("plus") + "Add</button>" : "") + "</h3>" + svcRows + "</div>" +
       '<details class="disclose"' + (ui.detailsOpen ? " open" : "") + ' data-disclose="1"><summary>Details' + icon("chev") + '</summary><div class="in">' +
       '<div><div class="k">Wallet address</div><div class="addr"><span>' + esc(w.address || "—") + "</span>" + (w.address ? '<button data-action="copy" data-copy="' + esc(w.address) + '">Copy</button>' : "") + "</div></div>" +
-      (w.frozen && w.frozenReason ? '<div><div class="k">Frozen because</div><div>' + esc(w.frozenReason) + "</div></div>" : "") +
       (a.role ? '<div><div class="k">Instructions</div><div>' + esc(a.role) + "</div></div>" : "") +
       '<div><div class="k">Model</div><div class="addr"><span>' + esc(CFG.model || "?") + " @ " + esc(CFG.endpoint || "?") + "</span></div></div>" +
       (Array.isArray(a.tools) && a.tools.length ? '<div><div class="k">Tools</div><div class="addr"><span>' + esc(a.tools.join(", ")) + "</span></div></div>" : "") +
@@ -3088,15 +3372,12 @@
       chips.map(function (c) { return '<button class="chip' + (c.danger ? " danger" : "") + '" data-chip="' + esc(c.text) + '" title="' + esc(c.text) + '">' + (c.danger ? icon("warn") : "") + esc(c.label) + "</button>"; }).join("")
     );
     els.ideas.classList.toggle("quiet", started);
-    var target = group ? groupDef(state.selected).name : names[0];
-    var ph = "Message " + target;
+    var ph = group ? "Message " + groupDef(state.selected).name + " (" + plural(names.length, "agent", "agents") + ")" : "Message " + names[0];
     if (els.draft.placeholder !== ph) els.draft.placeholder = ph;
     var busy = names.some(function (n) { return state.agents[n].busy; });
     els.stop.hidden = !busy;
     els.send.hidden = busy && !els.draft.value.trim();
     updateSend();
-    var note = group ? "Goes to " + plural(names.length, "agent", "agents") + " at the same moment. Each one replies on its own." : "Payments over its threshold wait for your approval.";
-    setHTML(els.foot, esc(note));
   }
   function updateSend() {
     var has = !!els.draft.value.trim();
@@ -3113,13 +3394,11 @@
   function panelHeadHtml(n) {
     var a = state.agents[n];
     var w = a.wallet || {};
-    var s = a.status || {};
     var st = rowStatus(a);
-    var cls = w.frozen ? "frz" : st && st.tone === "amber" ? "wait" : st ? "live" : "";
     return (
-      avatarHtml(n, 28, st ? st.badge : "") + '<span class="p-name">' + esc(n) + "</span>" +
-      '<span class="p-st ' + cls + '">' + (st && st.tone === "blue" && s.state ? '<span class="spin" style="width:11px;height:11px"></span>' : "") + esc(st ? st.text : "idle") + "</span>" +
-      (num(w.earnedToday) ? '<span class="p-earn">+' + esc(money(w.earnedToday)) + "</span>" : "") +
+      avatarHtml(n, 20, st ? st.badge : "") + '<span class="p-name">' + esc(n) + "</span>" +
+      (st ? '<span class="p-st">' + esc(st.text) + "</span>" : "") +
+      (num(w.earnedToday) ? '<span class="p-earn pos">+' + esc(money(w.earnedToday)) + "</span>" : "") +
       '<span class="p-bal">' + esc(money(w.balance)) + "</span>"
     );
   }
@@ -3256,22 +3535,22 @@
   function groupSheetHtml(s) {
     var edit = s.mode === "edit";
     return (
-      '<div class="sh-head"><span class="sh-title">' + (edit ? "Edit broadcast" : "New broadcast") + "<small>One message, sent to each agent on its own</small></span>" +
+      '<div class="sh-head"><span class="sh-title">' + (edit ? "Edit broadcast" : "New broadcast") + "</span>" +
       '<button class="icon-btn" data-action="sheet-close" aria-label="Close">' + icon("x") + "</button></div>" +
       '<div class="sh-scroll">' +
       '<div class="gs-field"><label class="gs-label" for="gs-name">Name</label>' +
-      '<input id="gs-name" class="gs-name" maxlength="40" placeholder="e.g. Research team" autocomplete="off" spellcheck="false" value="' + esc(s.name) + '"></div>' +
+      '<input id="gs-name" class="gs-name" maxlength="40" placeholder="Research team" autocomplete="off" spellcheck="false" value="' + esc(s.name) + '"></div>' +
       '<div class="gs-sec-h"><span>Members</span><span class="gs-count"></span></div>' +
       '<div class="gs-chosen"></div>' +
       '<div class="gs-list" role="group" aria-label="Agents"></div>' +
-      '<div class="gs-note">' + icon("info") + "<span>Each agent replies separately. A broadcast can't spend: every payment still goes through that agent's own wallet policy.</span></div>" +
+      '<p class="gs-note">Each agent replies on its own. A broadcast can\'t spend: each agent\'s wallet policy still applies.</p>' +
       (edit
         ? s.builtIn
-          ? '<div class="gs-builtin">' + icon("info") + "<span>This is your default list. You can rename it and change who is in it, but not delete it.</span></div>"
+          ? '<p class="gs-note">Your default list: rename it or change who is in it.</p>'
           : '<button class="gs-delete" data-action="gs-delete">' + icon("trash") + "Delete broadcast</button>"
         : "") +
       "</div>" +
-      '<div class="sh-foot"><span class="gs-err" role="alert"></span><button class="btn-ghost" data-action="sheet-close">Cancel</button><button class="btn-pill" data-action="gs-save"></button></div>'
+      '<div class="sh-foot"><span class="gs-err" role="alert"></span><button class="btn-2" data-action="sheet-close">Cancel</button><button class="btn-1" data-action="gs-save"></button></div>'
     );
   }
   function gsMemberHtml(s, n) {
@@ -3281,10 +3560,9 @@
     var w = a.wallet || {};
     return (
       '<button class="gs-m' + (on ? " on" : "") + '" data-action="gs-toggle" data-name="' + esc(n) + '" role="checkbox" aria-checked="' + on + '">' +
-      avatarHtml(n, 34, st ? st.badge : "") +
-      '<span class="gs-m-txt"><span class="gs-m-name">' + esc(n) + '</span><span class="gs-m-sub' + (st ? " " + st.tone : "") + '">' + esc(st ? st.text : kindLabel(n)) + "</span></span>" +
-      '<span class="gs-m-bal">' + esc(w.balance != null ? money(w.balance) : "—") + "</span>" +
-      '<span class="gs-check">' + icon("check") + "</span></button>"
+      '<span class="gs-check">' + icon("check") + "</span>" + avatarHtml(n, 24, st ? st.badge : "") +
+      '<span class="gs-m-name">' + esc(n) + '</span><span class="gs-m-sub">' + esc(st ? st.text : kindLabel(n)) + "</span>" +
+      '<span class="gs-m-bal">' + esc(w.balance != null ? money(w.balance) : "—") + "</span></button>"
     );
   }
   function groupSheetValid(s) {
@@ -3355,13 +3633,15 @@
   }
 
   // ---------------------------------------------------------------- owner sheets (dashboard embed)
+  /** The dashboard's one "Add service" sheet (§18: pick from the directory, or paste any link). */
+  var SHEET_ADD_SERVICE = "add-service";
   function ownerTitle(s) {
-    return s.which === "add-money" ? "Add money to " + s.agent : s.which === "bank" ? "Capital One" : "New agent";
+    return s.which === "add-money" ? "Add money to " + s.agent : s.which === "bank" ? "Capital One" : s.which === SHEET_ADD_SERVICE ? "Add a service for " + s.agent : "New agent";
   }
   function openOwnerSheet(which, agent) {
-    if (which === "add-money" && !(typeof agent === "string" && AGENT_NAME_RE.test(agent))) return;
+    if ((which === "add-money" || which === SHEET_ADD_SERVICE) && !(typeof agent === "string" && AGENT_NAME_RE.test(agent))) return;
     // §16.5: the bank sheet (checking and every allowance account) embeds like the other owner sheets.
-    var q = which === "add-money" ? "?sheet=add-money&agent=" + encodeURIComponent(agent) : which === "bank" ? "?sheet=bank" : "?sheet=new-agent";
+    var q = which === "add-money" || which === SHEET_ADD_SERVICE ? "?sheet=" + which + "&agent=" + encodeURIComponent(agent) : which === "bank" ? "?sheet=bank" : "?sheet=new-agent";
     var s = {
       kind: "owner",
       which: which,
@@ -3384,23 +3664,17 @@
   }
   function ownerSheetHtml(s) {
     var title = ownerTitle(s);
-    var why = s.which === "add-money"
-      ? "Money comes from your wallet, so you add it on the dashboard. It didn't answer here."
-      : s.which === "bank"
-        ? "Your Capital One accounts are yours only, so they open on the dashboard. It didn't answer here."
-        : "New agents get their key in your wallet, so you create them on the dashboard. It didn't answer here.";
+    var why = s.which === "add-money" ? "Money comes from your wallet, so you add it on the dashboard." : s.which === "bank" ? "Your Capital One accounts open on the dashboard." : s.which === SHEET_ADD_SERVICE ? "Services are connected in your wallet, so you add them on the dashboard." : "New agents get their key in your wallet, so you create them on the dashboard.";
     return (
-      '<div class="os-head"><span class="os-logo">' + icon("shieldCheck") + "</span>" +
-      '<span class="os-t"><b>' + esc(title) + "</b><span>Allowance wallet · only you can do this</span></span>" +
+      '<div class="os-head"><span class="os-t">' + esc(title) + "</span>" +
       '<button class="icon-btn" data-action="sheet-close" aria-label="Close">' + icon("x") + "</button></div>" +
       '<div class="os-body">' +
       (s.src
-        ? '<div class="os-skel"><span></span><span></span><span></span><span></span></div>' +
+        ? '<div class="os-skel"><span></span><span></span><span></span></div>' +
           '<iframe class="os-frame" title="' + esc(title) + '" src="' + esc(s.src) + '" sandbox="allow-scripts allow-same-origin allow-forms" allow="clipboard-write" referrerpolicy="origin"></iframe>'
         : "") +
-      '<div class="os-fallback"><span class="os-fb-ic">' + icon("layout") + "</span>" +
-      '<div class="os-fb-t">Open the dashboard to do this</div><div class="os-fb-s">' + esc(why) + "</div>" +
-      (s.open ? '<a class="btn-pill" href="' + esc(s.open) + '" target="_blank" rel="noopener">' + icon("external") + "Open the dashboard</a>" : '<div class="os-fb-s">No dashboard link is configured.</div>') +
+      '<div class="os-fallback"><p>' + esc(why) + " The dashboard didn't answer here.</p>" +
+      (s.open ? '<a class="btn-1" href="' + esc(s.open) + '" target="_blank" rel="noopener">Open the dashboard' + icon("external") + "</a>" : "<p>No dashboard link is configured.</p>") +
       "</div></div>"
     );
   }
@@ -3494,7 +3768,7 @@
       '<div class="pillbox"><textarea id="draft" rows="1" placeholder="Message" aria-label="Message"></textarea>' +
       '<button class="send" id="send" data-action="send" title="Send (Enter)" aria-label="Send" disabled>' + icon("up", "") + "</button>" +
       '<button class="stop" id="stop" data-action="stop" title="Stop" aria-label="Stop" hidden><span class="sq"></span></button></div>' +
-      '<div class="foot" id="foot"></div></div></footer>' +
+      '</div></footer>' +
       '<div class="toast" id="toast" role="status"></div>' +
       "</main></div>" +
       '<div class="menu" id="menu" role="menu" hidden>' +
@@ -3502,7 +3776,7 @@
       '<button role="menuitem" data-action="new-group"><span class="mi-ic bc">' + icon("megaphone") + '</span><span class="mi-t"><b>New broadcast</b><small>Message several agents at once</small></span></button></div>' +
       '<div class="modal" id="modal" hidden><div class="scrim" data-action="sheet-close"></div><div class="sheet" id="sheet" role="dialog" aria-modal="true"></div></div>' +
       '<div class="tip" id="tip"></div>';
-    ["head", "banners", "body", "scroll", "thread", "grid", "info", "composer", "ideas", "draft", "send", "stop", "foot", "toast", "rows", "search", "tip", "menu", "modal", "sheet"].forEach(function (id) { els[id] = document.getElementById(id); });
+    ["head", "banners", "body", "scroll", "thread", "grid", "info", "composer", "ideas", "draft", "send", "stop", "toast", "rows", "search", "tip", "menu", "modal", "sheet"].forEach(function (id) { els[id] = document.getElementById(id); });
     els.app = root;
     els.shell = root.firstElementChild;
     wireStick(els.scroll, els.thread);
@@ -3567,7 +3841,6 @@
   }
   function render() {
     ensureShell();
-    syncApprovals();
     applyChrome();
     renderRows();
     setHTML(els.head, headHtml());
@@ -3722,6 +3995,8 @@
       openGroupSheet("");
     } else if (act === "add-money") {
       openOwnerSheet("add-money", t.getAttribute("data-agent"));
+    } else if (act === "add-service") {
+      openOwnerSheet(SHEET_ADD_SERVICE, t.getAttribute("data-agent"));
     } else if (act === "bank") {
       openOwnerSheet("bank");
     } else if (act === "group-edit") {
@@ -3783,9 +4058,12 @@
       ui.holdScroll = true;
       ui.stickPausedUntil = Date.now() + 400;
       render();
-    } else if (act === "qc-more") {
+    } else if (act === "ap-reason") {
+      // The agent's reason on a decision card the chat drew itself: clamped, open in place.
+      t.classList.toggle("open");
+    } else if (act === "more") {
       var qk = t.getAttribute("data-key");
-      ui.openQc[qk] = !ui.openQc[qk];
+      ui.openMore[qk] = !ui.openMore[qk];
       ui.holdScroll = true;
       ui.stickPausedUntil = Date.now() + 400;
       render();
