@@ -19,7 +19,7 @@ import {
   signTransferAuthorization,
 } from "@allowance/wallet";
 import type { Settlement } from "@allowance/wallet";
-import { ownerHeaders,
+import { AGENT_NAME_RE, MAX_TOPUP, ownerHeaders,
   BASE_SEPOLIA_NETWORK,
   USDC_BASE_SEPOLIA,
   containsSecret,
@@ -1458,7 +1458,18 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
   router.post("/agents", ownerAuth, async (req, res) => {
     const body = req.body as Partial<CreateAgentRequest>;
     if (!body?.name || typeof body.name !== "string") throw new HttpError(400, "invalid_request", "`name` is required");
+    if (!AGENT_NAME_RE.test(body.name)) {
+      throw new HttpError(400, "invalid_request", "Agent names use lowercase letters, digits and dashes (2–32 characters), e.g. travel-planner");
+    }
     if (store.agentByName(body.name)) throw new HttpError(409, "agent_exists", `An agent named "${body.name}" already exists`);
+    // Resolve requested services before creating anything, so a bad id doesn't leave a half-made agent.
+    const requested = Array.isArray(body.services) ? [...new Set(body.services.filter((x): x is string => typeof x === "string" && !!x.trim()).map((x) => x.trim()))] : [];
+    if (body.services !== undefined && !Array.isArray(body.services)) throw new HttpError(400, "invalid_request", "`services` must be an array of service ids");
+    const manifests = [];
+    for (const id of requested) {
+      if (id === "directory") continue;
+      manifests.push(await requireManifest(id));
+    }
     let created;
     try {
       created = createAgentOffline(store, { name: body.name, policy: body.policy, initialBalance: body.initialBalance });
@@ -1467,6 +1478,9 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     }
     const { stored, token, tokenId } = created;
     emit("agent.created", { agentId: stored.id, agentName: stored.name, message: `Agent ${stored.name} created.` });
+    for (const manifest of manifests) {
+      if (manifest.kind !== "directory") connectService(stored, toGrant({ ...manifest, source: "directory" }), "owner");
+    }
     if (config.chainMode === "mock" && stored.seedBalance && !stored.seedApplied) {
       try {
         const { txHash } = await mint(stored, stored.seedBalance);
@@ -1552,10 +1566,10 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     let dollars: string;
     try {
       const units = toBaseUnits(String(req.body?.amount));
-      if (units <= 0n) throw new Error("positive");
+      if (units <= 0n || units > toBaseUnits(MAX_TOPUP)) throw new Error("range");
       dollars = toDollars(units);
     } catch {
-      throw new HttpError(400, "invalid_request", "`amount` must be a positive dollar string");
+      throw new HttpError(400, "invalid_request", `\`amount\` must be a dollar string between $0.01 and $${MAX_TOPUP}`);
     }
     let txHash: Hex;
     try {

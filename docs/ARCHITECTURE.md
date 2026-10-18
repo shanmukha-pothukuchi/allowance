@@ -525,3 +525,49 @@ chat server stays unprivileged. On decision it posts
 `Content-Security-Policy: frame-ancestors 'self' http://localhost:4050 http://127.0.0.1:4050`.
 The chat page embeds that iframe inline in the thread while an agent is `waiting_approval`; if it
 fails to load (dashboard not running) it shows "Approve on your phone or the dashboard".
+
+## 14. Broadcast groups, new agents, adding money (Phase 5 contract)
+
+**Who owns what.** Groups carry no money authority, so the chat server owns them. Creating an agent
+(minting its key and token) and adding money are owner powers, so they happen in the owner's wallet
+surface (the dashboard, owner key via its proxy). The chat embeds those owner forms the same way it
+embeds approvals (§13.5); it never holds the owner key.
+
+### 14.1 Chat server (`apps/agent-chat`)
+
+`GroupDef = { id, name, emoji, color, members: string[], createdAt, builtIn? }`, persisted in
+`DATA_DIR/agent-chat/groups.json`. Default: `{ id: "workers", name: "All workers", emoji: "🛠️",
+builtIn: true, members: worker-* }` (editable, not deletable).
+
+| Method | Path | Body → Response |
+|---|---|---|
+| GET | `/api/groups` | `{ groups: GroupDef[] }` |
+| POST | `/api/groups` | `{ name, members, emoji? }` → `201 { group }` (id = slug of name) · 400 |
+| PATCH | `/api/groups/:id` | `{ name?, members?, emoji? }` → `{ group }` · 404 · 400 |
+| DELETE | `/api/groups/:id` | → `{ ok }` · `409 group_built_in` · 404 |
+| POST | `/api/groups/:id/messages` | `{ text }` → `202 { group, groupId, runs }` (any group, not only workers) |
+| POST | `/api/agents` | `{ name, token, role? }` → `201 { agent }` · 400 `invalid_request`/`invalid_token` · 409 `agent_exists` · 503. The token is checked with the wallet (`/v1/me` name must match), hosted, and saved to `DATA_DIR/agent-tokens.json` with its `role`. CORS allowed only from the dashboard origin. |
+
+`GET /api/agents` and the SSE `snapshot` add `groupList: GroupDef[]` (members filtered to hosted
+agents) and keep the compat map `groups: { [id]: members }`. New SSE events: `groups`
+(`{ groups, groupList }`) and `agent.added` (`{ agent }` summary). Agent names follow
+`AGENT_NAME_RE` (`^[a-z0-9][a-z0-9-]{1,31}$`); `role` (≤ 600 chars) is the agent's purpose shown in
+its system prompt.
+
+### 14.2 Wallet (`apps/wallet-service`)
+
+`POST /v1/agents` accepts `services: string[]` (directory ids, connected `connectedBy:"owner"`,
+validated before anything is created) and enforces `AGENT_NAME_RE`. Top-ups are $0.01–$1000.00
+(`MAX_TOPUP`), mock mode only.
+
+### 14.3 Owner sheets (dashboard, embeddable)
+
+| URL | What |
+|---|---|
+| `/?sheet=new-agent&embed=1` | Create an agent: name, purpose, starting money, limits, services. Calls `POST /v1/agents` (with `allowlist: { addresses: [], origins: [] }` so services govern payments), then registers it with the chat server `POST {AGENT_CHAT_URL}/api/agents { name, token, role }` (cross-origin; `VITE_AGENT_CHAT_URL`, default `http://localhost:4050`). If the chat server can't be reached, it shows the token once with a copy button (for Claude Desktop) and says so. |
+| `/?sheet=add-money&agent=<name>&embed=1` | Add test money to an agent (amount chips + custom, ≤ $1000). `POST /v1/agents/:id/topup`. |
+
+Both also open as sheets inside the dashboard itself (no `embed`). Embedded, they post to
+`window.parent` (target origin = the chat origin, never a token):
+`{ type: "allowance:sheet-size", sheet, height }`, `{ type: "allowance:agent-created", name }`,
+`{ type: "allowance:money-added", name, amount }`, `{ type: "allowance:sheet-close", sheet }`.

@@ -532,9 +532,9 @@ describe("hardening (Phase 3 verifier findings)", () => {
     });
     const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
     try {
-      const open = await fetch(`${base}/v1/agents`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "x" }) });
+      const open = await fetch(`${base}/v1/agents`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "keyed-agent" }) });
       expect(open.status).toBe(401);
-      const keyed = await fetch(`${base}/v1/agents`, { method: "POST", headers: { "content-type": "application/json", "x-owner-key": "ok_test" }, body: JSON.stringify({ name: "x" }) });
+      const keyed = await fetch(`${base}/v1/agents`, { method: "POST", headers: { "content-type": "application/json", "x-owner-key": "ok_test" }, body: JSON.stringify({ name: "keyed-agent" }) });
       expect(keyed.status).toBe(201);
       const summary = await fetch(`${base}/v1/summary`);
       expect(summary.status).toBe(401);
@@ -544,6 +544,20 @@ describe("hardening (Phase 3 verifier findings)", () => {
       w.close();
       await new Promise((r) => srv.close(() => r(null)));
     }
+  });
+
+  it("creates an agent with services connected and a safe name, and caps top-ups", async () => {
+    const bad = await api("POST", "/v1/agents", { name: "Bad Name!" });
+    expect(bad.status).toBe(400);
+    const unknown = await api("POST", "/v1/agents", { name: "ghost-agent", services: ["no-such-service"] });
+    expect(unknown.status).toBe(404);
+    expect((await api("GET", "/v1/agents")).body.agents.some((a: { name: string }) => a.name === "ghost-agent")).toBe(false);
+    const ok = await api("POST", "/v1/agents", { name: "travel-planner", initialBalance: "15.00", services: ["acme-weather"], policy: { allowlist: { addresses: [], origins: [] } } });
+    expect(ok.status).toBe(201);
+    expect(ok.body.agent.services.map((s: { id: string; connectedBy: string }) => [s.id, s.connectedBy])).toEqual([["acme-weather", "owner"]]);
+    expect(ok.body.token).toMatch(/^aw_/);
+    expect((await api("POST", `/v1/agents/${ok.body.agent.id}/topup`, { amount: "1000.01" })).status).toBe(400);
+    expect((await api("POST", `/v1/agents/${ok.body.agent.id}/topup`, { amount: "5.00" })).status).toBe(200);
   });
 
   it("refuses scheme-less allowlist origins instead of storing \"null\"", async () => {

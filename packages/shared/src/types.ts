@@ -396,11 +396,18 @@ export interface MeResponse {
 
 /** POST /v1/agents (owner) */
 export interface CreateAgentRequest {
+  /** Lowercase letters, digits and dashes, 2–32 chars, starting with a letter or digit. */
   name: string;
   policy?: Partial<Policy>;
   /** Mock mode only: initial balance to mint, dollars. */
   initialBalance?: string;
+  /** Directory service ids to connect right away (connectedBy "owner"). */
+  services?: string[];
 }
+
+export const AGENT_NAME_RE = /^[a-z0-9][a-z0-9-]{1,31}$/;
+/** Largest single mock top-up, dollars. */
+export const MAX_TOPUP = "1000.00";
 export interface CreateAgentResponse {
   agent: AgentPublic;
   /** Shown exactly once. */

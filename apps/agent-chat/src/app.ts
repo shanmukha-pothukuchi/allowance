@@ -8,7 +8,11 @@ import express, { type Request, type Response } from "express";
 import { randomBytes } from "node:crypto";
 import { avatarFor, type Avatar } from "@allowance/shared/avatars";
 import { ChatAgent, BusyError, type AgentEvent, type LogEntry } from "./agent.js";
-import { groupMembers, type AgentSpec } from "./roster.js";
+import { groupMembers, roleFor, type AgentSpec } from "./roster.js";
+import { GroupStore, GroupError, defaultGroups } from "./groups.js";
+import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { AGENT_NAME_RE } from "@allowance/shared";
 import type { LlmConfig } from "./llm.js";
 import { renderChatPage, staticDir } from "./ui.js";
 
@@ -77,6 +81,12 @@ export interface ChatAppOptions {
   approvalWaitMs?: number;
   maxSteps?: number;
   fetch?: typeof fetch;
+  /** Broadcast groups file (default: in memory). */
+  groupsFile?: string;
+  /** Where registered agents' tokens are persisted (DATA_DIR/agent-tokens.json). */
+  tokensFile?: string;
+  /** Origins allowed to register agents cross-origin (the owner's dashboard). */
+  corsOrigins?: string[];
 }
 
 export interface ChatApp {
@@ -102,9 +112,7 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
     if (e.type === "run.finished" || (e.type === "log.update" && e.entry.kind === "tool")) void refreshWallet(e.agent);
   };
 
-  for (const spec of opts.roster) {
-    agents.set(
-      spec.name,
+  const makeAgent = (spec: AgentSpec) =>
       new ChatAgent({
         name: spec.name,
         role: spec.role,
@@ -116,10 +124,10 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
         blockedUrls: opts.blockedUrls,
         approvalWaitMs: opts.approvalWaitMs,
         maxSteps: opts.maxSteps,
-      }),
-    );
-  }
+      });
+  for (const spec of opts.roster) agents.set(spec.name, makeAgent(spec));
   const tokens = new Map(opts.roster.map((s) => [s.name, s.token]));
+  const groupStore = new GroupStore(opts.groupsFile, () => defaultGroups([...agents.keys()]));
 
   async function refreshWallet(name: string): Promise<void> {
     const token = tokens.get(name);
@@ -175,7 +183,10 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
     services: services.get(a.name) ?? [],
     lastMessage: lastMessageOf(a.log),
   });
-  const groups = () => ({ workers: groupMembers("workers", [...agents.keys()]) });
+  /** Compat map (id -> members) plus the rich list. Members are filtered to agents this server hosts. */
+  const groupList = () => groupStore.list().map((g) => ({ ...g, members: g.members.filter((m) => agents.has(m)) }));
+  const groups = () => Object.fromEntries(groupList().map((g) => [g.id, g.members]));
+  const announceGroups = () => broadcast("groups", { groups: groups(), groupList: groupList() });
 
   const app = express();
   app.disable("x-powered-by");
@@ -197,8 +208,70 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
     res.json({ ok: true, model: opts.llm.model, endpoint: opts.llm.baseUrl, llmKeySet: Boolean(opts.llm.apiKey), agents: agents.size });
   });
 
+  // ---- registering a new agent ------------------------------------------------------------
+  // The owner creates agents in the wallet (owner key, dashboard). The dashboard then hands the new
+  // agent's token to this server, the same way Claude Desktop is given a token. We verify the token
+  // with the wallet before hosting the agent.
+  const cors = new Set(opts.corsOrigins ?? []);
+  app.use("/api/agents", (req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && cors.has(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+      res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "content-type");
+    }
+    if (req.method === "OPTIONS") return void res.status(origin && cors.has(origin) ? 204 : 403).end();
+    next();
+  });
+
+  app.post("/api/agents", async (req: Request, res: Response) => {
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    const token = typeof req.body?.token === "string" ? req.body.token.trim() : "";
+    const role = typeof req.body?.role === "string" ? req.body.role.trim().slice(0, 600) : "";
+    if (!AGENT_NAME_RE.test(name) || !/^aw_[0-9a-f]{48}$/.test(token)) {
+      return void res.status(400).json({ error: "invalid_request", message: "Body must be { name, token, role? } with a valid agent name and token" });
+    }
+    if (agents.has(name)) return void res.status(409).json({ error: "agent_exists", message: `${name} is already here` });
+    let me: { agent?: { name?: string; address?: string; id?: string } };
+    try {
+      const r = await doFetch(`${opts.walletServiceUrl}/v1/me`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(4000) });
+      if (r.status === 401) return void res.status(400).json({ error: "invalid_token", message: "The wallet does not recognize that token" });
+      if (!r.ok) return void res.status(502).json({ error: "wallet_error", message: `Wallet answered ${r.status}` });
+      me = (await r.json()) as typeof me;
+    } catch {
+      return void res.status(503).json({ error: "wallet_unavailable", message: "The wallet service is not reachable" });
+    }
+    if (me.agent?.name !== name) return void res.status(400).json({ error: "invalid_token", message: "That token belongs to a different agent" });
+    const spec: AgentSpec = { name, role: role || roleFor(name), token };
+    const agent = makeAgent(spec);
+    agents.set(name, agent);
+    tokens.set(name, token);
+    persistToken(name, token, me.agent?.id, me.agent?.address, role || undefined);
+    await agent.init().catch((err: Error) => console.warn(`[agent-chat] ${name}: tool init failed: ${err.message}`));
+    await refreshWallet(name);
+    broadcast("agent.added", { agent: summary(agent) });
+    console.log(`[agent-chat] hosting new agent ${name}`);
+    res.status(201).json({ agent: summary(agent) });
+  });
+
+  function persistToken(name: string, token: string, agentId?: string, address?: string, role?: string): void {
+    if (!opts.tokensFile) return;
+    let all: Record<string, unknown> = {};
+    try {
+      if (existsSync(opts.tokensFile)) all = JSON.parse(readFileSync(opts.tokensFile, "utf8")) as Record<string, unknown>;
+    } catch {
+      /* rewrite below */
+    }
+    all[name] = { agentId, name, address, token, ...(role ? { role } : {}) };
+    mkdirSync(dirname(opts.tokensFile), { recursive: true });
+    const tmp = `${opts.tokensFile}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(all, null, 2) + "\n", { mode: 0o600 });
+    renameSync(tmp, opts.tokensFile);
+  }
+
   app.get("/api/agents", (_req, res) => {
-    res.json({ agents: [...agents.values()].map(summary), groups: groups() });
+    res.json({ agents: [...agents.values()].map(summary), groups: groups(), groupList: groupList() });
   });
 
   app.get("/api/agents/:name", (req, res) => {
@@ -226,8 +299,45 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
     }
   });
 
+  // ---- broadcast groups ------------------------------------------------------------------
+  const sendGroupError = (res: Response, err: unknown) => {
+    if (err instanceof GroupError) return void res.status(err.status).json({ error: err.code, message: err.message });
+    res.status(500).json({ error: "internal_error", message: (err as Error).message });
+  };
+  app.get("/api/groups", (_req, res) => {
+    res.json({ groups: groupList() });
+  });
+  app.post("/api/groups", (req, res) => {
+    try {
+      const g = groupStore.create(req.body ?? {}, new Set(agents.keys()));
+      announceGroups();
+      res.status(201).json({ group: g });
+    } catch (err) {
+      sendGroupError(res, err);
+    }
+  });
+  app.patch("/api/groups/:id", (req, res) => {
+    try {
+      const g = groupStore.update(String(req.params.id), req.body ?? {}, new Set(agents.keys()));
+      announceGroups();
+      res.json({ group: g });
+    } catch (err) {
+      sendGroupError(res, err);
+    }
+  });
+  app.delete("/api/groups/:id", (req, res) => {
+    try {
+      groupStore.remove(String(req.params.id));
+      announceGroups();
+      res.json({ ok: true });
+    } catch (err) {
+      sendGroupError(res, err);
+    }
+  });
+
   app.post("/api/groups/:group/messages", async (req: Request, res: Response) => {
-    const members = groupMembers(String(req.params.group), [...agents.keys()]);
+    const def = groupList().find((g) => g.id === String(req.params.group));
+    const members = def ? def.members : groupMembers(String(req.params.group), [...agents.keys()]);
     if (members.length === 0) return void res.status(404).json({ error: "group_not_found", message: `No group ${req.params.group}` });
     const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
     if (!text) return void res.status(400).json({ error: "invalid_request", message: "Body must be { text }" });
@@ -265,7 +375,7 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
 
   app.get("/api/events", (req, res) => {
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
-    res.write(`event: snapshot\ndata: ${JSON.stringify({ agents: [...agents.values()].map(summary), groups: groups() })}\n\n`);
+    res.write(`event: snapshot\ndata: ${JSON.stringify({ agents: [...agents.values()].map(summary), groups: groups(), groupList: groupList() })}\n\n`);
     clients.add(res);
     const ping = setInterval(() => res.write(": ping\n\n"), 15_000);
     req.on("close", () => {

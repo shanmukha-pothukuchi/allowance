@@ -38,11 +38,11 @@ export function groupMembers(group: string, names: string[]): string[] {
 export function loadRoster(dataDir: string): AgentSpec[] {
   const file = resolve(dataDir, "agent-tokens.json");
   if (!existsSync(file)) return [];
-  const tokens = JSON.parse(readFileSync(file, "utf8")) as Record<string, { name: string; token: string }>;
+  const tokens = JSON.parse(readFileSync(file, "utf8")) as Record<string, { name: string; token: string; role?: string }>;
   return Object.values(tokens)
     .filter((t) => t?.token && !EXCLUDED.has(t.name))
     .sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name))
-    .map((t) => ({ name: t.name, role: roleFor(t.name), token: t.token }));
+    .map((t) => ({ name: t.name, role: t.role || roleFor(t.name), token: t.token }));
 }
 
 function rank(n: string): number {

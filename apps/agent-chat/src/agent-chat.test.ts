@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import express from "express";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startMerchantStub, startWalletStub, type MerchantStub, type WalletStub } from "@allowance/mcp/test-stubs";
@@ -328,6 +328,74 @@ describe("services in the agent's context (§13.4)", () => {
     expect(m.text.endsWith("…")).toBe(true);
     expect(lastMessageOf(log.slice(0, 1))).toEqual({ kind: "user", text: "hi", at: "t1", groupId: "grp_1" });
     expect(lastMessageOf([])).toBeNull();
+  });
+});
+
+describe("broadcast groups and new agents", () => {
+  it("creates, edits, sends to and deletes groups; registers a new agent after checking its token", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "allowance-groups-"));
+    const tokensFile = join(dir, "agent-tokens.json");
+    const chat = createChatApp({
+      walletServiceUrl: wallet.url,
+      llm: { baseUrl: llm.url, apiKey: "k", model: "qwen3", backoffMs: 5 },
+      roster: [
+        { name: "worker-1", role: "w", token: wallet.token },
+        { name: "worker-2", role: "w", token: wallet.token },
+        { name: "researcher", role: "r", token: wallet.token },
+      ],
+      walletPollMs: 60_000,
+      groupsFile: join(dir, "groups.json"),
+      tokensFile,
+      corsOrigins: ["http://localhost:4040"],
+    });
+    await chat.ready;
+    const server: Server = await new Promise((r) => {
+      const s = chat.app.listen(0, "127.0.0.1", () => r(s));
+    });
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const j = (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) =>
+      fetch(`${base}${path}`, { method, headers: { "content-type": "application/json", ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
+    try {
+      // default group
+      const list = (await (await j("GET", "/api/groups")).json()) as { groups: Array<{ id: string; members: string[]; builtIn?: boolean }> };
+      expect(list.groups).toEqual([expect.objectContaining({ id: "workers", members: ["worker-1", "worker-2"], builtIn: true })]);
+      // create / validate / edit
+      expect((await j("POST", "/api/groups", { name: "", members: ["worker-1"] })).status).toBe(400);
+      expect((await j("POST", "/api/groups", { name: "Team", members: ["nobody"] })).status).toBe(400);
+      const created = (await (await j("POST", "/api/groups", { name: "Research team", members: ["researcher", "worker-1"], emoji: "🧪" })).json()) as { group: { id: string; emoji: string } };
+      expect(created.group).toMatchObject({ id: "research-team", emoji: "🧪" });
+      const patched = (await (await j("PATCH", "/api/groups/research-team", { members: ["researcher"] })).json()) as { group: { members: string[] } };
+      expect(patched.group.members).toEqual(["researcher"]);
+      llm.script = () => reply("on it");
+      const sent = (await (await j("POST", "/api/groups/research-team/messages", { text: "hello team" })).json()) as { runs: Array<{ agent: string }> };
+      expect(sent.runs.map((r) => r.agent)).toEqual(["researcher"]);
+      expect((await j("DELETE", "/api/groups/workers")).status).toBe(409);
+      expect((await j("DELETE", "/api/groups/research-team")).status).toBe(200);
+      const agentsRes = (await (await j("GET", "/api/agents")).json()) as { groupList: Array<{ id: string }>; groups: Record<string, string[]> };
+      expect(agentsRes.groupList.map((g) => g.id)).toEqual(["workers"]);
+      expect(agentsRes.groups.workers).toEqual(["worker-1", "worker-2"]);
+
+      // register a new agent: CORS preflight from the dashboard, token checked with the wallet
+      const pre = await fetch(`${base}/api/agents`, { method: "OPTIONS", headers: { origin: "http://localhost:4040", "access-control-request-method": "POST" } });
+      expect(pre.status).toBe(204);
+      expect(pre.headers.get("access-control-allow-origin")).toBe("http://localhost:4040");
+      expect((await fetch(`${base}/api/agents`, { method: "OPTIONS", headers: { origin: "http://evil.example" } })).status).toBe(403);
+      const newToken = wallet.addToken("travel-planner", ["acme-weather"]);
+      expect((await j("POST", "/api/agents", { name: "travel-planner", token: "aw_" + "00".repeat(24) })).status).toBe(400);
+      expect((await j("POST", "/api/agents", { name: "someone-else", token: newToken })).status).toBe(400);
+      const reg = await j("POST", "/api/agents", { name: "travel-planner", token: newToken, role: "You plan trips." }, { origin: "http://localhost:4040" });
+      expect(reg.status).toBe(201);
+      expect(reg.headers.get("access-control-allow-origin")).toBe("http://localhost:4040");
+      expect(((await reg.json()) as { agent: { name: string; role: string } }).agent).toMatchObject({ name: "travel-planner", role: "You plan trips." });
+      expect((await j("POST", "/api/agents", { name: "travel-planner", token: newToken })).status).toBe(409);
+      const saved = JSON.parse(readFileSync(tokensFile, "utf8")) as Record<string, { token: string; role?: string }>;
+      expect(saved["travel-planner"]).toMatchObject({ token: newToken, role: "You plan trips." });
+      // and it can be put in a group
+      expect((await j("POST", "/api/groups", { name: "Planners", members: ["travel-planner"] })).status).toBe(201);
+    } finally {
+      await chat.close();
+      await new Promise((r) => server.close(() => r(null)));
+    }
   });
 });
 
