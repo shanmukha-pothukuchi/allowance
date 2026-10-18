@@ -258,6 +258,7 @@
     coins: '<path d="M13.744 17.736a6 6 0 1 1-7.48-7.48"/><path d="M15 6h1v4"/><path d="m6.134 14.768.866-.5 2 3.464"/><circle cx="16" cy="8" r="6"/>',
     wave: '<path d="M2 12q2.5 2 5 0t5 0 5 0 5 0"/><path d="M2 19q2.5 2 5 0t5 0 5 0 5 0"/><path d="M2 5q2.5 2 5 0t5 0 5 0 5 0"/>',
     bank: '<path d="M10 18v-7"/><path d="M11.119 2.205a2 2 0 0 1 1.762 0l7.84 3.846A.5.5 0 0 1 20.5 7h-17a.5.5 0 0 1-.22-.949z"/><path d="M14 18v-7"/><path d="M18 18v-7"/><path d="M3 22h18"/><path d="M6 18v-7"/>',
+    alarm: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M5 3 2 6"/><path d="m22 6-3-3"/><path d="M6.38 18.7 4 21"/><path d="M17.64 18.67 20 21"/>',
   };
   function icon(name, extra) {
     return '<svg class="i' + (extra ? " " + extra : "") + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (P[name] || P.wrench) + "</svg>";
@@ -1951,6 +1952,7 @@
       return "Waiting for your OK to pay " + (due ? due + " to " : "") + (svc ? svc.name : hostOnly(args.url));
     }
     if (e.name === "transfer_usdc") return "Waiting for your OK to send " + money(args.amount);
+    if (e.name === "buy_stock") return "Waiting for your OK to buy " + money(args.amount) + " of " + str(args.ticker).toUpperCase().slice(0, 10);
     var ap = approvals[str(args.approval_id).trim()] || approvals[str(((a && a.status) || {}).approvalId)];
     if (ap && ap.verb) return ap.kind === "service" ? "Waiting for you to " + ap.verb + " " + ap.obj : "Waiting for your OK to " + ap.verb + " " + ap.obj;
     return "Waiting for your approval";
@@ -2076,6 +2078,13 @@
             s.detail = "You approved · " + shopName(so.b.handle, confirmationOf(so.d).store) + " · simulated order";
             break;
           }
+          var tq = tradeOf(e);
+          if (tq) {
+            s.icon = "chart";
+            s.label = (tq.side === "buy" ? "Bought " : "Sold ") + sharesText(tq.shares) + " " + tq.ticker;
+            s.detail = "You approved · " + tq.amount + " at " + tq.price;
+            break;
+          }
           var qa = qcCall(e);
           if (qa && qcStep(s, qa.q, r, e)) {
             if (s.st === "ok") s.detail = "You approved" + (s.detail ? " · " + s.detail : "");
@@ -2097,6 +2106,8 @@
         s.label = "Looked over its receipts";
         s.live = "Looking over its receipts";
         break;
+      default:
+        if (INVEST_TOOLS[e.name]) investStep(s, e, r);
     }
     if (r == null && a && a.status && a.status.state === "waiting_approval" && runningToolOf(a.log || []) === e) {
       s.st = "wait";
@@ -2282,6 +2293,298 @@
       foot: [rc ? txHtml(rc.tx, rc.url) : "", str(o.orderId) ? 'order <span class="mono">' + esc(str(o.orderId).slice(0, 40)) + "</span>" : ""].filter(Boolean).join(" · "),
     });
   }
+  // ================================================================ paper investing, cash out, schedules (ARCHITECTURE §20)
+  // The MCP tools answer in plain text (apps/mcp/src/invest.ts, schedule.ts): a trade is a compact
+  // card (the order, its price and replay date, the paid line), a portfolio a card with its top three
+  // positions, a schedule set or a cash-out one event line. A scheduled message (a reminder the agent
+  // set, or one of your rules, apps/agent-chat `kind: "scheduled"`) starts a turn as a system line.
+  var INVEST_TOOLS = { buy_stock: 1, sell_stock: 1, portfolio: 1, get_quotes: 1, cash_out: 1, schedule_task: 1, list_schedules: 1, cancel_schedule: 1 };
+  var NOT_ADVICE = "Paper trading · not investment advice";
+  function ymdDay(d) {
+    var m = str(d).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) return "";
+    return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+  }
+  /** "replay date 2025-11-03" anywhere in a result → "Nov 3, 2025". */
+  function replayDay(r) {
+    var m = str(r).match(/replay date (\d{4}-\d{2}-\d{2})/);
+    return m ? ymdDay(m[1]) : "";
+  }
+  /** The brokerage's honest line: "Paper trading · replay of real closes from Nov 1, 2024 · not investment advice". */
+  function paperNote(r) {
+    var m = str(r).match(/Paper trading · (replay of real closes from (\d{4}-\d{2}-\d{2})|latest real close)/);
+    if (!m) return NOT_ADVICE;
+    return "Paper trading · " + (m[2] ? "replay of real closes from " + ymdDay(m[2]) : "latest real closes") + " · not investment advice";
+  }
+  /** "1,234.5" / "$1,234.50" → 1234.5. */
+  function dollarsOf(v) {
+    return num(str(v).replace(/[$,+]/g, "").replace(/^−/, "-"));
+  }
+  /** Fractional shares, said short: "0.4708" → "0.47"; tiny lots keep two significant digits. */
+  function sharesText(v) {
+    var n = dollarsOf(v);
+    if (n == null || n <= 0) return str(v);
+    if (n >= 1000) return Math.round(n).toLocaleString("en-US");
+    if (n >= 0.01) return n.toFixed(2);
+    return n.toPrecision(2);
+  }
+  /** "+$6.20" / "−$1.40", green or red: money signs are the one place color goes. */
+  function pnlHtml(v, pct) {
+    var n = dollarsOf(v);
+    if (n == null) return esc(str(v));
+    var c = Math.round(n * 100);
+    var cls = c > 0 ? "pos" : c < 0 ? "neg" : "";
+    var t = (c > 0 ? "+" : c < 0 ? "−" : "") + money(Math.abs(n));
+    var p = pct == null ? null : dollarsOf(pct);
+    var pt = p == null ? "" : ' <span class="pf-pct">' + (p > 0 ? "+" : p < 0 ? "−" : "") + Math.abs(p).toFixed(1) + "%</span>";
+    return '<span class="' + cls + '">' + esc(t) + pt + "</span>";
+  }
+  var TK = "([A-Z][A-Z0-9.-]{0,9})";
+  var BOUGHT_RE = new RegExp("^Bought ([\\d.]+) " + TK + " for (\\$[\\d,.]+) at (\\$[\\d,.]+)\\.(?: You now hold ([\\d.]+) \\2 \\(average cost (\\$[\\d,.]+)\\)\\.)?", "m");
+  var SOLD_RE = new RegExp("^Sold ([\\d.]+) " + TK + " for (\\$[\\d,.]+) at (\\$[\\d,.]+) · ([+−-]?\\$[\\d,.]+) realized(?: \\(([+−-]?[\\d.]+)% on a cost of (\\$[\\d,.]+)\\))?\\.(?: You still hold ([\\d.]+) \\2\\.)?", "m");
+  /** buy_stock / sell_stock as the MCP reports them, or a buy resumed by check_approval (the brokerage's JSON). */
+  function tradeOf(e) {
+    var r = e && e.result != null ? str(e.result) : "";
+    if (!r || e.isError) return null;
+    var m = r.match(BOUGHT_RE);
+    if (m) return { side: "buy", shares: m[1], ticker: m[2], amount: m[3], price: m[4], hold: m[5] || "", avg: m[6] || "", day: replayDay(r), note: paperNote(r), rc: parseReceipt(r) };
+    m = r.match(SOLD_RE);
+    if (m) return { side: "sell", shares: m[1], ticker: m[2], amount: m[3], price: m[4], realized: m[5].replace(/^−/, "-"), pct: m[6] || "", cost: m[7] || "", hold: m[8] || "", day: replayDay(r), note: paperNote(r), rc: parseReceipt(r) };
+    // check_approval finishing a buy that waited for you: "HTTP 200 …/brokerage/orders/buy?…" and the order.
+    var h = e.name === "check_approval" || e.name === "fetch_url" ? parseHttp(r) : null;
+    var d = h && h.status < 300 && /\/brokerage\/orders\/(buy|sell)\b/.test(h.url) ? h.data : null;
+    if (d && d.ticker && d.shares != null) {
+      var sell = /\/orders\/sell\b/.test(h.url);
+      var pos = d.position && typeof d.position === "object" ? d.position : {};
+      return { side: sell ? "sell" : "buy", shares: str(d.shares), ticker: str(d.ticker).toUpperCase().slice(0, 10), amount: money(sell ? d.proceeds : d.amount), price: money(d.price), hold: str(pos.shares), avg: pos.avgCost != null ? money(pos.avgCost) : "", realized: sell ? str(d.realizedPnl) : "", day: ymdDay(d.clockDate), note: d.label ? paperNote(d.label) : NOT_ADVICE, rc: parseReceipt(h.tail) };
+    }
+    return null;
+  }
+  /** "Bought 0.47 COF · $100.00", "Sold 0.47 COF · +$6.20 realized": the order is the result, so a card. */
+  function tradeCard(t, key) {
+    var buy = t.side === "buy";
+    var heldMore = t.hold && dollarsOf(t.hold) != null && Math.abs(dollarsOf(t.hold) - (dollarsOf(t.shares) || 0)) > 1e-6;
+    var title = buy ? "Bought " + esc(sharesText(t.shares) + " " + t.ticker) + " · " + esc(t.amount) : "Sold " + esc(sharesText(t.shares) + " " + t.ticker) + " · " + (t.realized ? pnlHtml(t.realized) + " realized" : esc(t.amount));
+    // One meta line that fits: the fill, then the replay date (rule 9: shorten, don't ellipsize).
+    var meta = [buy || !t.realized ? "at " + esc(t.price) : esc(t.amount) + " at " + esc(t.price), t.day ? "replay date " + esc(t.day) : ""].filter(Boolean).join(" · ");
+    var body = buy
+      ? heldMore ? cdLine("Holds " + esc(sharesText(t.hold) + " " + t.ticker), t.avg ? "avg " + esc(t.avg) : "") : ""
+      : t.hold ? cdLine("Still holds " + esc(sharesText(t.hold) + " " + t.ticker)) : "";
+    var foot = [esc(NOT_ADVICE.replace(/ · not investment advice$/, "")), t.rc ? txHtml(t.rc.tx, t.rc.url) : ""].filter(Boolean).join(" · ");
+    return cardHtml({ cls: "trade", tile: '<span class="cd-mark tk">' + icon("chart") + "</span>", title: title, meta: '<span title="' + esc(t.note) + '">' + meta + "</span>", body: body, foot: '<span title="' + esc(t.note) + '">' + foot + "</span>", key: key });
+  }
+  /** The portfolio tool's text → { day, total, invested, pnl, pct, realized, positions: [{ ticker, shares, price, value, cost, pnl, pct }], note }. */
+  function portfolioOf(r) {
+    r = str(r);
+    if (!/^Portfolio · replay date/m.test(r)) return null;
+    var out = { day: replayDay(r), note: paperNote(r), positions: [] };
+    var re = new RegExp("^" + TK + " ([\\d.]+) shares at (\\$[\\d,.]+) = (\\$[\\d,.]+) \\(cost (\\$[\\d,.]+), ([+−-]?\\$[\\d,.]+), ([+−-]?[\\d.]+)%\\)$", "gm");
+    var m;
+    while ((m = re.exec(r))) out.positions.push({ ticker: m[1], shares: m[2], price: m[3], value: m[4], cost: m[5], pnl: m[6], pct: m[7] });
+    var t = r.match(/^Total (\$[\d,.]+) on (\$[\d,.]+) invested · unrealized ([+−-]?\$[\d,.]+) \(([+−-]?[\d.]+)%\) · realized ([+−-]?\$[\d,.]+)\./m);
+    if (t) {
+      out.total = t[1];
+      out.invested = t[2];
+      out.pnl = t[3];
+      out.pct = t[4];
+      out.realized = t[5];
+    }
+    return out.total || out.positions.length || /^No positions\./m.test(r) ? out : null;
+  }
+  /** Total value, P/L, the top three positions; the rest and the honest line behind Details. */
+  function portfolioCard(p, key) {
+    var pos = p.positions.slice().sort(function (a, b) { return (dollarsOf(b.value) || 0) - (dollarsOf(a.value) || 0); });
+    var row = function (x) {
+      return cdLine("<b>" + esc(x.ticker) + "</b> " + '<span class="muted">' + esc(sharesText(x.shares)) + " sh · " + esc(x.price) + "</span>", esc(x.value) + " " + pnlHtml(x.pnl, x.pct));
+    };
+    var realized = p.realized && Math.round((dollarsOf(p.realized) || 0) * 100) !== 0;
+    var meta = [p.pnl ? pnlHtml(p.pnl, p.pct) + " unrealized" : "", realized ? pnlHtml(p.realized) + " realized" : ""].filter(Boolean).join(" · ");
+    var more =
+      (pos.length > 3 ? '<div class="pf-more">' + pos.slice(3).map(row).join("") + "</div>" : "") +
+      (pos.length ? '<p class="cd-note">' + icon("info") + "<span>" + esc(pos.map(function (x) { return x.ticker + " cost " + x.cost; }).join(" · ")) + (p.invested ? esc(" · " + p.invested + " invested") : "") + "</span></p>" : "") +
+      '<p class="cd-note">' + icon("info") + "<span>" + esc(p.note) + " · cash is the wallet balance</span></p>";
+    return cardHtml({
+      cls: "pf",
+      tile: '<span class="cd-mark tk">' + icon("chart") + "</span>",
+      title: "Portfolio · " + esc(p.total || "$0.00"),
+      meta: meta || "No positions",
+      body: pos.length ? pos.slice(0, 3).map(row).join("") : "",
+      more: more,
+      key: key,
+      open: !!ui.openMore[key],
+      foot: '<span title="' + esc(p.note) + '">Paper trading' + (p.day ? " · replay date " + esc(p.day) : "") + "</span>",
+    });
+  }
+  /** "Watching COF ≥ $210 · fires once", "Reminder at 2:35 PM · fires once", "Every hour": from the call, as set. */
+  function scheduleSummary(e) {
+    var a = objArgs(e);
+    var r = str(e.result);
+    var w = a.when && typeof a.when === "object" ? a.when : null;
+    if (w) {
+      var tk = str(w.ticker).toUpperCase().slice(0, 10);
+      var usd = function (v) { var m = money(v); return /\.00$/.test(m) ? m.slice(0, -3) : m; };
+      var cond = num(w.above) != null ? tk + " ≥ " + usd(w.above) : num(w.below) != null ? tk + " ≤ " + usd(w.below) : num(w.move_pct) != null ? tk + " " + (num(w.move_pct) < 0 ? "down " : "up ") + Math.abs(num(w.move_pct)) + "%" : tk;
+      var ev = num(a.every_minutes);
+      return { what: "Watching", obj: cond, tail: ev ? "at most every " + everyWords(ev) : "fires once", ic: "chart" };
+    }
+    if (num(a.every_minutes) != null && !(/fires once/.test(r))) return { what: "Every", obj: everyWords(num(a.every_minutes)), tail: "until cancelled", ic: "alarm" };
+    var when = num(a.in_minutes) != null ? ts(e.at) + num(a.in_minutes) * 60000 : ts(a.at);
+    return { what: "Reminder", obj: when ? (dayDiff(when) === 0 ? clock(when) : relTime(when) + " " + clock(when)) : "set", tail: "fires once", ic: "alarm" };
+  }
+  function everyWords(m) {
+    if (m === 1) return "minute";
+    if (m === 60) return "hour";
+    if (m === 1440) return "day";
+    if (m % 1440 === 0) return m / 1440 + " days";
+    if (m % 60 === 0) return m / 60 + " hours";
+    return m + " min";
+  }
+  function scheduleSetLine(e) {
+    var s = scheduleSummary(e);
+    var r = str(e.result);
+    var paused = /paused all schedules/.test(r);
+    return evHtml({
+      ic: icon(s.ic),
+      text: esc(s.what) + (s.what === "Reminder" ? " at " : " ") + strong(s.obj),
+      meta: [esc(s.tail), paused ? "schedules are paused" : ""],
+      tone: paused ? "wait" : "",
+      title: str(objArgs(e).message).slice(0, 300),
+    });
+  }
+  /** "Cashed out to you · tx …  $25.00": the money went back to its owner. */
+  function cashoutLine(e) {
+    var r = str(e.result);
+    var m = r.match(/^Cashed out (\$[\d,.]+) to your owner\. Your balance is now (\$[\d,.]+)\./);
+    if (!m) return "";
+    var tx = r.match(/Receipt: tx (0x[0-9a-fA-F]+(?:…[0-9a-fA-F]+)?)(?: \((https?:\/\/[^\s)]+)\))?/);
+    return evHtml({ ic: icon("bank"), text: "Cashed out to " + strong("you"), meta: [esc(m[2]) + " left", tx ? txHtml(tx[1], tx[2] ? safeUrl(tx[2]) : "") : ""], amt: m[1] });
+  }
+  /** The scheduled message that started a turn: "Reminder you set: check COF", "Rule: stop loss", and its facts. */
+  function scheduledLine(u) {
+    var owner = str(u.setBy) === "owner";
+    var label = str(u.label).trim() || (owner ? "Rule your owner set" : "Reminder you set");
+    var text = firstLine(str(u.text)).split(/(?<=[a-z0-9%)])[.!?](?:\s|$)/i)[0].replace(/[.!?]$/, "").trim();
+    if (/^[A-Z][a-z]/.test(text)) text = text.charAt(0).toLowerCase() + text.slice(1);
+    var rule = owner || /^Rule\b/.test(label);
+    var ctx = str(u.context).replace(/\s*·?\s*paper trading, replay date (\d{4}-\d{2}-\d{2})\.?$/, function (_, d) { return " · replay date " + ymdDay(d); }).replace(/\.$/, "").trim();
+    return (
+      '<div class="ev sched' + (rule ? " rule" : "") + '" title="' + esc(str(u.text).slice(0, 600)) + '">' +
+      '<span class="ev-ic">' + icon(rule ? "chart" : "alarm") + "</span>" +
+      '<span class="ev-t"><b>' + esc(label) + "</b>" + (!rule && text ? ": " + esc(text) : "") + (ctx ? '<span class="ev-m"> · ' + esc(ctx) + "</span>" : "") + "</span></div>"
+    );
+  }
+  /** Steps for the investing and schedule tools (inside "Worked for…"). */
+  function investStep(s, e, r) {
+    var a = objArgs(e);
+    var tk = str(a.ticker).toUpperCase().slice(0, 10);
+    var first = r ? firstLine(r) : "";
+    switch (e.name) {
+      case "get_quotes": {
+        var list = Array.isArray(a.tickers) ? a.tickers.map(function (x) { return str(x).toUpperCase(); }).slice(0, 4).join(", ") : "";
+        s.icon = "chart";
+        s.label = "Checked quotes" + (list ? " for " + list : "");
+        s.live = "Checking quotes" + (list ? " for " + list : "");
+        if (r && !e.isError) {
+          var q = [];
+          var re = new RegExp("^" + TK + " .+? (\\$[\\d,.]+) \\(", "gm");
+          var m;
+          while ((m = re.exec(r)) && q.length < 3) q.push(m[1] + " " + m[2]);
+          s.detail = q.join(" · ") + (replayDay(r) ? " · " + replayDay(r) : "");
+        } else if (r) s.detail = first;
+        break;
+      }
+      case "buy_stock":
+        s.icon = "chart";
+        s.label = "Bought " + money(a.amount) + " of " + tk;
+        s.live = "Buying " + money(a.amount) + " of " + tk;
+        if (r) {
+          var t = tradeOf(e);
+          if (t) s.detail = sharesText(t.shares) + " shares at " + t.price;
+          else if (/^Waiting for your owner/.test(r)) { s.label = "Asked you to approve buying " + money(a.amount) + " of " + tk; s.st = "wait"; }
+          else if (/denied buying|expired without a decision/.test(r)) { s.label = "Tried to buy " + money(a.amount) + " of " + tk; s.detail = /denied/.test(r) ? "You declined" : "Approval expired"; s.st = "soft"; }
+          else if (/isn't connected yet/.test(r)) { s.label = "Tried to buy " + tk; s.detail = "Brokerage (paper) isn't connected"; s.st = "soft"; }
+          else if (e.isError) { s.label = "Tried to buy " + money(a.amount) + " of " + tk; s.detail = first.replace(/^Not bought, nothing was charged: /, ""); }
+        }
+        break;
+      case "sell_stock":
+        s.icon = "chart";
+        s.label = "Sold " + (a.shares ? str(a.shares) + " " : "") + tk;
+        s.live = "Selling " + (a.shares ? str(a.shares) + " " : "") + tk;
+        if (r) {
+          var t2 = tradeOf(e);
+          if (t2) s.detail = t2.amount + " at " + t2.price;
+          else if (e.isError) { s.label = "Tried to sell " + tk; s.detail = first.replace(/^Nothing was sold: /, ""); }
+        }
+        break;
+      case "portfolio":
+        s.icon = "chart";
+        s.label = "Checked its portfolio";
+        s.live = "Checking its portfolio";
+        if (r) {
+          var p = portfolioOf(r);
+          s.detail = p ? (p.total ? p.total + " · " : "") + plural(p.positions.length, "position", "positions") : e.isError ? first : "";
+        }
+        break;
+      case "cash_out":
+        s.icon = "bank";
+        s.label = a.amount ? "Cashed out " + money(a.amount) + " to you" : "Cashed out to you";
+        s.live = "Cashing out to you";
+        if (r && e.isError) { s.label = "Tried to cash out"; s.detail = first; s.st = /^Nothing to cash out|in progress/.test(first) ? "soft" : "err"; }
+        break;
+      case "schedule_task": {
+        s.icon = objArgs(e).when ? "chart" : "alarm";
+        s.label = objArgs(e).when ? "Set a price watch" : "Set a reminder";
+        s.live = objArgs(e).when ? "Setting a price watch" : "Setting a reminder";
+        if (r) {
+          if (e.isError) { s.label = "Couldn't set a reminder"; s.detail = first; s.st = "soft"; }
+          else {
+            var sm = scheduleSummary(e);
+            s.detail = sm.what + (sm.what === "Reminder" ? " at " : " ") + sm.obj + " · " + sm.tail;
+          }
+        }
+        break;
+      }
+      case "list_schedules":
+        s.icon = "alarm";
+        s.label = "Looked over its schedules";
+        s.live = "Looking over its schedules";
+        if (r) s.detail = (r.match(/\((\d+) active\)/) || [])[1] ? r.match(/\((\d+) active\)/)[1] + " active" : /no active schedules/.test(r) ? "None" : e.isError ? first : "";
+        break;
+      case "cancel_schedule":
+        s.icon = "x";
+        s.label = "Cancelled a schedule";
+        s.live = "Cancelling a schedule";
+        if (r && e.isError) { s.label = "Couldn't cancel a schedule"; s.detail = first; s.st = "soft"; }
+        break;
+    }
+  }
+  /** Lines and cards for one investing or schedule tool entry, or null when it isn't one. */
+  function investItems(e, key) {
+    var r = e.result == null ? null : str(e.result);
+    var t = tradeOf(e);
+    if (t) return [{ zone: "card", key: key("trade"), html: tradeCard(t, key("trade")) }];
+    if (!INVEST_TOOLS[e.name]) return null;
+    if (r == null || e.isError) return [];
+    if (e.name === "portfolio") {
+      var p = portfolioOf(r);
+      return p ? [{ zone: "card", key: key("pf"), html: portfolioCard(p, key("pf")) }] : [];
+    }
+    if (e.name === "schedule_task") return [{ zone: "event", key: key("sch"), html: scheduleSetLine(e) }];
+    if (e.name === "cash_out") {
+      var l = cashoutLine(e);
+      return l ? [{ zone: "event", key: key("co"), html: l }] : [];
+    }
+    if (e.name === "cancel_schedule") {
+      var c = r.match(/^Cancelled sch_[A-Za-z0-9]+ \((.{1,120}?)\)\. It won't fire\./);
+      var what = c ? c[1].replace(/ · (?:fires once|until cancelled|at most every .+)$/, "") : "";
+      return c ? [{ zone: "event", key: key("cx"), html: evHtml({ ic: icon("x"), text: /^Watching /.test(what) ? "Stopped watching " + strong(what.replace(/^Watching /, "")) : "Cancelled " + strong(what) }) }] : [];
+    }
+    if (e.name === "buy_stock" && /denied buying|expired without a decision/.test(r)) {
+      var d = r.match(/(\$[\d,.]+) of ([A-Z][A-Z0-9.-]{0,9})/);
+      return d ? [{ zone: "event", key: key("deny"), html: evHtml({ ic: icon(/denied/.test(r) ? "x" : "clock"), text: (/denied/.test(r) ? "You declined buying " : "Approval to buy ") + strong(d[1] + " of " + d[2]) + (/denied/.test(r) ? "" : " expired") }) }] : [];
+    }
+    return [];
+  }
   /** What a store-link request (§15.4) is about, before and after the wallet discovered the store. */
   function storeRequestInfo(a, e) {
     var rq = storeRequest(e);
@@ -2406,6 +2709,9 @@
     }
     if (r == null) return out;
     var rc, b;
+    // §20: trades (buy_stock, sell_stock, or a buy check_approval finished), portfolios, schedules, cash-outs.
+    var iv = investItems(e, key);
+    if (iv) return iv;
     // Shopify bridge responses get their own cards; a paid checkout's order card carries the receipt.
     var sc = shopCards(a, e, key, t);
     if (sc) return sc;
@@ -2450,7 +2756,7 @@
   // card (title, meta, reason, Approve / Deny); the chat adds only the frame, plus a head of its own
   // while the frame loads or if it can't load. Once decided it collapses to one event line.
   var APPROVAL_TTL_MS = 10 * 60 * 1000; // wallet-service expires approvals after 10 minutes (APPROVAL_TTL_MS)
-  var WAIT_RE = /^Waiting for the owner|^Asked your owner to (?:add|connect)/;
+  var WAIT_RE = /^Waiting for the owner|^Waiting for your owner to approve|^Asked your owner to (?:add|connect)/;
   /** The approval this agent's live run is waiting on right now, if any. */
   function activeApprovalId(a) {
     if (!a) return null;
@@ -2462,7 +2768,7 @@
     var log = a.log || [];
     for (var i = log.length - 1; i >= 0; i--) {
       var e = log[i];
-      if (e.kind === "user") break;
+      if (e.kind === "user" || e.kind === "scheduled") break;
       if (e.kind !== "tool" || e.result == null) continue;
       var id = WAIT_RE.test(str(e.result)) ? approvalIdIn(e.result) : "";
       return validApprovalId(id) ? id : null;
@@ -2549,6 +2855,13 @@
       ap.obj = money(args.amount) + " to " + shortAddr(args.to);
       ap.info = { glyph: "send" };
       ap.meta = "Transfer from " + esc(a.name) + "'s wallet";
+    } else if (e && e.name === "buy_stock") {
+      // §20.1: one payment of the order amount to the paper brokerage.
+      ap.kind = "payment";
+      ap.verb = "buy";
+      ap.obj = money(args.amount) + " of " + str(args.ticker).toUpperCase().slice(0, 10);
+      ap.info = { glyph: "chart" };
+      ap.meta = "Brokerage (paper) · " + esc(NOT_ADVICE);
     } else if (e && e.name === "fetch_url") {
       var w = e.result != null ? str(e.result).match(/approve (\$[\d,.]+) to (.{1,60}?)\. Approval id/) : null;
       var svc = serviceForUrl(str(args.url));
@@ -2589,15 +2902,19 @@
     var nm = strong(ap.obj);
     return ap.kind === "service"
       ? { ic: tileHtml(ap.info, "t16"), text: "Asked to connect " + nm, meta: ["not connected"] }
-      : { ic: icon("clock"), text: "Asked you to approve " + (ap.verb === "send" ? "sending " : "paying ") + nm, meta: ["not paid"] };
+      : { ic: icon("clock"), text: "Asked you to approve " + gerund(ap) + nm, meta: ["not paid"] };
+  }
+  /** "sending ", "buying ", "paying ": what the approval was for, as a verb. */
+  function gerund(ap) {
+    return ap.verb === "send" ? "sending " : ap.verb === "buy" ? "buying " : "paying ";
   }
   function decidedLine(ap) {
     var nm = strong(ap.obj);
     var t = ago(ap.decidedAt);
     var svc = ap.kind === "service";
-    if (ap.status === "approved") return evHtml({ ic: svc ? tileHtml(ap.info, "t16") : icon("check"), text: svc ? "Connected " + nm : "You approved " + (ap.verb === "send" ? "sending " : "paying ") + nm, meta: [svc ? "you" : "", t] });
+    if (ap.status === "approved") return evHtml({ ic: svc ? tileHtml(ap.info, "t16") : icon("check"), text: svc ? "Connected " + nm : "You approved " + gerund(ap) + nm, meta: [svc ? "you" : "", t] });
     if (ap.status === "expired") return evHtml({ ic: icon("clock"), text: svc ? "Request to connect " + nm + " expired" : "Approval for " + nm + " expired", meta: [t] });
-    return evHtml({ ic: icon("x"), text: "You declined " + (svc ? "connecting " : ap.verb === "send" ? "sending " : "paying ") + nm, meta: [t] });
+    return evHtml({ ic: icon("x"), text: "You declined " + (svc ? "connecting " : gerund(ap)) + nm, meta: [t] });
   }
   /** Stable markup (id, subject and theme only), so a re-render never re-creates the iframe. Phases are classes. */
   function approvalHtml(ap) {
@@ -2707,7 +3024,7 @@
     for (var i = 0; i < log.length; i++) {
       var e = log[i];
       if (!e || typeof e !== "object") continue;
-      if (e.kind === "user") {
+      if (e.kind === "user" || e.kind === "scheduled") {
         cur = { id: str(e.id) || "u" + i, user: e, entries: [] };
         turns.push(cur);
         continue;
@@ -2869,7 +3186,9 @@
     var o = { scope: opts.scope || "", embed: embedSet(a) };
     var items = [];
     turns.forEach(function (t, i) {
-      if (t.user) items.push({ key: "u:" + o.scope + a.name + ":" + t.user.id, side: "me", kind: "user", at: ts(t.user.at), text: t.user.text });
+      // A scheduled message (§20.3) wasn't typed by you: a system line, not your bubble.
+      if (t.user && t.user.kind === "scheduled") items.push({ key: "s:" + o.scope + a.name + ":" + t.user.id, side: "them", kind: "sched", at: ts(t.user.at), html: scheduledLine(t.user) });
+      else if (t.user) items.push({ key: "u:" + o.scope + a.name + ":" + t.user.id, side: "me", kind: "user", at: ts(t.user.at), text: t.user.text });
       items = items.concat(turnItems(a, t, i === turns.length - 1 && !!a.busy, o));
     });
     return items;
@@ -3040,6 +3359,7 @@
     for (var i = log.length - 1; i >= 0; i--) {
       var e = log[i];
       if (e.kind === "user") return { text: "You: " + plainPreview(e.text), at: ts(e.at) };
+      if (e.kind === "scheduled") return { text: plainPreview(str(e.label) || "Scheduled message"), at: ts(e.at) };
       if (e.kind === "assistant" && str(e.text).trim()) return { text: plainPreview(e.text), at: ts(e.at) };
       if (e.kind === "error") return { text: plainPreview(e.text), at: ts(e.at) };
     }
@@ -3108,7 +3428,7 @@
         var log = u ? state.agents[n].log || [] : [];
         for (var j = log.indexOf(u) + 1; j > 0 && j < log.length; j++) {
           var e = log[j];
-          if (e.kind === "user") break;
+          if (e.kind === "user" || e.kind === "scheduled") break;
           var t = ts(e.at);
           if (((e.kind === "assistant" && str(e.text).trim()) || e.kind === "error") && t >= lm.at) lm = { text: n + ": " + plainPreview(e.text), at: t };
         }
