@@ -17,8 +17,7 @@ function amountFor(r: Receipt): { text: string; cls: string } {
 
 export function ReceiptsList({ receipts, showDetails, now }: Props) {
   return (
-    <section className="panel receipts">
-      <h2 className="panel-title">Receipts</h2>
+    <>
       {receipts.length === 0 ? (
         <p className="empty">No receipts yet.</p>
       ) : (
@@ -57,6 +56,6 @@ export function ReceiptsList({ receipts, showDetails, now }: Props) {
           })}
         </ul>
       )}
-    </section>
+    </>
   );
 }

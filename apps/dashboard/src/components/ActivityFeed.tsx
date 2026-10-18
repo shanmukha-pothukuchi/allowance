@@ -1,4 +1,4 @@
-import { describeEvent, isServiceApproval, isSoftBlock, money, relativeTime, serviceOfEvent, shortHex } from "../format";
+import { describeEvent, isServiceApproval, isSoftBlock, money, relativeTime, serviceOfEvent, shortHex, signedMoney } from "../format";
 import { connectedByLabel } from "../services";
 import type { ConnectedService, EventType, WalletEvent } from "../types";
 import { AgentAvatar, ServiceTile } from "./Avatar";
@@ -6,12 +6,10 @@ import { ArrowIn, ArrowOut, Check, Clock, Cross, Info, Plug, Plus, Shield, Snowf
 
 interface Props {
   events: WalletEvent[];
+  /** Approvals still open: their rows point at the inbox, where they are decided. */
   pendingIds: Set<string>;
-  busyApprovals: string[];
   showDetails: boolean;
   now: number;
-  onApprove(id: string): void;
-  onDeny(id: string): void;
 }
 
 type Tone = "neutral" | "out" | "in" | "danger" | "pending" | "ok" | "soft";
@@ -74,13 +72,21 @@ function IconFor({ type }: { type: EventType }) {
   }
 }
 
+/** The amount column: signed like a statement, struck through when the wallet refused it. */
+function amountOf(e: WalletEvent, tone: Tone): { text: string; cls: string } | null {
+  const raw = e.receipt?.amount ?? (e.type === "payment.needs_approval" ? e.approval?.amount : undefined);
+  if (raw === undefined || e.type === "approval.approved" || e.type === "approval.denied") return null;
+  if (tone === "danger" || tone === "soft") return { text: money(raw), cls: "amt-void" };
+  if (tone === "in") return { text: signedMoney(raw, "+"), cls: "amt-in" };
+  if (tone === "pending") return { text: money(raw), cls: "amt-pending" };
+  return { text: signedMoney(raw, "-"), cls: "amt-out" };
+}
+
 const isServiceEvent = (e: WalletEvent) => e.type.startsWith("service.") || ((e.type === "approval.approved" || e.type === "approval.denied") && isServiceApproval(e.approval));
 
-export function ActivityFeed({ events, pendingIds, busyApprovals, showDetails, now, onApprove, onDeny }: Props) {
+export function ActivityFeed({ events, pendingIds, showDetails, now }: Props) {
   return (
-    <section className="panel feed">
-      <h2 className="panel-title">Live activity</h2>
-      <ol className="feed-list">
+    <ol className="feed-list">
         {events.length === 0 && <li className="empty">Waiting for the first payment&hellip;</li>}
         {events.map((e) => {
           const tone = toneFor(e.type, e);
@@ -88,19 +94,20 @@ export function ActivityFeed({ events, pendingIds, busyApprovals, showDetails, n
           const asks = e.type === "payment.needs_approval" || e.type === "service.requested";
           const stillPending = asks && approvalId && pendingIds.has(approvalId);
           const svc = isServiceEvent(e) ? serviceOfEvent(e) : undefined;
+          const amt = amountOf(e, tone);
           const by = e.type === "service.connected" ? ((e.data as { connectedBy?: ConnectedService["connectedBy"] } | undefined)?.connectedBy ?? (svc as Partial<ConnectedService> | undefined)?.connectedBy) : undefined;
           // Rows are keyed by event id and mount once, so the CSS entry animation runs exactly once.
           return (
             <li key={e.id} className={`feed-row tone-${tone}${svc ? " feed-service" : ""}`}>
               {e.agentName ? (
-                <AgentAvatar name={e.agentName} size="md" badge={<IconFor type={e.type} />} />
+                <AgentAvatar name={e.agentName} size="sm" badge={<IconFor type={e.type} />} />
               ) : (
                 <span className="feed-icon"><IconFor type={e.type} /></span>
               )}
               <div className="feed-body">
                 <p className="feed-text">{describeEvent(e)}</p>
                 <span className="feed-meta">
-                  {e.agentName && <span className="agent-chip">{e.agentName}</span>}
+                  {e.agentName && <span className="feed-agent">{e.agentName}</span>}
                   <time dateTime={e.at}>{relativeTime(e.at, now)}</time>
                   {by && <span className="by-chip">{connectedByLabel(by)}</span>}
                   {showDetails && e.receipt?.txHash && (
@@ -114,23 +121,12 @@ export function ActivityFeed({ events, pendingIds, busyApprovals, showDetails, n
                     <code className="hash">to {shortHex(e.receipt.counterparty.address, 8, 6)}</code>
                   )}
                 </span>
-                {stillPending && (
-                  <div className="inline-approve">
-                    {e.type === "payment.needs_approval" && <strong>{money(e.approval!.amount)}</strong>}
-                    <button className="btn btn-primary" disabled={busyApprovals.includes(approvalId!)} onClick={() => onApprove(approvalId!)}>
-                      <Check width={18} height={18} /> Approve
-                    </button>
-                    <button className="btn btn-danger" disabled={busyApprovals.includes(approvalId!)} onClick={() => onDeny(approvalId!)}>
-                      <Cross width={18} height={18} /> Deny
-                    </button>
-                  </div>
-                )}
+                {stillPending && <span className="feed-waiting">Waiting on you · decide above</span>}
               </div>
-              {svc && <ServiceTile name={svc.name} color={svc.color} size="md" title={svc.name} />}
+              {amt ? <span className={`feed-amt ${amt.cls}`}>{amt.text}</span> : svc ? <ServiceTile name={svc.name} color={svc.color} size="sm" title={svc.name} /> : <span />}
             </li>
           );
         })}
-      </ol>
-    </section>
+    </ol>
   );
 }

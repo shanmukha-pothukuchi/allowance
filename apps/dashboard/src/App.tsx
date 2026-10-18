@@ -7,7 +7,8 @@ import { Plus } from "./components/Icons";
 import { NewAgentSheet } from "./components/NewAgentSheet";
 import { ReceiptsList } from "./components/ReceiptsList";
 import { ServicesView } from "./components/ServicesView";
-import { TopBar } from "./components/TopBar";
+import { Banners, SideNav } from "./components/TopBar";
+import { money } from "./format";
 import { useRoute, useSheetRoute } from "./route";
 import { chatUrlFrom } from "./sheets";
 import { applyTheme, effectiveTheme, saveTheme, storedTheme, themeFromSearch, type ThemePref } from "./theme";
@@ -38,23 +39,68 @@ export default function App() {
   // Frozen agents float to the top so the moment the wallet holds is never below the fold.
   const agents = useMemo(() => [...state.agents.filter((a) => a.frozen), ...state.agents.filter((a) => !a.frozen)], [state.agents]);
 
+  const [feedTab, setFeedTab] = useState<"activity" | "receipts">("activity");
+  const pending = state.approvals.length;
+  const ledger = state.totals.chainMode === "mock" ? "Test money on the mock ledger" : state.totals.chainMode === "unknown" ? "" : "USDC on Base Sepolia";
+
   return (
     <div className="app">
-      <TopBar state={state} route={route} theme={theme} onToggleTheme={toggleTheme} onToggleDetails={actions.toggleDetails} />
-      {route.view === "services" ? (
-        <ServicesView state={state} actions={actions} selectedId={route.serviceId} now={now} />
-      ) : (
-        <main className="columns">
-          <section className="panel agents">
-            <h2 className="panel-title">
-              Agents <span className="muted">{state.agents.length}</span>
-              <button className="btn btn-new-agent" onClick={() => setSheet({ sheet: "new-agent" })} title="Create an agent and give it money">
-                <Plus width={18} height={18} /> New agent
-              </button>
-            </h2>
-            <div className="agent-list">
-              {state.agents.length === 0 && <p className="empty">{state.loaded ? "No agents yet. Create one with New agent, or run npm run setup." : "Loading…"}</p>}
-              {agents.map((a) => (
+      <SideNav state={state} route={route} theme={theme} onToggleTheme={toggleTheme} onToggleDetails={actions.toggleDetails} />
+      <div className="page">
+        <Banners state={state} />
+        {route.view === "services" ? (
+          <ServicesView state={state} actions={actions} selectedId={route.serviceId} now={now} />
+        ) : (
+          <main className="overview">
+            <header className="page-head">
+              <div className="balance-block">
+                <span className="eyebrow">Total balance</span>
+                <span className="balance">{money(state.totals.totalBalance)}</span>
+                <span className="balance-sub">
+                  Across {state.agents.length} {state.agents.length === 1 ? "agent" : "agents"}
+                  {ledger && ` · ${ledger}`}
+                </span>
+              </div>
+              <dl className="kpis">
+                <div>
+                  <dt>Spent today</dt>
+                  <dd>{money(state.totals.spentToday)}</dd>
+                </div>
+                <div>
+                  <dt>Earned today</dt>
+                  <dd className="earned">+{money(state.totals.earnedToday)}</dd>
+                </div>
+                <div>
+                  <dt>Waiting on you</dt>
+                  <dd className={pending ? "kpi-warn" : ""}>{pending}</dd>
+                </div>
+              </dl>
+            </header>
+
+            {pending > 0 && (
+              <ApprovalsPanel
+                approvals={state.approvals}
+                busy={state.busyApprovals}
+                showDetails={state.showDetails}
+                now={now}
+                onApprove={(id) => void actions.approve(id)}
+                onDeny={(id) => void actions.deny(id)}
+              />
+            )}
+
+            <div className="ov-grid">
+              <section className="ov-sec" aria-label="Agents">
+                <div className="section-head">
+                  <h2 className="section-title">
+                    Agents <span className="muted">{state.agents.length}</span>
+                  </h2>
+                  <button className="btn btn-sm" onClick={() => setSheet({ sheet: "new-agent" })} title="Create an agent and give it money">
+                    <Plus width={15} height={15} /> New agent
+                  </button>
+                </div>
+                <ul className="agent-list">
+                  {state.agents.length === 0 && <li className="empty">{state.loaded ? "No agents yet. Create one with New agent, or run npm run setup." : "Loading…"}</li>}
+                  {agents.map((a) => (
                 <AgentCard
                   key={a.id}
                   agent={a}
@@ -65,32 +111,34 @@ export default function App() {
                   onAddMoney={() => setSheet({ sheet: "add-money", agent: a.name })}
                 />
               ))}
+                </ul>
+              </section>
+
+              <section className="ov-sec" aria-label="Activity">
+                <div className="section-head">
+                  <h2 className="section-title">
+                    {feedTab === "activity" ? "Activity" : "Receipts"}
+                    {state.connection === "live" && <span className="live-tag">Live</span>}
+                  </h2>
+                  <div className="seg" role="tablist" aria-label="Show">
+                    <button role="tab" aria-selected={feedTab === "activity"} className={feedTab === "activity" ? "seg-on" : ""} onClick={() => setFeedTab("activity")}>
+                      Activity
+                    </button>
+                    <button role="tab" aria-selected={feedTab === "receipts"} className={feedTab === "receipts" ? "seg-on" : ""} onClick={() => setFeedTab("receipts")}>
+                      Receipts
+                    </button>
+                  </div>
+                </div>
+                {feedTab === "activity" ? (
+                  <ActivityFeed events={state.events} pendingIds={pendingIds} showDetails={state.showDetails} now={now} />
+                ) : (
+                  <ReceiptsList receipts={state.receipts} showDetails={state.showDetails} now={now} />
+                )}
+              </section>
             </div>
-          </section>
-
-          <ActivityFeed
-            events={state.events}
-            pendingIds={pendingIds}
-            busyApprovals={state.busyApprovals}
-            showDetails={state.showDetails}
-            now={now}
-            onApprove={(id) => void actions.approve(id)}
-            onDeny={(id) => void actions.deny(id)}
-          />
-
-          <aside className="side">
-            <ApprovalsPanel
-              approvals={state.approvals}
-              busy={state.busyApprovals}
-              showDetails={state.showDetails}
-              now={now}
-              onApprove={(id) => void actions.approve(id)}
-              onDeny={(id) => void actions.deny(id)}
-            />
-            <ReceiptsList receipts={state.receipts} showDetails={state.showDetails} now={now} />
-          </aside>
-        </main>
-      )}
+          </main>
+        )}
+      </div>
 
       {sheet?.sheet === "new-agent" && (
         <NewAgentSheet adapter={adapter} offline={state.connection === "offline"} embed={false} chatUrl={chatUrl} knownNames={agentNames} onClose={closeSheet} onCreated={actions.refresh} />

@@ -12,10 +12,9 @@ interface Props {
 
 export function ApprovalsPanel({ approvals, busy, showDetails, now, onApprove, onDeny }: Props) {
   return (
-    <section className={`panel approvals${approvals.length ? " has-pending" : ""}`}>
-      <h2 className="panel-title">
-        Needs your approval
-        {approvals.length > 0 && <span className="count-badge">{approvals.length}</span>}
+    <section className="inbox" aria-label="Waiting on you">
+      <h2 className="section-title">
+        Waiting on you <span className="count-badge">{approvals.length}</span>
       </h2>
       {approvals.length === 0 ? (
         <p className="empty">Nothing waiting on you.</p>

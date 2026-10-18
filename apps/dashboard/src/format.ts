@@ -144,7 +144,9 @@ function capPhrase(maxPrice: string | undefined): string {
  * The mock adapter uses the same builder so both paths read identically.
  */
 export function describeEvent(e: Pick<WalletEvent, "type" | "message" | "agentName" | "receipt" | "approval" | "reason" | "data">): string {
-  if (e.message && e.message.trim()) return e.message.trim();
+  // The wallet's own message for a "not connected" block is addressed to the agent (it names the
+  // request_service tool), so the owner gets the plain sentence below instead.
+  if (e.message && e.message.trim() && !(e.type === "payment.blocked" && e.reason === "service_not_connected")) return e.message.trim();
   const agent = e.agentName ?? "An agent";
   const r = e.receipt;
   const amt = r ? money(r.amount) : e.approval ? money(e.approval.amount) : "";

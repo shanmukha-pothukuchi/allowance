@@ -158,16 +158,19 @@
     return h;
   }
   function md(s) {
-    var lines = esc(str(s).replace(/\r/g, "").trim()).split("\n");
-    return lines
-      .map(function (l) {
-        var b = l.match(/^\s*[-*•]\s+(.*)$/);
-        if (b) return "•&nbsp;" + inlineMd(b[1]);
-        var hd = l.match(/^\s*#{1,6}\s+(.*)$/);
-        if (hd) return "<strong>" + inlineMd(hd[1]) + "</strong>";
-        return inlineMd(l);
+    // Blank lines split paragraphs; single newlines stay line breaks inside one.
+    return esc(str(s).replace(/\r/g, "").trim())
+      .split(/\n\s*\n/)
+      .map(function (para) {
+        return "<p>" + para.split("\n").map(function (l) {
+          var b = l.match(/^\s*[-*•]\s+(.*)$/);
+          if (b) return "•&nbsp;" + inlineMd(b[1]);
+          var hd = l.match(/^\s*#{1,6}\s+(.*)$/);
+          if (hd) return "<strong>" + inlineMd(hd[1]) + "</strong>";
+          return inlineMd(l);
+        }).join("<br>") + "</p>";
       })
-      .join("<br>");
+      .join("");
   }
 
   // ================================================================ icons (inline SVG)
@@ -878,10 +881,11 @@
     var n = num(rc.amount);
     if (!sent && n != null && n < 1) {
       // Micropayments: one compact row, so a few API calls don't fill the screen.
+      var tx = rc.tx ? (rc.url ? '<a class="rr-tx" href="' + esc(rc.url) + '" target="_blank" rel="noopener noreferrer" title="View transaction">' + esc(rc.tx) + "</a>" : '<span class="rr-tx">' + esc(rc.tx) + "</span>") : "";
       return (
-        '<div class="card receipt compact"><div class="card-pad"><div class="c-row">' + tile +
-        '<div class="c-who"><div class="c-k">Payment to</div><div class="c-name">' + esc(name) + "</div></div>" +
-        '<div class="c-amt-sm">' + esc(rc.amount) + "</div></div></div>" + receiptFoot(rc, e) + "</div>"
+        '<div class="card rgroup"><div class="rrow">' + tileHtml(svc || { glyph: "receipt" }, "t28") +
+        '<span class="rr-what"><span class="rr-name">Paid ' + esc(name) + '</span><span class="rr-sub">' + esc(clock(ts(e.at) + (e.ms || 0))) + (tx ? " · " : "") + tx + "</span></span>" +
+        '<span class="rr-amt">' + esc(rc.amount) + "</span></div></div>"
       );
     }
     return (
@@ -962,17 +966,12 @@
       : svcInfo(str(args.service_id));
     var st = connStatus(a, e);
     var badge = { connected: ["ok", "check", "Connected"], pending: ["wait", "clock", "Pending"], declined: ["err", "x", "Declined"], expired: ["err", "clock", "Expired"], failed: ["err", "x", "Not sent"] }[st];
-    var reason = str(args.reason).trim().slice(0, 240);
-    var perms = info.permissions || [];
     return (
-      '<div class="card conn ' + st + '"><div class="card-pad">' +
-      '<div class="c-label">' + icon("plug") + "Connection request</div>" +
-      '<div class="c-row">' + tileHtml(info, "t48") + '<div class="c-who"><div class="c-name">' + esc(info.name) + "</div>" + (info.provider ? '<div class="c-k">' + esc(custom ? info.provider : "by " + info.provider) + "</div>" : "") + "</div>" +
+      '<div class="card conn ' + st + '"><div class="rrow">' + tileHtml(info, "t28") +
+      '<span class="rr-what"><span class="rr-name">Asked to connect ' + esc(info.name) + '</span><span class="rr-sub">' + esc(custom ? info.provider : (info.provider ? "by " + info.provider : "") + (info.pricing ? " · " + info.pricing : "")) + "</span></span>" +
       '<span class="pill ' + badge[0] + '">' + icon(badge[1]) + badge[2] + "</span></div>" +
-      (perms.length ? '<div class="c-asks">' + esc(a.name) + " will be able to</div>" + '<ul class="c-perms">' + perms.map(function (p) { return "<li>" + icon("check") + "<span>" + esc(p) + "</span></li>"; }).join("") + "</ul>" : "") +
-      (reason ? '<div class="c-reason"><small>' + esc(a.name) + "'s reason, in its own words</small>" + esc(reason) + "</div>" : "") +
-      (custom ? '<div class="c-flag">Not in the directory · proposed by the agent</div>' : "") +
-      "</div></div>"
+      (custom ? '<div class="c-flag">' + icon("warn") + "Not in the directory · proposed by the agent</div>" : "") +
+      "</div>"
     );
   }
   function cardsFor(a, e) {
@@ -1279,7 +1278,7 @@
         if (str(e.text).trim()) items.push({ key: "a:" + pre + e.id, side: "them", who: who, kind: "bubble", at: ts(e.at), text: e.text });
       } else if (e.kind === "tool") {
         var end = ts(e.at) + (e.ms || 0);
-        cardsFor(a, e).forEach(function (c) { items.push({ key: scope + c.key, side: "them", who: who, kind: "card", at: end, html: c.html }); });
+        cardsFor(a, e).forEach(function (c) { items.push({ key: scope + c.key, side: "them", who: who, kind: "card", at: end, html: c.html, rrow: c.html.indexOf('<div class="card rgroup">') === 0 }); });
         approvalsAnchoredTo(a, e.id).forEach(function (ap) {
           anchored[ap.id] = 1;
           items.push(approvalItem(ap, end + 1));
@@ -1438,12 +1437,13 @@
       }
       list.push(it);
     });
-    if (opts.delivered) {
-      for (var d = list.length - 1; d >= 0; d--) {
-        if (list[d].side === "me" && list[d].kind === "bubble") {
-          list.splice(d + 1, 0, { key: "dlv", kind: "meta", html: '<div class="it me k-meta"><div class="meta">Delivered</div></div>' });
-          break;
-        }
+    // Back-to-back micropayments read as one short statement, not a stack of cards.
+    for (var g = list.length - 1; g > 0; g--) {
+      var x = list[g], y = list[g - 1];
+      if (x.rrow && y.rrow && x.who === y.who) {
+        y.html = y.html.replace(/<\/div>$/, "") + x.html.replace(/^<div class="card rgroup">/, "");
+        y.key += "+" + x.key;
+        list.splice(g, 1);
       }
     }
     var same = function (x, y) { return x && y && x.kind !== "sep" && y.kind !== "sep" && x.side === y.side && (x.who || "") === (y.who || ""); };
@@ -1462,7 +1462,7 @@
       var last = !same(q, it);
       if (it.stable) return { key: it.key, html: it.html };
       var cont = first ? "" : p.kind === "bubble" && it.kind === "bubble" ? " cont" : " cont2";
-      var label = opts.group && first && it.side === "them" && it.who ? '<div class="who">' + avatarHtml(it.who, 24) + esc(it.who) + "</div>" : "";
+      var label = first && it.side === "them" && it.who ? '<div class="who">' + avatarHtml(it.who, 24) + "<b>" + esc(it.who) + "</b>" + (it.at ? '<span class="who-t">' + esc(clock(it.at)) + "</span>" : "") + "</div>" : "";
       var inner = it.kind === "bubble" ? '<div class="bub ' + it.side + (last ? " tail" : "") + '">' + md(it.text) + "</div>" : it.html;
       return { key: it.key, html: '<div class="it ' + it.side + cont + " k-" + it.kind + '">' + label + inner + "</div>" };
     });
@@ -1554,7 +1554,6 @@
       '<button class="row' + (state.selected === n ? " sel" : "") + (fresh ? " fresh" : "") + '" data-select="' + esc(n) + '" data-tip="' + esc(n) + '" data-tip2="' + esc(st ? st.text : money(bal)) + '">' +
       avatarHtml(n, 0, st ? st.badge : "") +
       '<span class="r-main"><span class="r-top"><span class="r-name">' + esc(n) + "</span>" +
-      (bal != null ? '<span class="r-bal' + (ui.balUp[n] && ui.balUp[n] > Date.now() ? " up" : "") + '">' + esc(money(bal)) + "</span>" : "") +
       '<span class="r-time">' + esc(relTime(lm.at)) + "</span></span>" +
       (st ? '<span class="r-status ' + st.tone + '"><span class="sdot"></span>' + esc(st.text) + "</span>" : "") +
       '<span class="r-prev">' + esc(lm.text) + "</span></span></button>"
@@ -2216,9 +2215,8 @@
       '<button class="icon-btn rail-search" data-action="rail-search" data-tip="Search" data-tip2="⌘K" aria-label="Search">' + icon("search") + "</button>" +
       '<label class="search">' + icon("search") + '<input id="search" type="search" placeholder="Search" autocomplete="off" spellcheck="false"></label>' +
       '<div class="rows" id="rows"></div>' +
-      '<div class="side-foot"><div class="foot-row"><div class="model" title="Model"><span class="mdot' + (CFG.llmConfigured === false ? " off" : "") + '"></span>' + esc(CFG.model || "model") + " @ " + esc(CFG.endpoint || "?") + "</div>" +
+      '<div class="side-foot"><div class="foot-row"><div class="links">' + links.map(function (l) { return '<a href="' + esc(l[1]) + '" target="_blank" rel="noopener" data-tip="' + esc(l[0]) + '" title="' + esc(l[0]) + '">' + icon(l[2]) + "<span>" + esc(l[0]) + "</span></a>"; }).join("") + "</div>" +
       '<button class="icon-btn theme-btn top-only" data-action="theme" title="Toggle dark mode" aria-label="Toggle dark mode"></button></div>' +
-      '<div class="links">' + links.map(function (l) { return '<a href="' + esc(l[1]) + '" target="_blank" rel="noopener" data-tip="' + esc(l[0]) + '" title="' + esc(l[0]) + '">' + icon(l[2]) + "<span>" + esc(l[0]) + "</span></a>"; }).join("") + "</div>" +
       // The rail hides the header's theme toggle; this one keeps it reachable.
       '<button class="icon-btn theme-btn rail-only rail-theme" data-action="theme" data-tip="Appearance" aria-label="Toggle dark mode"></button></div>' +
       "</aside>" +
@@ -2277,7 +2275,7 @@
       return;
     }
     if (switched) els.grid.innerHTML = "";
-    var items = !names.length ? [] : group ? finalize(groupItems(groupDef(state.selected), names), { group: true }) : finalize(agentItems(state.agents[names[0]], { scope: "" }), { delivered: true });
+    var items = !names.length ? [] : group ? finalize(groupItems(groupDef(state.selected), names), { group: true }) : finalize(agentItems(state.agents[names[0]], { scope: "" }), {});
     var empty = !items.length;
     if (empty) items = [{ key: "empty:" + conv, html: emptyHtml(names) }];
     els.thread.classList.toggle("empty-thread", empty);
