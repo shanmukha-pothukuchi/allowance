@@ -1080,7 +1080,8 @@ open a new tab open in the same one, so there is always one page.
 `apps/computer-use/docker/`: Alpine 3.24 with Xvfb (1280×800), Openbox (no decorations, every window
 maximized at 0,0), Chromium, xdotool, ffmpeg (x11grab, for screenshots and the MJPEG stream) and
 `server.py`, a small control server (Python stdlib plus websocket-client) on port 8080 inside the
-container. The image is `allowance-cu-desktop:latest`, about 370 MB compressed. The service builds it
+container. The image is `allowance-cu-desktop:latest`, about 390 MB compressed (1.3 GB as `docker images`
+shows it; Chromium and the Mesa/LLVM and ffmpeg libraries it depends on are most of it). The service builds it
 when it is missing or its `docker/` files changed (a content hash is kept as an image label).
 
 Per session the service runs one **fresh** container, `allowance-cu-<session id>`, labelled
