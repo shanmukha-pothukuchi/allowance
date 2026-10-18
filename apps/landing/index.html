@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Allowance · The wallet for teams of AI agents</title>
+<meta name="description" content="Give every AI agent its own allowance: a wallet with limits it can't talk its way around, approvals on your phone, and a bank statement you can read.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./landing.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="#top" aria-label="Allowance home">
+      <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 4 5.6v6.1c0 4.9 3.4 8.6 8 9.8 4.6-1.2 8-4.9 8-9.8V5.6z" fill="currentColor"/><path d="m8.6 12.2 2.4 2.4 4.6-4.8" fill="none" stroke="#08090a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Allowance</span>
+    </a>
+    <nav class="links" aria-label="Main">
+      <a href="#wallet">Wallet</a>
+      <a href="#services">Services</a>
+      <a href="#bank">Bank</a>
+      <a href="#invest">Invest</a>
+      <a href="#protocol">Protocol</a>
+    </nav>
+    <div class="nav-cta">
+      <a class="quiet" href="https://github.com/shanmukha-pothukuchi/allowance">GitHub</a>
+      <a class="pill" href="http://localhost:4050">Open app</a>
+    </div>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- Hero -->
+  <section class="hero wrap">
+    <h1>The wallet for teams<br> of AI agents</h1>
+    <div class="hero-row">
+      <p class="lede">Give every agent its own allowance. Limits it can't talk its way around, approvals on your phone, and a bank statement you can read.</p>
+      <a class="news" href="#invest"><b>New</b> Agents that invest and wake themselves <span aria-hidden="true">→</span></a>
+    </div>
+  </section>
+
+  <section class="stage" aria-label="Product">
+    <div class="stage-glow"></div>
+    <figure class="window wrap-wide">
+      <img src="./assets/chat-flood.png" width="1440" height="900" alt="Allowance chat: the researcher agent paid $0.05 for live flood research and shows 57 banks under flood alerts, with Capital One's sandbox branches checked">
+    </figure>
+  </section>
+
+  <!-- Built on -->
+  <section class="wrap rails" aria-label="Built on">
+    <ul>
+      <li>x402</li><li>Capital One Nessie</li><li>Base Sepolia</li><li>Shopify</li><li>Sentinel-1</li><li>MCP</li><li>NRP</li>
+    </ul>
+    <p class="mono-cap">Built on open protocols and real APIs</p>
+  </section>
+
+  <!-- Statement -->
+  <section class="wrap statement" id="wallet">
+    <p><span>A new kind of wallet.</span> Agents never hold a key. A wallet service signs only what your rules allow, stops attacks on its own, and posts every payment to a bank statement you can read.</p>
+  </section>
+
+  <!-- Three figures -->
+  <section class="wrap figs">
+    <article>
+      <span class="fig">FIG 0.1</span>
+      <svg viewBox="0 0 200 150" aria-hidden="true" class="art">
+        <g fill="none" stroke="currentColor" stroke-width="1">
+          <path d="M100 30 170 62 100 94 30 62Z"/><path d="M30 62v10l70 32 70-32V62"/>
+          <path d="M30 80v10l70 32 70-32V80"/><path d="M30 98v10l70 32 70-32V98"/>
+          <path d="M70 62 100 48 130 62 100 76Z" opacity=".6"/>
+        </g>
+      </svg>
+      <h3>Rules outside the model</h3>
+      <p>Max per payment, daily cap, approved services, approval threshold and freeze. The model can't edit them.</p>
+    </article>
+    <article>
+      <span class="fig">FIG 0.2</span>
+      <svg viewBox="0 0 200 150" aria-hidden="true" class="art">
+        <g fill="none" stroke="currentColor" stroke-width="1">
+          <rect x="72" y="18" width="56" height="112" rx="10"/><rect x="80" y="30" width="40" height="80" rx="3"/>
+          <path d="M86 52h28M86 62h20M86 76h12" opacity=".6"/><rect x="86" y="88" width="13" height="8" rx="2"/><rect x="101" y="88" width="13" height="8" rx="2" opacity=".6"/>
+          <path d="M140 46c8 6 8 22 0 28M150 38c13 10 13 34 0 44" opacity=".5"/>
+        </g>
+      </svg>
+      <h3>Approvals on your phone</h3>
+      <p>Anything over the threshold waits for you, on Telegram, the dashboard or inline in the chat. One tap.</p>
+    </article>
+    <article>
+      <span class="fig">FIG 0.3</span>
+      <svg viewBox="0 0 200 150" aria-hidden="true" class="art">
+        <g fill="none" stroke="currentColor" stroke-width="1">
+          <path d="M44 24h112v104H44z"/><path d="M56 40h60M56 56h88M56 70h88M56 84h88M56 98h88M56 112h56" opacity=".6"/>
+          <path d="M132 40h12" /><path d="M128 108l8 8 16-18"/>
+        </g>
+      </svg>
+      <h3>One bank statement</h3>
+      <p>Each agent gets its own Capital One account. Every USDC payment lands on its statement under the merchant's name.</p>
+    </article>
+  </section>
+
+  <!-- Feature: services -->
+  <section class="feature wrap" id="services">
+    <div class="feature-head">
+      <h2>Services<br>and approvals</h2>
+      <div>
+        <p>Agents only pay services you've connected. When one needs something new, it finds it in the directory or pastes a link (a Shopify store, any API that charges over x402) and asks you once.</p>
+        <a class="more" href="https://github.com/shanmukha-pothukuchi/allowance/blob/master/docs/ARCHITECTURE.md">How it works <span aria-hidden="true">→</span></a>
+      </div>
+    </div>
+    <div class="panel two">
+      <div class="card decision">
+        <div class="card-top"><span class="tile shop" aria-hidden="true"></span><b>Connect Allbirds?</b><span class="muted right">1m ago</span></div>
+        <p class="muted">shopper · allbirds.com · up to $20.00 per order</p>
+        <blockquote>"Owner asked for the cheapest size-M pair of socks in stock from allbirds.com."</blockquote>
+        <div class="btns"><span class="btn primary">Approve</span><span class="btn">Deny</span><span class="muted right">Details</span></div>
+      </div>
+      <ul class="lines">
+        <li><i class="av r">R</i><span><b>researcher</b> paid <b>Quantcomm Flood Research</b> <em>· 2m ago</em></span><span class="amt">−$0.05</span></li>
+        <li><i class="av s">S</i><span><b>shopper</b> asked to add <b>Allbirds</b> <em>· 3m ago</em></span><span class="chip">Pending</span></li>
+        <li><i class="av w">W</i><span><b>naive-worker</b> tried to send <b>$20.00</b> to an unknown address <em>· blocked, frozen</em></span><span class="chip red">Blocked</span></li>
+        <li><i class="av r">R</i><span><b>researcher</b> got a top-up from <b>Capital One Checking ••7688</b> <em>· 6h ago</em></span><span class="amt plus">+$5.00</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Feature: bank -->
+  <section class="feature wrap" id="bank">
+    <div class="feature-head">
+      <h2>A bank account<br>per agent</h2>
+      <div>
+        <p>Your checking funds a separate Capital One allowance account for each agent, through Capital One's Nessie API. Adding money waits for the bank to confirm. Blocked payments never reach it.</p>
+        <a class="more" href="https://github.com/shanmukha-pothukuchi/allowance#a-capital-one-bank-behind-it-optional">Nessie details <span aria-hidden="true">→</span></a>
+      </div>
+    </div>
+    <figure class="window"><img src="./assets/dashboard.png" width="1512" height="790" loading="lazy" alt="Allowance dashboard: one decision card, activity as one-line events, and each agent's own Capital One account"></figure>
+  </section>
+
+  <!-- Feature: computer + research -->
+  <section class="feature wrap" id="computer">
+    <div class="feature-head">
+      <h2>Research, shopping<br>and a computer</h2>
+      <div>
+        <p>Agents buy satellite flood research per request, shop any public Shopify store, and rent a sandboxed desktop by the minute while you watch it live. Each click is a small payment; failures are free.</p>
+        <a class="more" href="https://github.com/shanmukha-pothukuchi/allowance/blob/master/docs/ARCHITECTURE.md">Pricing by time and action <span aria-hidden="true">→</span></a>
+      </div>
+    </div>
+    <figure class="window"><img src="./assets/computer.png" width="1440" height="900" loading="lazy" alt="Allowance chat: a live view of the sandboxed computer an agent rented, with time left, actions and spend"></figure>
+  </section>
+
+  <!-- Feature: invest -->
+  <section class="feature wrap" id="invest">
+    <div class="feature-head">
+      <h2>Invest, cash out,<br>wake up</h2>
+      <div>
+        <p>Agents trade paper stocks priced from real daily closes, bring money back to you on request or by rule, and set their own reminders and price watches. Your take-profit and stop-loss rules wake them without you.</p>
+        <p class="fine">Paper trading only · not investment advice.</p>
+      </div>
+    </div>
+    <div class="panel two">
+      <div class="card">
+        <div class="card-top"><b>Portfolio</b><span class="muted">· 30 replay days later</span><span class="right plus">+$6.39</span></div>
+        <table class="pos">
+          <tr><td>COF</td><td class="muted">0.480515 sh</td><td>$106.39</td><td class="plus">+6.39%</td></tr>
+        </table>
+        <p class="muted small">Paper trading · replay of real closes from 2025-10-16 · from a test run</p>
+      </div>
+      <ul class="lines">
+        <li><i class="av r">R</i><span><b>researcher</b> bought <b>0.48 COF</b> <em>· paid in USDC</em></span><span class="amt">−$100.00</span></li>
+        <li><i class="sys">⏰</i><span><b>Reminder you set</b> woke <b>researcher</b>: check COF <em>· every 5 min</em></span></li>
+        <li><i class="sys">📈</i><span><b>Rule</b> woke <b>researcher</b>: take profit on COF at +5% <em>· fired once</em></span></li>
+        <li><i class="av r">R</i><span><b>researcher</b> sold <b>COF</b> <em>· +$6.39 realized</em></span><span class="amt plus">+$106.39</span></li>
+        <li><i class="av r">R</i><span><b>researcher</b> cashed out to <b>Checking ••7688</b></span><span class="amt">$50.00</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Feature: protocol -->
+  <section class="feature wrap" id="protocol">
+    <div class="feature-head">
+      <h2>Websites that<br>pay agents</h2>
+      <div>
+        <p><code>agent-work</code> is an open protocol: a site publishes paid tasks at <code>/.well-known/agent-work</code>, agents claim, do and submit them, and the site pays in USDC. One line of Express middleware.</p>
+        <a class="more" href="https://github.com/shanmukha-pothukuchi/allowance/blob/master/docs/agent-work-spec.md">Read the spec <span aria-hidden="true">→</span></a>
+      </div>
+    </div>
+    <pre class="code" aria-label="Example"><span class="c">// server.ts</span>
+<span class="k">import</span> { agentWork } <span class="k">from</span> <span class="s">"@allowance/agent-work"</span>;
+
+app.<span class="f">use</span>(<span class="f">agentWork</span>({
+  site: { name: <span class="s">"Acme APIs"</span>, url: <span class="s">"https://acme.example"</span> },
+  bounties: [{ id: <span class="s">"api-reliability-check"</span>, payoutAmount: <span class="s">"0.50"</span>, slots: <span class="n">3</span>, <span class="c">/* … */</span> }],
+  verify: <span class="k">async</span> (bountyId, result) =&gt; <span class="f">checkEndpoints</span>(result),
+  payout: <span class="k">async</span> (to, amount) =&gt; <span class="f">payUsdc</span>(to, amount),
+}));
+
+<span class="c">// GET /.well-known/agent-work → open tasks, claim URL, payout network</span></pre>
+  </section>
+
+  <!-- Honesty -->
+  <section class="wrap honest">
+    <div>
+      <h3>Real</h3>
+      <p>x402 payments and signatures, the policy engine, approvals and freezing, Nessie API calls (sandbox money), Shopify catalogs and carts, satellite flood maps and NWS alerts, the sandboxed desktop, and the LLM agents.</p>
+    </div>
+    <div>
+      <h3>Simulated</h3>
+      <p>Turning bank dollars into USDC (test money), the card that pays a Shopify store, and the brokerage (paper trading on replayed real closes). Every screen says so.</p>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="cta wrap">
+    <h2>Give your agents<br>an allowance.</h2>
+    <div class="cta-btns">
+      <a class="pill big" href="http://localhost:4050">Open the chat</a>
+      <a class="pill big ghost" href="https://github.com/shanmukha-pothukuchi/allowance">View on GitHub</a>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-in">
+    <div class="brand small"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5 4 5.6v6.1c0 4.9 3.4 8.6 8 9.8 4.6-1.2 8-4.9 8-9.8V5.6z" fill="currentColor"/></svg><span>Allowance</span></div>
+    <div class="cols">
+      <div><h4>Product</h4><a href="#wallet">Wallet</a><a href="#services">Services</a><a href="#bank">Bank</a><a href="#invest">Invest</a></div>
+      <div><h4>Build</h4><a href="#protocol">agent-work</a><a href="https://github.com/shanmukha-pothukuchi/allowance/blob/master/docs/ARCHITECTURE.md">Architecture</a><a href="https://github.com/shanmukha-pothukuchi/allowance">GitHub</a></div>
+      <div><h4>Apps</h4><a href="http://localhost:4050">Chat</a><a href="http://localhost:4040">Dashboard</a><a href="http://localhost:4060">Directory</a></div>
+    </div>
+  </div>
+  <p class="wrap fine">Built at Technica 2026. Test money only (Base Sepolia or a local ledger); Nessie sandbox accounts; paper trading is not investment advice.</p>
+</footer>
+
+</body>
+</html>
