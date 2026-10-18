@@ -72,6 +72,45 @@ export function createSchedulerApp(opts: SchedulerAppOptions): express.Express {
   };
   const agentOf = (res: Response) => res.locals.agent as AgentIdentity;
 
+  // ---- owner key check ------------------------------------------------------------------------
+  /** true: a valid X-Owner-Key; false: none sent; a wrong key answers 401 here. */
+  const ownerKey = (req: Request, res: Response): boolean | null => {
+    const given = req.header("x-owner-key");
+    if (given === undefined) return false;
+    if (safeEqual(given, opts.ownerApiKey)) return true;
+    res.status(401).json({ error: "unauthorized", message: "X-Owner-Key is wrong" });
+    return null;
+  };
+  const ownerOnly: RequestHandler = (req, res, next) => {
+    const o = ownerKey(req, res);
+    if (o === null) return;
+    if (!o) return void res.status(401).json({ error: "unauthorized", message: "X-Owner-Key required" });
+    next();
+  };
+  /** The shared paths serve the owner (X-Owner-Key: everything) or an agent (Bearer: its own). */
+  const ownerOrAgent: RequestHandler = (req, res, next) => {
+    const o = ownerKey(req, res);
+    if (o === null) return;
+    if (o) {
+      res.locals.owner = true;
+      return next();
+    }
+    return withAgent(req, res, next);
+  };
+  const isOwner = (res: Response) => res.locals.owner === true;
+
+  const ownerList = (req: Request) => {
+    const agentName = typeof req.query.agent === "string" && req.query.agent ? req.query.agent : undefined;
+    const includeEnded = req.query.all === "1" || req.query.all === "true";
+    return {
+      schedules: scheduler.list({ agentName, includeEnded }).map((s) => scheduler.view(s)),
+      ...status(),
+      firingsToday: scheduler.allFiringsToday(),
+      firings: scheduler.firings({ agentName }),
+    };
+  };
+
+  // ---- schedules (agent: its own; owner: all) -----------------------------------------------------
   app.post(
     "/schedules",
     withAgent,
@@ -84,8 +123,9 @@ export function createSchedulerApp(opts: SchedulerAppOptions): express.Express {
 
   app.get(
     "/schedules",
-    withAgent,
+    ownerOrAgent,
     route((req, res) => {
+      if (isOwner(res)) return void res.json(ownerList(req));
       const agent = agentOf(res);
       const includeEnded = req.query.all === "1" || req.query.all === "true";
       res.json({ schedules: scheduler.list({ agentName: agent.name, includeEnded }).map((s) => scheduler.view(s)), ...status(), firingsToday: scheduler.firingsToday(agent.name) });
@@ -94,24 +134,16 @@ export function createSchedulerApp(opts: SchedulerAppOptions): express.Express {
 
   app.delete(
     "/schedules/:id",
-    withAgent,
+    ownerOrAgent,
     route((req, res) => {
-      const s = scheduler.cancel(String(req.params.id), "agent", agentOf(res).name);
+      const s = isOwner(res) ? scheduler.cancel(String(req.params.id), "owner") : scheduler.cancel(String(req.params.id), "agent", agentOf(res).name);
       res.json({ schedule: scheduler.view(s) });
     }),
   );
 
   // ---- owner API ------------------------------------------------------------------------------
-  const ownerOnly: RequestHandler = (req, res, next) => {
-    const given = req.header("x-owner-key");
-    if (!given || !safeEqual(given, opts.ownerApiKey)) return void res.status(401).json({ error: "unauthorized", message: "X-Owner-Key required" });
-    next();
-  };
-
   app.get("/owner/schedules", ownerOnly, (req, res) => {
-    const agentName = typeof req.query.agent === "string" && req.query.agent ? req.query.agent : undefined;
-    const includeEnded = req.query.all === "1" || req.query.all === "true";
-    res.json({ schedules: scheduler.list({ agentName, includeEnded }).map((s) => scheduler.view(s)), ...status(), firingsToday: scheduler.allFiringsToday() });
+    res.json(ownerList(req));
   });
 
   app.delete(
@@ -122,18 +154,25 @@ export function createSchedulerApp(opts: SchedulerAppOptions): express.Express {
     }),
   );
 
-  app.post(
-    "/owner/rules",
-    ownerOnly,
-    route(async (req, res) => {
-      const name = typeof req.body?.agent === "string" ? req.body.agent.trim() : "";
-      if (!AGENT_NAME_RE.test(name)) return void res.status(400).json({ error: "invalid_request", message: "Body must be { agent, type, value, ticker? } with an agent name" });
-      const who = await wallet.agentByName(name);
-      if (!who) return void res.status(404).json({ error: "agent_not_found", message: `No agent ${name}` });
-      const { schedule, replaced } = await scheduler.createRule(who, req.body ?? {});
-      res.status(201).json({ schedule: scheduler.view(schedule), ...(replaced ? { replaced: scheduler.view(replaced) } : {}) });
-    }),
-  );
+  /**
+   * Owner rules. One rule: `{ agent, type, value, ticker?, everyMinutes? }`. Or the dashboard's rule
+   * set for one agent: `{ agentName, takeProfitPct?, stopLossPct?, cashOutAbove? }` (empty = off).
+   */
+  const rules = route(async (req, res) => {
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const name = typeof b.agent === "string" ? b.agent.trim() : typeof b.agentName === "string" ? b.agentName.trim() : "";
+    if (!AGENT_NAME_RE.test(name)) return void res.status(400).json({ error: "invalid_request", message: "Body must name the agent: { agent, type, value, ticker? } or { agentName, takeProfitPct?, stopLossPct?, cashOutAbove? }" });
+    const who = await wallet.agentByName(name);
+    if (!who) return void res.status(404).json({ error: "agent_not_found", message: `No agent ${name}` });
+    if (b.type !== undefined) {
+      const { schedule, replaced } = await scheduler.createRule(who, b);
+      return void res.status(201).json({ schedule: scheduler.view(schedule), ...(replaced ? { replaced: scheduler.view(replaced) } : {}) });
+    }
+    const { rules: list, removed } = await scheduler.setRules(who, b);
+    res.json({ agent: name, rules: list.map((s) => scheduler.view(s)), removed: removed.map((s) => scheduler.view(s)) });
+  });
+  app.post("/owner/rules", ownerOnly, rules);
+  app.post("/rules", ownerOnly, rules);
 
   const pause: RequestHandler = (_req, res) => {
     scheduler.pause();
@@ -147,9 +186,11 @@ export function createSchedulerApp(opts: SchedulerAppOptions): express.Express {
   app.post("/resume", ownerOnly, resume);
   app.post("/owner/pause", ownerOnly, pause);
   app.post("/owner/resume", ownerOnly, resume);
-  app.get("/owner/status", ownerOnly, (_req, res) => {
-    res.json({ ...status(), active: scheduler.list().length, firingsToday: scheduler.allFiringsToday() });
-  });
+  const ownerStatus: RequestHandler = (_req, res) => {
+    res.json({ ...status(), state: scheduler.paused ? "paused" : "running", active: scheduler.list().length, firingsToday: scheduler.allFiringsToday() });
+  };
+  app.get("/status", ownerOnly, ownerStatus);
+  app.get("/owner/status", ownerOnly, ownerStatus);
 
   app.use((_req: Request, res: Response) => {
     res.status(404).json({ error: "not_found", message: "No such route" });

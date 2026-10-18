@@ -8,7 +8,7 @@
  */
 import { localDayKey, newId } from "@allowance/shared";
 import type { ChatClient } from "./chat.js";
-import { describeCondition, fmtEvery, fmtTime, money, opSymbol, pct, price, ruleLabel, ruleMessage, summarize } from "./format.js";
+import { describeCondition, fmtEvery, fmtTime, money, opSymbol, pct, price, ruleLabel, ruleMessage, ruleOf, summarize } from "./format.js";
 import { MarketError, type AgentRef, type MarketData, type Portfolio, type Quote, type QuotesResult } from "./market.js";
 import type { ScheduleStore } from "./store.js";
 import {
@@ -16,6 +16,7 @@ import {
   isMoveCondition,
   isPortfolioCondition,
   type Condition,
+  type FiringRecord,
   type Limits,
   type Op,
   type OwnerRule,
@@ -76,6 +77,13 @@ export interface RuleInput {
   value?: unknown;
   ticker?: unknown;
   everyMinutes?: unknown;
+}
+
+/** The dashboard's rule set for one agent: each one set, or empty / missing for off. Portfolio-wide. */
+export interface RuleSetInput {
+  takeProfitPct?: unknown;
+  stopLossPct?: unknown;
+  cashOutAbove?: unknown;
 }
 
 /** A schedule as the API returns it: the stored record plus a one-line summary. */
@@ -287,7 +295,7 @@ export class Scheduler {
       ...(checkSeconds !== undefined ? { checkEverySeconds: checkSeconds } : {}),
       message,
       source,
-      ...(extra.rule ? { rule: extra.rule } : {}),
+      ...(extra.rule ? { rule: extra.rule.type, ruleValue: extra.rule.value, ...(extra.rule.ticker ? { ruleTicker: extra.rule.ticker } : {}) } : {}),
       label: extra.rule ? ruleLabel(extra.rule) : kind === "price" ? "Price watch you set" : "Reminder you set",
       createdAt: iso(now),
       nextRunAt: kind === "at" ? iso(atMs!) : kind === "every" ? iso(firstEvery!) : iso(now),
@@ -320,26 +328,40 @@ export class Scheduler {
     return c;
   }
 
-  /**
-   * An owner rule (take profit %, stop loss %, cash out profits above $X), stored as an owner-source
-   * price schedule with a fixed message. A new rule of the same type (and ticker) replaces the old one.
-   */
-  async createRule(agent: AgentRef, input: RuleInput): Promise<{ schedule: Schedule; replaced?: Schedule }> {
+  /** Validates an owner rule (no side effects). */
+  parseRule(input: RuleInput): { rule: OwnerRule; condition: Condition; everyMinutes: number } {
     const type = input.type as RuleType;
     if (typeof input.type !== "string" || !RULES.has(type)) throw bad('type must be "take_profit", "stop_loss" or "cash_out_profits".');
     const value = toNumber(input.value);
     if (value === undefined || Number.isNaN(value) || value <= 0) throw bad(type === "cash_out_profits" ? "Give the profit amount in dollars, more than $0." : "Give the percent, more than 0 (10 = 10%).");
     if (type === "stop_loss" && value >= 100) throw bad("A stop loss is a percent below 100.");
     if (type === "take_profit" && value > 1000) throw bad("A take-profit percent can be at most 1000.");
-    if (type === "cash_out_profits" && input.ticker !== undefined) throw bad("Cash out profits applies to the whole portfolio; leave out the ticker.");
+    if (type === "cash_out_profits" && value > 1_000_000) throw bad("Cash out profits above at most $1,000,000.");
+    if (type === "cash_out_profits" && input.ticker !== undefined && input.ticker !== "") throw bad("Cash out profits applies to the whole portfolio; leave out the ticker.");
     const ticker = input.ticker === undefined || input.ticker === "" ? undefined : parseTicker(input.ticker);
     const everyMinutes = toNumber(input.everyMinutes) ?? this.opts.ruleEveryMinutes ?? 10;
+    if (Number.isNaN(everyMinutes) || everyMinutes < this.limits.minEveryMinutes) throw bad(`A rule can re-fire at most every ${this.limits.minEveryMinutes} minute.`, "limit_every");
     const rule: OwnerRule = { type, value, ...(ticker ? { ticker } : {}) };
     const condition: Condition =
       type === "cash_out_profits"
         ? { portfolio: "unrealizedPnl", op: ">=", value }
         : { portfolio: "unrealizedPct", op: type === "take_profit" ? ">=" : "<=", value: type === "take_profit" ? value : -value, ...(ticker ? { ticker } : {}) };
-    const old = this.state.schedules.find((s) => s.active && s.source === "owner" && s.agentName === agent.name && s.rule?.type === type && s.rule.ticker === rule.ticker);
+    return { rule, condition, everyMinutes };
+  }
+
+  private activeRule(agentName: string, type: RuleType, ticker?: string): Schedule | undefined {
+    return this.state.schedules.find((s) => s.active && s.source === "owner" && s.agentName === agentName && s.rule === type && s.ruleTicker === ticker);
+  }
+
+  /**
+   * An owner rule (take profit %, stop loss %, cash out profits above $X), stored as an owner-source
+   * price schedule with a fixed message. A new rule of the same type (and ticker) replaces the old one.
+   * While its condition holds it re-fires at most every `everyMinutes` (default 10).
+   */
+  async createRule(agent: AgentRef, input: RuleInput): Promise<{ schedule: Schedule; replaced?: Schedule }> {
+    const { rule, condition, everyMinutes } = this.parseRule(input);
+    const old = this.activeRule(agent.name, rule.type, rule.ticker);
+    if (old && old.ruleValue === rule.value && old.everyMinutes === everyMinutes) return { schedule: old }; // unchanged
     const schedule = await this.create(agent, { kind: "price", condition, everyMinutes, message: ruleMessage(rule) }, "owner", { rule, replacing: old?.id });
     if (old) {
       this.end(old, "replaced", "owner");
@@ -348,13 +370,57 @@ export class Scheduler {
     return { schedule, ...(old ? { replaced: old } : {}) };
   }
 
+  /**
+   * The dashboard's form: set the agent's three portfolio-wide rules at once. A value sets (or
+   * replaces) that rule; empty or missing turns it off. All values are checked before anything changes.
+   */
+  async setRules(agent: AgentRef, input: RuleSetInput): Promise<{ rules: Schedule[]; removed: Schedule[] }> {
+    const fields: Array<[keyof RuleSetInput, RuleType]> = [
+      ["takeProfitPct", "take_profit"],
+      ["stopLossPct", "stop_loss"],
+      ["cashOutAbove", "cash_out_profits"],
+    ];
+    const clean = (v: unknown) => (typeof v === "string" ? v.replace(/[$,%\s]/g, "").replace(/^[+−-]/, "") : v);
+    const wanted = fields.map(([k, type]) => {
+      const raw = clean(input[k]);
+      if (raw === undefined || raw === null || raw === "") return { type, off: true as const };
+      try {
+        return { type, off: false as const, value: this.parseRule({ type, value: raw }).rule.value };
+      } catch (err) {
+        throw bad(`${k}: ${(err as Error).message}`);
+      }
+    });
+    const removed: Schedule[] = [];
+    for (const w of wanted) {
+      if (w.off) {
+        const old = this.activeRule(agent.name, w.type);
+        if (old) {
+          this.end(old, "cancelled", "owner");
+          removed.push(old);
+        }
+      } else await this.createRule(agent, { type: w.type, value: w.value });
+    }
+    if (removed.length) {
+      this.persist();
+      this.log(`owner turned off ${removed.map((r) => r.label).join(", ")} for ${agent.name}`);
+    }
+    return { rules: this.list({ agentName: agent.name }).filter((s) => s.source === "owner" && s.rule), removed };
+  }
+
+  /** Recent firings, newest first. */
+  firings(filter: { agentName?: string; limit?: number } = {}): FiringRecord[] {
+    const out = this.state.log.filter((f) => !filter.agentName || f.agentName === filter.agentName).slice().reverse();
+    return out.slice(0, filter.limit ?? 100);
+  }
+
   // ------------------------------------------------------------------ changing
 
   /** Cancel. An agent (agentName set) can cancel only its own schedules, never the owner's rules. */
   cancel(id: string, by: ScheduleSource, agentName?: string): Schedule {
     const s = this.get(id);
     if (!s || (agentName !== undefined && s.agentName !== agentName)) throw new SchedulerError(404, "schedule_not_found", `There is no schedule ${id}${agentName ? ` for ${agentName}` : ""}.`);
-    if (by === "agent" && s.source === "owner") throw new SchedulerError(403, "owner_rule", `${id} is your owner's rule (${s.rule ? ruleLabel(s.rule).replace(/^Rule: /, "") : s.label}); only your owner can remove it.`);
+    const rule = ruleOf(s);
+    if (by === "agent" && s.source === "owner") throw new SchedulerError(403, "owner_rule", `${id} is your owner's rule (${rule ? ruleLabel(rule).replace(/^Rule: /, "") : s.label}); only your owner can remove it.`);
     if (!s.active) throw new SchedulerError(409, "schedule_ended", `${id} already ended (${s.endedReason ?? "ended"}).`);
     this.end(s, "cancelled", by);
     this.persist();
@@ -540,6 +606,17 @@ export class Scheduler {
       const day = localDayKey(new Date(t));
       const f = this.state.firings[s.agentName];
       this.state.firings[s.agentName] = f && f.day === day ? { day, count: f.count + 1 } : { day, count: 1 };
+      this.state.log.push({
+        id: newId("fir"),
+        scheduleId: s.id,
+        agentName: s.agentName,
+        source: s.source,
+        label: s.label,
+        at: iso(t),
+        context: p.context,
+        ...(res.runId ? { runId: res.runId } : {}),
+        ...(s.rule ? { rule: s.rule } : {}),
+      });
       this.log(`fired ${s.id} → ${s.agentName} (${s.label})${p.attempts > 1 ? ` after ${p.attempts} tries` : ""}`);
       if (s.kind === "at" || (s.kind === "price" && !s.everyMinutes)) this.end(s, "fired");
       else if (s.kind === "price") s.nextRunAt = iso(t + s.everyMinutes! * 60_000);

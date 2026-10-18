@@ -69,13 +69,23 @@ async function startBrokerageStub(): Promise<BrokerageStub> {
     stub.quoteRequests.push(String(req.query.tickers));
     if (stub.down) return void res.status(503).json({ error: "prices_unavailable" });
     const tickers = String(req.query.tickers ?? "").split(",").filter(Boolean);
-    res.json({ clockDate: stub.clockDate, quotes: tickers.filter((t) => stub.prices.has(t)).map((t) => ({ ticker: t, name: t, price: stub.prices.get(t), changePct1d: 0.1, changePctFromStart: 1 })) });
+    // like the real brokerage: dollars as strings, 404 when none of the tickers exist
+    if (!tickers.some((t) => stub.prices.has(t))) return void res.status(404).json({ error: "ticker_not_found", message: "no prices" });
+    res.json({ mode: "replay", clockDate: stub.clockDate, quotes: tickers.filter((t) => stub.prices.has(t)).map((t) => ({ ticker: t, name: t, price: stub.prices.get(t)!.toFixed(2), changePct1d: 0.1, changePctFromStart: 1 })) });
   });
   app.get("/brokerage/portfolio", (req, res) => {
     stub.portfolioRequests.push({ address: String(req.query.address), ownerKey: req.header("x-owner-key") ?? undefined });
     if (req.header("x-owner-key") !== OWNER_KEY) return void res.status(401).json({ error: "unauthorized" });
     const p = [...stub.portfolios.entries()].find(([addr]) => addr === req.query.address)?.[1];
-    res.json(p ?? { clockDate: stub.clockDate, cash: null, positions: [], totals: { invested: 0, value: 0, unrealizedPnl: 0, realizedPnl: 0 } });
+    if (!p) return void res.json({ clockDate: stub.clockDate, cash: null, positions: [], totals: { invested: "0.00", value: "0.00", unrealizedPnl: "0.00", unrealizedPct: 0, realizedPnl: "0.00" } });
+    // dollar fields as strings, percents as numbers (the brokerage's PortfolioBody)
+    const $ = (n: number) => n.toFixed(2);
+    res.json({
+      clockDate: p.clockDate,
+      cash: null,
+      positions: p.positions.map((x) => ({ ticker: x.ticker, shares: String(x.shares), avgCost: $(x.avgCost), price: $(x.price), value: $(x.value), unrealizedPnl: $(x.unrealizedPnl), unrealizedPct: Math.round(x.unrealizedPct * 100) / 100 })),
+      totals: { invested: $(p.totals.invested), value: $(p.totals.value), unrealizedPnl: $(p.totals.unrealizedPnl), realizedPnl: $(p.totals.realizedPnl) },
+    });
   });
   const server: Server = await new Promise((r) => {
     const s = app.listen(0, "127.0.0.1", () => r(s));
@@ -313,7 +323,7 @@ describe("owner rules", () => {
     const tp = (await scheduler.createRule(investor, { type: "take_profit", value: 10, ticker: "COF" })).schedule;
     const sl = (await scheduler.createRule(investor, { type: "stop_loss", value: 8, ticker: "JPM" })).schedule;
     const co = (await scheduler.createRule(investor, { type: "cash_out_profits", value: 50 })).schedule;
-    expect(tp).toMatchObject({ source: "owner", kind: "price", label: "Rule: take profit on COF", everyMinutes: 10, rule: { type: "take_profit", value: 10, ticker: "COF" }, condition: { portfolio: "unrealizedPct", op: ">=", value: 10, ticker: "COF" } });
+    expect(tp).toMatchObject({ source: "owner", kind: "price", label: "Rule: take profit on COF", everyMinutes: 10, rule: "take_profit", ruleValue: 10, ruleTicker: "COF", condition: { portfolio: "unrealizedPct", op: ">=", value: 10, ticker: "COF" } });
     expect(sl.condition).toEqual({ portfolio: "unrealizedPct", op: "<=", value: -8, ticker: "JPM" });
     expect(co.condition).toEqual({ portfolio: "unrealizedPnl", op: ">=", value: 50 });
     expect(scheduler.view(sl).summary).toBe("Rule: stop loss on JPM at −8%");
@@ -346,6 +356,30 @@ describe("owner rules", () => {
     const cash = chat.deliveries.find((d) => d.body.scheduleId === co.id)!.body;
     expect(cash.text).toMatch(/cash out profits above \$50.*cash_out/);
     expect(cash.context).toBe("Your unrealized profit is $60 (≥ $50) on $2,400.00 invested · paper trading, replay date 2025-11-03.");
+    // the owner's history of firings, newest first
+    const log = scheduler.firings();
+    expect(log).toHaveLength(3);
+    expect(log[0]).toMatchObject({ id: expect.stringMatching(/^fir_/), scheduleId: co.id, agentName: "investor", source: "owner", label: "Rule: cash out profits above $50", rule: "cash_out_profits", runId: "run_3", context: cash.context });
+    expect(log.slice(1).map((f) => f.rule).sort()).toEqual(["stop_loss", "take_profit"]);
+  });
+
+  it("the dashboard's rule set: sets, replaces and turns off portfolio-wide rules, checking every value first", async () => {
+    const { scheduler } = setup();
+    const r1 = await scheduler.setRules(investor, { takeProfitPct: "10", stopLossPct: "5", cashOutAbove: "25.00" });
+    expect(r1.rules.map((s) => [s.rule, s.ruleValue]).sort()).toEqual([["cash_out_profits", 25], ["stop_loss", 5], ["take_profit", 10]]);
+    // a bad value changes nothing
+    await expectError(scheduler.setRules(investor, { takeProfitPct: "12", stopLossPct: "150" }), 400, /stopLossPct: A stop loss is a percent below 100/);
+    expect(scheduler.list({ agentName: "investor" })).toHaveLength(3);
+    // same value: unchanged; new value: replaced; missing: off
+    const tpId = r1.rules.find((s) => s.rule === "take_profit")!.id;
+    const r2 = await scheduler.setRules(investor, { takeProfitPct: "10", stopLossPct: "7.5" });
+    expect(r2.rules.find((s) => s.rule === "take_profit")!.id).toBe(tpId);
+    expect(r2.rules.find((s) => s.rule === "stop_loss")!.ruleValue).toBe(7.5);
+    expect(r2.removed.map((s) => s.rule)).toEqual(["cash_out_profits"]);
+    expect(r2.rules).toHaveLength(2);
+    const r3 = await scheduler.setRules(investor, {});
+    expect(r3.rules).toEqual([]);
+    expect(scheduler.list({ agentName: "investor" })).toEqual([]);
   });
 
   it("a new rule of the same type and ticker replaces the old one; the agent can't remove owner rules", async () => {
@@ -517,6 +551,18 @@ describe("HTTP API", () => {
     // the owner can
     const shopperId = all.body.schedules.find((s: Schedule) => s.agentName === "shopper").id;
     expect((await call("DELETE", `/owner/schedules/${shopperId}`, { owner: OWNER_KEY })).body.schedule).toMatchObject({ endedReason: "cancelled", cancelledBy: "owner" });
+    // the dashboard's paths: owner key on /schedules, /status and /rules (rule set; empty = off)
+    const viaShared = await call("GET", "/schedules", { owner: OWNER_KEY });
+    expect(viaShared.body.schedules.map((s: Schedule) => s.id)).toEqual((await call("GET", "/owner/schedules", { owner: OWNER_KEY })).body.schedules.map((s: Schedule) => s.id));
+    expect(viaShared.body.firings).toEqual([]);
+    expect((await call("GET", "/schedules", { owner: "wrong", token: tokA })).status).toBe(401); // a wrong owner key never falls back
+    const set = await call("POST", "/rules", { owner: OWNER_KEY, body: { agentName: "investor", agentId: "agt_i", takeProfitPct: "10", stopLossPct: "", cashOutAbove: "25.00" } });
+    expect(set.status).toBe(200);
+    expect(set.body.rules.map((s: Schedule) => `${s.rule}:${s.ruleValue}`).sort()).toEqual(["cash_out_profits:25", "take_profit:10"]);
+    expect((await call("POST", "/rules", { owner: OWNER_KEY, body: { agentName: "investor", takeProfitPct: "abc" } })).status).toBe(400);
+    expect((await call("POST", "/rules", { token: tokA, body: { agentName: "researcher", takeProfitPct: "1" } })).status).toBe(401);
+    expect((await call("GET", "/status", { owner: OWNER_KEY })).body).toMatchObject({ paused: false, state: "running", active: 3 });
+    expect((await call("GET", "/status")).status).toBe(401);
     expect((await call("POST", "/pause", { owner: OWNER_KEY })).body).toMatchObject({ paused: true, pausedAt: expect.any(String) });
     expect((await call("GET", "/schedules", { token: tokA })).body.paused).toBe(true);
     expect((await call("POST", "/owner/resume", { owner: OWNER_KEY })).body.paused).toBe(false);

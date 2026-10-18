@@ -75,7 +75,10 @@ export interface Schedule {
   /** What the agent is told when it fires. */
   message: string;
   source: ScheduleSource;
-  rule?: OwnerRule;
+  /** Owner rules only: which rule, its number (percent, or dollars for cash_out_profits) and ticker. */
+  rule?: RuleType;
+  ruleValue?: number;
+  ruleTicker?: string;
   /** Short line for the chat thread: "Reminder you set", "Rule: stop loss on COF". */
   label: string;
   createdAt: string;
@@ -104,6 +107,19 @@ export interface FiringCount {
   count: number;
 }
 
+/** One time a schedule woke its agent (the owner's history). */
+export interface FiringRecord {
+  id: string;
+  scheduleId: string;
+  agentName: string;
+  source: ScheduleSource;
+  label: string;
+  at: string;
+  context: string;
+  runId?: string;
+  rule?: RuleType;
+}
+
 export interface SchedulerState {
   version: 1;
   /** The owner's autonomy switch: while paused, nothing fires. */
@@ -112,6 +128,8 @@ export interface SchedulerState {
   schedules: Schedule[];
   /** Firings per agent on the local calendar day. */
   firings: Record<string, FiringCount>;
+  /** Recent firings, newest last (capped). */
+  log: FiringRecord[];
 }
 
 export interface Limits {

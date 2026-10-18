@@ -3,15 +3,17 @@
  *
  * `MarketData` is the adapter the engine uses. `httpMarket` is the HTTP implementation:
  * - quotes: `GET {BROKERAGE_URL}/brokerage/quotes?tickers=COF,JPM` (free, public).
- * - portfolio: see `PortfolioReader`. The brokerage identifies agents by a signed proof for its
- *   own agent-facing portfolio route, which the scheduler can't produce (it holds no agent keys or
- *   tokens). The default reader assumes an owner-side read of one agent's portfolio by wallet
- *   address with the owner key, the same access the dashboard's Portfolio view needs:
- *   `GET {BROKERAGE_URL}/brokerage/portfolio?address=0x…` + `X-Owner-Key`. Swap the reader if the
- *   brokerage settles on another owner route.
+ * - portfolio: see `PortfolioReader`. Agents read their own portfolio with X-Allowance-Attestation
+ *   (signed by their wallet), which the scheduler can't produce: it holds no agent keys or tokens.
+ *   It reads as the owner instead, like the dashboard's Portfolio view:
+ *   `GET {BROKERAGE_URL}/brokerage/portfolio?address=0x…` + `X-Owner-Key` (the brokerage's owner
+ *   route). Dollar fields may be strings ("12.34") and percents numbers; both are accepted.
  */
 
 export type FetchLike = typeof fetch;
+
+/** The brokerage answers at most this many tickers per quotes request. */
+export const MAX_QUOTES = 20;
 
 export interface Quote {
   ticker: string;
@@ -146,29 +148,45 @@ export function httpMarket(opts: HttpMarketOptions): MarketData {
     return mode.value;
   }
 
+  /** One request (the brokerage takes at most MAX_QUOTES tickers). A 404 ticker_not_found means none of them exist. */
+  async function quoteChunk(list: string[]): Promise<{ clockDate?: string; mode?: string; quotes: Quote[] }> {
+    let res: Response;
+    try {
+      res = await doFetch(`${base}/brokerage/quotes?tickers=${encodeURIComponent(list.join(","))}`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(4000) });
+    } catch {
+      throw new MarketError("prices_unavailable", "The brokerage is not reachable");
+    }
+    const j = (await res.json().catch(() => null)) as { error?: unknown; clockDate?: unknown; mode?: unknown; quotes?: unknown } | null;
+    if (res.status === 404 && j?.error === "ticker_not_found") return { quotes: [] };
+    if (!res.ok) throw new MarketError("prices_unavailable", `The brokerage answered ${res.status} for quotes`);
+    const quotes = (Array.isArray(j?.quotes) ? j.quotes : [])
+      .filter((q): q is Record<string, unknown> => !!q && typeof q === "object")
+      .map((q) => ({
+        ticker: String(q.ticker ?? "").toUpperCase(),
+        ...(typeof q.name === "string" ? { name: q.name } : {}),
+        price: num(q.price),
+        ...(q.changePct1d !== undefined ? { changePct1d: num(q.changePct1d) } : {}),
+        ...(q.changePctFromStart !== undefined ? { changePctFromStart: num(q.changePctFromStart) } : {}),
+      }))
+      .filter((q) => q.ticker && q.price > 0);
+    return { ...(typeof j?.clockDate === "string" ? { clockDate: j.clockDate } : {}), ...(typeof j?.mode === "string" ? { mode: j.mode } : {}), quotes };
+  }
+
   return {
     async quotes(tickers) {
       const list = [...new Set(tickers.map((t) => t.toUpperCase()))];
-      let res: Response;
-      try {
-        res = await doFetch(`${base}/brokerage/quotes?tickers=${encodeURIComponent(list.join(","))}`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(4000) });
-      } catch {
-        throw new MarketError("prices_unavailable", "The brokerage is not reachable");
+      const out: QuotesResult = { quotes: [] };
+      for (let i = 0; i < list.length; i += MAX_QUOTES) {
+        const r = await quoteChunk(list.slice(i, i + MAX_QUOTES));
+        out.quotes.push(...r.quotes);
+        if (r.clockDate && !out.clockDate) out.clockDate = r.clockDate;
+        if (r.mode && !out.mode) out.mode = r.mode;
       }
-      if (!res.ok) throw new MarketError("prices_unavailable", `The brokerage answered ${res.status} for quotes`);
-      const j = (await res.json().catch(() => null)) as { clockDate?: unknown; mode?: unknown; quotes?: unknown } | null;
-      const quotes = (Array.isArray(j?.quotes) ? j.quotes : [])
-        .filter((q): q is Record<string, unknown> => !!q && typeof q === "object")
-        .map((q) => ({
-          ticker: String(q.ticker ?? "").toUpperCase(),
-          ...(typeof q.name === "string" ? { name: q.name } : {}),
-          price: num(q.price),
-          ...(q.changePct1d !== undefined ? { changePct1d: num(q.changePct1d) } : {}),
-          ...(q.changePctFromStart !== undefined ? { changePctFromStart: num(q.changePctFromStart) } : {}),
-        }))
-        .filter((q) => q.ticker && q.price > 0);
-      const m = typeof j?.mode === "string" ? j.mode : await brokerageMode();
-      return { ...(typeof j?.clockDate === "string" ? { clockDate: j.clockDate } : {}), ...(m ? { mode: m } : {}), quotes };
+      if (!out.mode) {
+        const m = await brokerageMode();
+        if (m) out.mode = m;
+      }
+      return out;
     },
     portfolio: (agent) => reader(agent, { brokerageUrl: base, ownerApiKey: opts.ownerApiKey, fetch: doFetch }),
   };

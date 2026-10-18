@@ -4,9 +4,11 @@ import type { SchedulerState } from "./types.js";
 
 /** Ended schedules kept for the owner's history. */
 const KEEP_ENDED = 200;
+/** Firing records kept. */
+const KEEP_LOG = 200;
 
 export function emptyState(): SchedulerState {
-  return { version: 1, paused: false, schedules: [], firings: {} };
+  return { version: 1, paused: false, schedules: [], firings: {}, log: [] };
 }
 
 /** `DATA_DIR/schedules.json`, written atomically. Omit the file to keep everything in memory (tests). */
@@ -26,6 +28,7 @@ export class ScheduleStore {
         ...(j.pausedAt ? { pausedAt: j.pausedAt } : {}),
         schedules: Array.isArray(j.schedules) ? j.schedules : [],
         firings: j.firings && typeof j.firings === "object" ? j.firings : {},
+        log: Array.isArray(j.log) ? j.log : [],
       };
     } catch (err) {
       console.warn(`[scheduler] ${this.file} is unreadable (${(err as Error).message}); starting empty`);
@@ -39,6 +42,7 @@ export class ScheduleStore {
       const drop = new Set(ended.sort((a, b) => (a.endedAt ?? "").localeCompare(b.endedAt ?? "")).slice(0, ended.length - KEEP_ENDED).map((s) => s.id));
       this.state.schedules = this.state.schedules.filter((s) => !drop.has(s.id));
     }
+    if (this.state.log.length > KEEP_LOG) this.state.log.splice(0, this.state.log.length - KEEP_LOG);
     if (!this.file) return;
     mkdirSync(dirname(this.file), { recursive: true });
     const tmp = `${this.file}.${process.pid}.tmp`;

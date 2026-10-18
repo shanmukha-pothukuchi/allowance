@@ -88,9 +88,15 @@ export function ruleMessage(r: OwnerRule): string {
 }
 
 /** One short line for lists and the dashboard: "Watching COF ≥ $210 · fires once". */
+/** The owner rule a schedule carries, if any. */
+export function ruleOf(s: Pick<Schedule, "rule" | "ruleValue" | "ruleTicker">): OwnerRule | undefined {
+  return s.rule && s.ruleValue !== undefined ? { type: s.rule, value: s.ruleValue, ...(s.ruleTicker ? { ticker: s.ruleTicker } : {}) } : undefined;
+}
+
 export function summarize(s: Schedule, now: number): string {
   let base: string;
-  if (s.rule) base = ruleSummary(s.rule);
+  const rule = ruleOf(s);
+  if (rule) base = ruleSummary(rule);
   else if (s.kind === "at") base = `Reminder at ${fmtTime(s.at ?? s.nextRunAt ?? s.createdAt, now)} · fires once`;
   else if (s.kind === "every") base = `Every ${fmtEvery(s.everyMinutes ?? 1)}${s.active && s.nextRunAt ? ` · next ${fmtTime(s.nextRunAt, now)}` : ""}`;
   else base = `Watching ${s.condition ? describeCondition(s.condition) : "?"} · ${s.everyMinutes ? `at most every ${fmtEvery(s.everyMinutes)}` : "fires once"}`;
