@@ -1,3 +1,4 @@
+import { normPortfolios, normScheduler } from "../invest";
 import { unwrapAdded, unwrapStore } from "../shopify";
 import type {
   AddServiceResponse,
@@ -34,7 +35,10 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new HttpError(message, res.status, code);
   }
-  return (await res.json()) as T;
+  // DELETE /schedules/:id and friends may answer 204 with no body.
+  if (res.status === 204) return undefined as T;
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 const post = <T>(path: string, body?: unknown) => req<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
@@ -96,6 +100,27 @@ export function createHttpAdapter(): WalletAdapter {
     getBankStatement: (agentId, limit = 50) => req<BankStatementResponse>(`/v1/bank/statement?${agentId ? `agentId=${enc(agentId)}&` : ""}limit=${limit}`),
     retryBank: (receiptId) => post<{ queued: number }>("/v1/bank/retry", receiptId ? { receiptId } : {}),
     linkBank: () => post<BankSummary>("/v1/bank/link"),
+    // §20.2: `{ status: "sent", receipt, vault, balance }`.
+    cashout: async (agentId, amount) => {
+      const body = await post<{ receipt?: Receipt } & Partial<Receipt>>(`/v1/agents/${enc(agentId)}/cashout`, { amount });
+      return (body?.receipt ?? body) as Receipt;
+    },
+    // §20.1/§20.3 behind the dashboard's own proxy (vite.config.ts): /brokerage → :4110, /scheduler → :4100,
+    // with the owner key added server-side for this page's own requests only.
+    // `{ mode, clockDate, startDate, label, portfolios: [{ address, positions, totals, orders }] }`, by wallet address.
+    getPortfolios: async () => normPortfolios(await req<unknown>("/brokerage/portfolios")),
+    // Owner view: `{ schedules, paused, pausedAt, limits, firingsToday, firings }`; `all=1` keeps ended ones (the Done group).
+    getScheduler: async () => normScheduler(await req<unknown>("/scheduler/schedules?all=1")),
+    cancelSchedule: async (id) => {
+      await req<unknown>(`/scheduler/schedules/${enc(id)}`, { method: "DELETE" });
+    },
+    setRules: async (agent, rules) => {
+      await post<unknown>("/scheduler/rules", { agentName: agent.name, agentId: agent.id, ...rules });
+    },
+    setPaused: async (paused) => {
+      const body = await post<{ paused?: boolean } | undefined>(paused ? "/scheduler/pause" : "/scheduler/resume");
+      return typeof body?.paused === "boolean" ? body.paused : paused;
+    },
     subscribe(onEvent, onStatus) {
       // EventSource reconnects on its own; we only surface the status. Named events
       // (`event: payment.signed`) do not fire `onmessage`, so listen to each type.

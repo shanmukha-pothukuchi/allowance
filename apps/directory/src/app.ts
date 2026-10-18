@@ -12,7 +12,8 @@ import { asShopifyStore, parseShopifyCap, shopifyManifest, shopifyServiceId, sto
 
 /** merchantUrl/directoryUrl/quantcommBridgeUrl/computerUseUrl build the catalog. dataDir persists added stores (memory only without it). */
 export type DirectoryConfig = Pick<AppConfig, "merchantUrl" | "directoryUrl"> &
-  Partial<Pick<AppConfig, "dataDir" | "shopifyBridgeUrl" | "quantcommBridgeUrl" | "computerUseUrl" | "ownerApiKey">>;
+  Partial<Pick<AppConfig, "dataDir" | "shopifyBridgeUrl" | "quantcommBridgeUrl" | "computerUseUrl" | "brokerageUrl" | "ownerApiKey">>;
+/** merchantUrl/directoryUrl/quantcommBridgeUrl/brokerageUrl build the catalog. dataDir persists added stores (memory only without it). */
 
 export interface DirectoryDeps {
   /** fetch used to call the Shopify bridge (tests). */
@@ -40,7 +41,7 @@ class HttpError extends Error {
 }
 
 export function createDirectoryApp(config: DirectoryConfig, deps: DirectoryDeps = {}): DirectoryApp {
-  const catalog = buildCatalog({ merchantUrl: config.merchantUrl, directoryUrl: config.directoryUrl, quantcommBridgeUrl: config.quantcommBridgeUrl, computerUseUrl: config.computerUseUrl });
+  const catalog = buildCatalog({ merchantUrl: config.merchantUrl, directoryUrl: config.directoryUrl, quantcommBridgeUrl: config.quantcommBridgeUrl, computerUseUrl: config.computerUseUrl, brokerageUrl: config.brokerageUrl });
   const builtIn = new Set(catalog.map((s) => s.id));
   const bridgeUrl = (config.shopifyBridgeUrl || DEFAULT_BRIDGE_URL).replace(/\/+$/, "");
   const doFetch = deps.fetch ?? fetch;
@@ -214,7 +215,7 @@ function safeColor(c: string): string {
   return /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(c) ? c : "#8A8F98";
 }
 
-const CATEGORY_LABEL: Record<string, string> = { data: "Data", shopping: "Shopping", work: "Work", tools: "Tools" };
+const CATEGORY_LABEL: Record<string, string> = { data: "Data", shopping: "Shopping", work: "Work", tools: "Tools", finance: "Finance" };
 
 /**
  * The row's one-line summary. The price sits on the right of the row, so a price the summary

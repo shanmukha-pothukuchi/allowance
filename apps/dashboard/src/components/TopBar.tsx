@@ -15,6 +15,8 @@ const STATUS_LABEL: Record<DashboardState["connection"], string> = {
 interface NavProps {
   state: DashboardState;
   route: Route;
+  /** §20.3: autonomy is paused (a quiet mark on Schedules). */
+  paused?: boolean;
   theme: "dark" | "light";
   onToggleTheme(): void;
   onToggleDetails(): void;
@@ -23,14 +25,15 @@ interface NavProps {
 }
 
 /** The owner's console navigation: a quiet left rail (brand, views, linked bank, connection, preferences). */
-export function SideNav({ state, route, theme, onToggleTheme, onToggleDetails, onOpenBank }: NavProps) {
+export function SideNav({ state, route, paused = false, theme, onToggleTheme, onToggleDetails, onOpenBank }: NavProps) {
   const pending = state.approvals.length;
   // §16.5: the owner's checking, only once the bank is linked. Without a Nessie key, nothing.
   const bank = state.totals.bank?.linked ? state.totals.bank : null;
-  const item = (view: Route["view"], label: string, badge?: number) => (
+  const item = (view: Route["view"], label: string, badge?: number, mark?: string) => (
     <button className={`nav-item${route.view === view ? " nav-on" : ""}`} aria-current={route.view === view ? "page" : undefined} onClick={() => navigate({ view })}>
       <span>{label}</span>
       {!!badge && <span className="nav-badge" title={`${badge} waiting for you`}>{badge}</span>}
+      {mark && <span className="nav-mark">{mark}</span>}
     </button>
   );
   return (
@@ -41,6 +44,8 @@ export function SideNav({ state, route, theme, onToggleTheme, onToggleDetails, o
       </div>
       <nav className="nav-list" aria-label="Views">
         {item("overview", "Overview", pending)}
+        {item("portfolio", "Portfolio")}
+        {item("schedules", "Schedules", undefined, paused ? "Paused" : undefined)}
         {item("services", "Services")}
       </nav>
 

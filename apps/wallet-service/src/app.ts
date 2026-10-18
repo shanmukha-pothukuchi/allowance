@@ -83,6 +83,9 @@ import { ShopifyBridgeError, ShopifyBridgeUnavailableError, httpShopifyBridgeCli
 import type { ShopifyBridgeClient } from "./shopify-bridge-client.js";
 import { BankError, createBank } from "./bank.js";
 import { probeX402Link } from "./link-probe.js";
+import { ATTESTATION_MAX_AGE_MS, ATTESTATION_NONCE_RE, attestationMessage, encodeAttestation, normalizeAudience } from "./attest.js";
+import { VaultError, ensureVault, existingVault } from "./vault.js";
+import type { OwnerVault } from "./vault.js";
 import type { ProbeResult, X402Probe } from "./link-probe.js";
 import type { Bank, BankOptions } from "./bank.js";
 // Relative import on purpose (like the agents' seeds): the proposal an agent makes is built exactly
@@ -242,8 +245,15 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
   // ---------------------------------------------------------------------------
 
   const accountOf = (a: StoredAgent) => privateKeyToAccount(a.privateKey);
-  /** Everything that must never leave the process: agent keys and the Nessie key. */
-  const secrets = () => (config.nessie?.apiKey ? [...store.secrets(), config.nessie.apiKey] : store.secrets());
+  /** Where cash-outs go (§20.2); created on first use in mock mode. */
+  let vault: OwnerVault | undefined;
+  try {
+    vault = existingVault(config);
+  } catch (err) {
+    console.error(`${LOG} owner vault: ${(err as Error).message}`);
+  }
+  /** Everything that must never leave the process: agent keys, the owner vault's key and the Nessie key. */
+  const secrets = () => [...store.secrets(), ...(vault?.privateKey ? [vault.privateKey] : []), ...(config.nessie?.apiKey ? [config.nessie.apiKey] : [])];
   function scrub(text: string): string {
     for (const s of secrets()) text = text.split(s).join("[redacted]").split(s.replace(/^0x/, "")).join("[redacted]");
     return text;
@@ -1186,6 +1196,28 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     res.json(body);
   });
 
+  // An agent proves which wallet it is to a service (the brokerage's sells and portfolio, §20.1)
+  // without holding its key: a fixed text signed with its key (EIP-191). It authorizes no payment.
+  router.post("/attest", agentAuth, async (req: AuthedRequest, res) => {
+    const agent = req.agent!;
+    const audience = normalizeAudience(req.body?.audience);
+    if (!audience) throw new HttpError(400, "invalid_request", "`audience` must be the service's http(s) URL without a query, like http://localhost:4110/brokerage");
+    const nonce = req.body?.nonce;
+    if (typeof nonce !== "string" || !ATTESTATION_NONCE_RE.test(nonce)) {
+      throw new HttpError(400, "invalid_request", "`nonce` must be 16 to 128 characters of A-Z, a-z, 0-9, _ or -");
+    }
+    const unsigned = { address: getAddress(agent.address), audience, nonce, issuedAt: nowIso() };
+    const message = attestationMessage(unsigned);
+    const signature = await accountOf(agent).signMessage({ message });
+    res.json({
+      ...unsigned,
+      message,
+      signature,
+      header: encodeAttestation({ ...unsigned, signature }),
+      expiresAt: new Date(Date.parse(unsigned.issuedAt) + ATTESTATION_MAX_AGE_MS).toISOString(),
+    });
+  });
+
   router.post("/pay", agentAuth, async (req: AuthedRequest, res) => {
     const agent = req.agent!;
     const body = req.body as Partial<PayRequest>;
@@ -1598,6 +1630,97 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
       data: { bountyId: body.bountyId },
     });
     res.json({ receipt });
+  });
+
+  // ---- cash out to the owner (§20.2) ----------------------------------------
+
+  /** Agents with a cash-out in flight, claimed synchronously so two can't spend the same balance. */
+  const cashingOut = new Set<string>();
+
+  function vaultOrThrow(): OwnerVault {
+    try {
+      vault ??= ensureVault(config, (m) => console.log(`${LOG} ${m}`));
+      return vault;
+    } catch (err) {
+      if (err instanceof VaultError) throw new HttpError(config.chainMode === "mock" ? 500 : 501, "vault_not_configured", err.message);
+      throw err;
+    }
+  }
+
+  /** `"all"` or a positive dollar amount. */
+  function cashoutAmount(raw: unknown): bigint | "all" {
+    if (typeof raw === "string" && raw.trim().toLowerCase() === "all") return "all";
+    let units: bigint;
+    try {
+      if ((typeof raw !== "string" && typeof raw !== "number") || String(raw).trim() === "") throw new Error("type");
+      units = toBaseUnits(String(raw).trim());
+    } catch {
+      throw new HttpError(400, "invalid_request", '`amount` must be a dollar amount like "12.50", or "all"');
+    }
+    if (units <= 0n) throw new HttpError(400, "invalid_request", "`amount` must be positive");
+    return units;
+  }
+
+  /**
+   * Move USDC from the agent's wallet to the owner vault. Not a spend: no caps, allowlist or approval
+   * apply, because the money only goes back to the owner. The caller decides who may (the agent only
+   * when not frozen; the owner always).
+   */
+  async function cashOut(agent: StoredAgent, raw: unknown, by: "agent" | "owner"): Promise<{ status: "sent"; receipt: Receipt; vault: Address; balance: string }> {
+    const want = cashoutAmount(raw);
+    const target = vaultOrThrow();
+    if (cashingOut.has(agent.id)) throw new HttpError(409, "cashout_in_progress", `A cash-out for ${agent.name} is already in progress.`);
+    cashingOut.add(agent.id);
+    try {
+      const balance = await settlement.balanceOf(agent.address).catch((err: Error) => {
+        throw new HttpError(503, "ledger_unavailable", `Could not read balance: ${err.message}`);
+      });
+      const amount = want === "all" ? balance : want;
+      if (amount <= 0n) throw new HttpError(400, "nothing_to_cash_out", `${agent.name} has ${formatUsd(balance)}, so there is nothing to cash out.`);
+      if (amount > balance) throw new HttpError(400, "insufficient_balance", `${agent.name} has ${formatUsd(balance)}, not ${formatUsd(amount)}.`);
+      const receipt = newReceipt({
+        kind: "cashout",
+        status: "signed",
+        agentId: agent.id,
+        agentName: agent.name,
+        description: "Cash out to owner",
+        amount: toDollars(amount),
+        amountBaseUnits: amount.toString(),
+        counterparty: { address: target.address, name: "Owner vault" },
+      });
+      store.save();
+      try {
+        const { txHash, explorerUrl } = await settlement.transfer(accountOf(agent), target.address, amount, "Cash out to owner");
+        receipt.status = "settled";
+        receipt.txHash = txHash;
+        receipt.explorerUrl = explorerUrl;
+        receipt.settledAt = nowIso();
+        bank.mirror(receipt); // a transfer on the agent's Capital One account and a deposit on checking
+        store.save();
+      } catch (err) {
+        receipt.status = "failed";
+        receipt.reason = (err as { errorReason?: string }).errorReason ?? "settlement_failed";
+        store.save();
+        throw new HttpError(502, "settlement_failed", `Cash out failed: ${(err as Error).message}`, { receipt });
+      }
+      const left = toDollars(balance - amount);
+      emit("cashout", {
+        agentId: agent.id,
+        agentName: agent.name,
+        message: by === "agent" ? `${agent.name} cashed out ${formatUsd(amount)} to you.` : `Cashed out ${formatUsd(amount)} from ${agent.name}.`,
+        receipt,
+        data: { by, all: want === "all", vault: target.address, receiptId: receipt.id, balance: left },
+      });
+      return { status: "sent", receipt, vault: target.address, balance: left };
+    } finally {
+      cashingOut.delete(agent.id);
+    }
+  }
+
+  router.post("/cashout", agentAuth, async (req: AuthedRequest, res) => {
+    const agent = req.agent!;
+    if (agent.policy.frozen) throw new HttpError(403, "frozen", `${agent.name} is frozen, so only your owner can cash it out.`);
+    res.json(await cashOut(agent, req.body?.amount, "agent"));
   });
 
   // GET /v1/receipts is shared: agent token → own receipts; otherwise owner → all (filter by agentId).
@@ -2092,6 +2215,26 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
       throw new HttpError(503, "ledger_unavailable", (err as Error).message);
     }
     res.json({ receipt: recordTopup(agent, dollars, txHash, "Top-up", bankEntry) });
+  });
+
+  // Owner: cash an agent out to the owner vault, even when it is frozen (§20.2).
+  router.post("/agents/:id/cashout", ownerAuth, async (req, res) => {
+    const agent = requireAgentById(String(req.params.id));
+    res.json(await cashOut(agent, req.body?.amount, "owner"));
+  });
+
+  // Owner: the vault cash-outs go to, its balance and how much reached it.
+  router.get("/vault", ownerAuth, async (_req, res) => {
+    const v = vaultOrThrow();
+    const balance = await settlement.balanceOf(v.address).catch(() => null);
+    const settled = store.state.receipts.filter((r) => r.kind === "cashout" && r.status === "settled");
+    res.json({
+      address: v.address,
+      source: v.source,
+      balance: balance === null ? null : toDollars(balance),
+      cashedOut: toDollars(settled.reduce((sum, r) => sum + BigInt(r.amountBaseUnits), 0n)),
+      cashouts: settled.length,
+    });
   });
 
   async function facilitatorUp(): Promise<boolean> {

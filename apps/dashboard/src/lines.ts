@@ -5,6 +5,7 @@
  * the approval card's title and meta line, said once. Pure, unit-tested in lines.test.ts.
  */
 import { masked } from "./bank";
+import { cashoutLine, tradeLine, tradeOf, type Order } from "./invest";
 import { counterpartyName, fromCents, isCustomGrant, isServiceApproval, isShopifyGrant, isSoftBlock, money, serviceOfEvent, toCents } from "./format";
 import type { Approval, Receipt, ServiceGrant, WalletEvent } from "./types";
 
@@ -95,7 +96,7 @@ function whatTail(description: string | undefined, to: string): string {
  */
 export function activityLine(
   e: Pick<WalletEvent, "type" | "agentName" | "receipt" | "approval" | "reason" | "data"> & { message?: string },
-  opts: { pending?: boolean; checkingLast4?: string } = {},
+  opts: { pending?: boolean; checkingLast4?: string; orders?: Map<string, Order> } = {},
 ): Line {
   const agent = e.agentName ?? "An agent";
   const r = e.receipt;
@@ -104,7 +105,12 @@ export function activityLine(
   const svcName = svc?.name ?? to;
   const service = isServiceApproval(e.approval);
   const pending: LineStatus | undefined = opts.pending ? { text: "Pending", tone: "warn" } : undefined;
+  // §20: a buy is a payment to the brokerage, a sell an earning from it.
+  const trade = e.type === "payment.settled" || e.type === "payment.signed" || e.type === "earning.received" ? tradeOf(r, opts.orders) : null;
+  if (trade) return tradeLine(agent, trade, { pending: e.type === "payment.signed" });
   switch (e.type) {
+    case "cashout":
+      return cashoutLine(agent, r?.amount ?? (e.data as { amount?: string } | undefined)?.amount, opts.checkingLast4);
     case "payment.settled":
       return { actor: agent, verb: "paid", object: to, tail: whatTail(r?.description, to) };
     case "payment.signed":
@@ -154,7 +160,10 @@ export function activityLine(
 }
 
 /** The Receipts tab line: same words as the feed, the status as a mark. */
-export function receiptLine(r: Receipt, opts: { checkingLast4?: string } = {}): Line {
+export function receiptLine(r: Receipt, opts: { checkingLast4?: string; orders?: Map<string, Order> } = {}): Line {
+  if (r.kind === "cashout") return cashoutLine(r.agentName, r.amount, opts.checkingLast4);
+  const trade = r.status === "settled" || r.status === "signed" ? tradeOf(r, opts.orders) : null;
+  if (trade) return tradeLine(r.agentName, trade, { pending: r.status === "signed" });
   if (r.kind === "earn") return earnLine(r.agentName, r);
   if (r.kind === "topup") return topupLine(r.agentName, r, opts.checkingLast4);
   const to = payee(r);
@@ -242,6 +251,8 @@ export function eventAmount(e: Pick<WalletEvent, "type" | "receipt" | "approval"
   if (e.type === "approval.approved" || e.type === "approval.denied") return null;
   const raw = e.receipt?.amount ?? (e.type === "payment.needs_approval" ? e.approval?.amount : undefined);
   if (raw === undefined) return null;
+  // The cash-out line names its amount; the column doesn't repeat it (rule 1).
+  if (e.type === "cashout") return null;
   if (e.type === "payment.blocked") return cell(raw, "void");
   if (e.type === "earning.received" || e.type === "topup") return cell(raw, "in");
   if (e.type === "payment.needs_approval") return cell(raw, "pending");
@@ -254,4 +265,9 @@ export function receiptAmount(r: Pick<Receipt, "kind" | "status" | "amount">): A
   if (r.kind === "earn" || r.kind === "topup") return cell(r.amount, "in");
   if (r.status === "pending_approval") return cell(r.amount, "pending");
   return cell(r.amount, "out");
+}
+
+/** A receipt row's amount column: a settled cash-out says its amount in the sentence, so none (rule 1). */
+export function receiptColumn(r: Pick<Receipt, "kind" | "status" | "amount">): AmountCell | null {
+  return r.kind === "cashout" && r.status === "settled" ? null : receiptAmount(r);
 }

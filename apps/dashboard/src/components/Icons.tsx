@@ -5,7 +5,10 @@
  */
 import type { SVGProps } from "react";
 import {
+  AlarmClock,
   ArrowDownLeft,
+  Banknote,
+  ChartLine,
   ArrowUpRight,
   Check as LucideCheck,
   ChevronRight,
@@ -66,3 +69,9 @@ export const CreditCard = icon(LucideCreditCard);
 /** A bank building (Capital One, §16). */
 export const Bank = icon(Landmark);
 export const Retry = icon(RotateCw);
+/** A schedule the agent set for itself (§20.3). */
+export const Alarm = icon(AlarmClock);
+/** An owner rule or a price watch (§20.3), and the paper brokerage. */
+export const Chart = icon(ChartLine);
+/** Money going back to the owner (§20.2). */
+export const CashOut = icon(Banknote);

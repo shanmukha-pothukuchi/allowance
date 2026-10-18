@@ -41,6 +41,8 @@ import type {
   WalletEvent,
 } from "../types";
 import { HttpError, type WalletAdapter } from "./adapter";
+import { normPortfolios, normScheduler } from "../invest";
+import { createMockMarket, type MockMarket } from "./mockInvest";
 
 export interface MockOptions {
   seed?: number;
@@ -69,7 +71,32 @@ export interface MockOptions {
   bankExecuteMs?: number;
   /** The Nth settled spend fails to post ("Not on statement · Retry"); 0 for never. Default 2. */
   bankFailNth?: number;
+  /**
+   * Paper investing and schedules (§20). Off by default here (tests); the page turns it on via
+   * `mockInvestMode`: researcher invests (with limits that allow it), a few replay days of history,
+   * a stop-loss rule, two schedules, and a live replay clock.
+   */
+  invest?: boolean;
+  /** One replay trading day per this many ms (the real brokerage's default is 20 s). */
+  marketDayMs?: number;
+  /** Start with autonomy paused (`&paused=1`). */
+  paused?: boolean;
 }
+
+/** `?mock=1` invests by default; `&invest=0` turns it off, `&paused=1` starts with autonomy paused. */
+export function mockInvestMode(search: string = typeof location !== "undefined" ? location.search : ""): { invest: boolean; paused: boolean } {
+  const p = new URLSearchParams(search);
+  const off = p.get("invest") === "0" || p.get("invest") === "off";
+  return { invest: !off, paused: p.get("paused") === "1" || p.get("paused") === "true" };
+}
+
+const BROKERAGE_ORIGIN = "http://localhost:4110";
+const BROKERAGE_ADDRESS = "0xB40c3e2A9d71f8E2c5a6B7C8d9E0F1a2B3c4D5E6" as Address;
+const OWNER_VAULT_ADDRESS = "0x0E7d1C2a3B4c5D6e7F8091a2B3c4D5e6F7a8b9C0" as Address;
+/** As the wallet records a brokerage payment: the directory entry's name, the brokerage's origin. */
+const BROKERAGE_PARTY = { address: BROKERAGE_ADDRESS, origin: BROKERAGE_ORIGIN, name: "Brokerage (paper)" };
+/** With investing on, researcher has limits that let it buy (a buy is one payment, §20.1). */
+const INVESTOR_POLICY: Partial<Policy> = { maxPerTx: "150.00", dailyCap: "300.00", approvalThreshold: "150.00" };
 
 export type MockBankMode = "on" | "off" | "low" | "down" | "unlinked";
 
@@ -542,7 +569,11 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
     for (let i = 0; i < bytes; i++) s += Math.floor(rand() * 256).toString(16).padStart(2, "0");
     return s as Hex;
   };
-  const iso = () => new Date(now()).toISOString();
+  // History (§20 investing) is seeded in the past: `back` ms before now while it is written.
+  let back = 0;
+  const iso = () => new Date(now() - back).toISOString();
+  const invest = opts.invest ?? false;
+  const market: MockMarket = createMockMarket({ now: () => now() - back });
   const pick = <T>(xs: T[]): T => xs[Math.floor(rand() * xs.length)];
 
   // This adapter's own directory: the six of §13.1 plus Shopify stores, which the owner can add to.
@@ -575,7 +606,11 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
     earnedToday: "0.00",
     frozen: false,
   });
-  const agents: AgentPublic[] = AGENT_SEEDS.map((s) => newAgent(s.name, s.policy, s.services.map((sid) => connection(manifest(sid)!, "default")), "20.00"));
+  const agents: AgentPublic[] = AGENT_SEEDS.map((s) =>
+    invest && s.name === "researcher"
+      ? newAgent(s.name, { ...s.policy, ...INVESTOR_POLICY }, s.services.map((sid) => connection(manifest(sid)!, "default")), "200.00")
+      : newAgent(s.name, s.policy, s.services.map((sid) => connection(manifest(sid)!, "default")), "20.00"),
+  );
   const receipts: Receipt[] = [];
   const approvals: Approval[] = [];
   const events: WalletEvent[] = [];
@@ -696,9 +731,10 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
       applyPosting(r, agent);
     });
   }
-  const bankKind = (r: Receipt) => (r.kind === "topup" ? "topup" : r.kind === "earn" ? "deposit" : "purchase");
+  const bankKind = (r: Receipt) => (r.kind === "topup" ? "topup" : r.kind === "earn" ? "deposit" : r.kind === "cashout" ? "cashout" : "purchase");
   /** "$0.05 at Acme Weather" / "$0.50 from Bounty: …" / "$10.00 top-up", as the wallet's messages say it. */
-  const bankWhat = (r: Receipt) => (r.kind === "topup" ? `${money(r.amount)} top-up` : r.kind === "earn" ? `${money(r.amount)} from ${r.description}` : `${money(r.amount)} at ${r.counterparty.name ?? r.description}`);
+  const bankWhat = (r: Receipt) =>
+    r.kind === "topup" ? `${money(r.amount)} top-up` : r.kind === "earn" ? `${money(r.amount)} from ${r.description}` : r.kind === "cashout" ? `${money(r.amount)} cash-out` : `${money(r.amount)} at ${r.counterparty.name ?? r.description}`;
   function failPosting(r: Receipt, agent: AgentPublic, error: string) {
     const a = accountOf(agent);
     r.bank = { status: "failed", account: `••${a.last4}`, error };
@@ -719,6 +755,12 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
     } else if (r.kind === "earn") {
       a.cents += cents;
       ref = addEntry(a, { kind: "deposit", amount: r.amount, description: `Earned · ${r.description}`, status: "pending", receiptId: r.id }, true).id;
+    } else if (r.kind === "cashout") {
+      // §20.2: out of the agent's account, into checking.
+      a.cents -= cents;
+      checking!.cents += cents;
+      ref = addEntry(a, { kind: "transfer_out", amount: r.amount, description: `Cashed out to you · ${agent.name}`, status: "pending", receiptId: r.id }, true).id;
+      addEntry(checking!, { kind: "deposit", amount: r.amount, description: `From ${agent.name}'s allowance account ••${a.last4}`, status: "pending", receiptId: r.id }, true);
     } else {
       const merchant = r.kind === "transfer" ? `Transfer to ${r.counterparty.address.slice(0, 4)}…${r.counterparty.address.slice(-2)}` : (r.counterparty.name ?? r.description);
       a.cents -= cents;
@@ -985,6 +1027,164 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
     return { agent: copyAgent(agent), token: `aw_${hex(24).slice(2)}`, tokenId: id("tok") };
   }
 
+  // ---------------------------------------------------------------------------- paper investing (§20)
+  // A buy is one x402 payment to the brokerage; a sell is an earning ("Sold 0.47 COF"); a cash-out
+  // moves the agent's money back to the owner. History is written synchronously (backdated);
+  // live trades settle like any payment.
+  function bankNow(r: Receipt, agent: AgentPublic) {
+    if (bankLinked && checking && toCents(r.amount) >= 1) applyPosting(r, agent);
+  }
+  function doBuy(agent: AgentPublic, ticker: string, amount: string, live = true): Receipt {
+    const fill = market.buy(agent.name, ticker, amount);
+    // The x402 payment names the service, not the stock (§20.1); the brokerage's order, matched by
+    // tx hash, says what was bought.
+    const r = makeReceipt(agent, {
+      kind: "spend",
+      status: live ? "signed" : "settled",
+      description: "Brokerage (paper)",
+      amount: fill.amount,
+      counterparty: { ...BROKERAGE_PARTY },
+      paymentId: id("pay"),
+    });
+    agent.spentToday = addDollars(agent.spentToday, fill.amount);
+    const done = () => {
+      r.status = "settled";
+      r.txHash = hex(32);
+      r.explorerUrl = `http://localhost:4030/tx/${r.txHash}`;
+      r.settledAt = iso();
+      agent.balance = fromCents(toCents(agent.balance) - toCents(r.amount));
+      market.recordOrder(agent.name, fill, r.txHash);
+      if (live) postReceipt(r, agent);
+      else bankNow(r, agent);
+      emit("payment.settled", agent, { receipt: { ...r } });
+    };
+    if (live) {
+      emit("payment.signed", agent, { receipt: { ...r } });
+      later(settleDelay, done);
+    } else done();
+    return r;
+  }
+  function doSell(agent: AgentPublic, ticker: string, howMany: number | "all" = "all"): Receipt {
+    const fill = market.sell(agent.name, ticker, howMany);
+    const tx = hex(32);
+    market.recordOrder(agent.name, fill, tx);
+    // The MCP reports the payout as an earning (§20.1), in the brokerage's words.
+    const r = makeReceipt(agent, {
+      kind: "earn",
+      status: "settled",
+      description: `Sold ${Math.round(fill.shares * 1e6) / 1e6} ${fill.ticker}`,
+      amount: fill.proceeds,
+      counterparty: { ...BROKERAGE_PARTY },
+      txHash: tx,
+      explorerUrl: `http://localhost:4030/tx/${tx}`,
+      settledAt: iso(),
+    });
+    agent.balance = addDollars(agent.balance, fill.proceeds);
+    agent.earnedToday = addDollars(agent.earnedToday, fill.proceeds);
+    if (back) bankNow(r, agent);
+    else postReceipt(r, agent);
+    emit("earning.received", agent, { receipt: { ...r } });
+    return r;
+  }
+  function doCashout(agent: AgentPublic, amount: string | "all"): Receipt {
+    const cents = amount === "all" ? toCents(agent.balance) : toCents(amount);
+    if (cents < 1) throw new HttpError(`${agent.name} has ${money(agent.balance)}, so there is nothing to cash out.`, 400, "nothing_to_cash_out");
+    if (cents > toCents(agent.balance)) throw new HttpError(`${agent.name} has ${money(agent.balance)}, not ${money(fromCents(cents))}.`, 400, "insufficient_balance");
+    const tx = hex(32);
+    const r = makeReceipt(agent, {
+      kind: "cashout",
+      status: "settled",
+      description: "Cash out to owner",
+      amount: fromCents(cents),
+      counterparty: { address: OWNER_VAULT_ADDRESS, name: "Owner vault" },
+      txHash: tx,
+      explorerUrl: `http://localhost:4030/tx/${tx}`,
+      settledAt: iso(),
+    });
+    agent.balance = fromCents(toCents(agent.balance) - cents);
+    // §20.2: a transfer on the agent's account and a deposit on checking, through the bank's queue.
+    if (back) bankNow(r, agent);
+    else postReceipt(r, agent);
+    emit("cashout", agent, { receipt: { ...r }, message: `Cashed out ${money(r.amount)} from ${agent.name}.`, data: { by: "owner", all: amount === "all", vault: OWNER_VAULT_ADDRESS, receiptId: r.id, balance: agent.balance } });
+    return r;
+  }
+  /** A few replay days before the page opened: trades, a firing, a cash-out, a rule and two schedules. */
+  function seedInvesting(paused: boolean) {
+    const r = byName("researcher");
+    const cd = byName("claude-desktop");
+    if (!r || !cd) return;
+    const at = (min: number) => (back = min * 60_000);
+    at(14);
+    doBuy(r, "COF", "100.00", false);
+    at(13.6);
+    doBuy(r, "JPM", "50.00", false);
+    at(13.2);
+    const watch = market.addSchedule({ agentName: r.name, kind: "price", condition: { ticker: "COF", op: ">=", price: 224 }, message: "Check COF. It hit your target; take the profit if it held.", source: "agent" });
+    market.advance();
+    at(12);
+    doBuy(cd, "NVDA", "10.00", false);
+    at(11.5);
+    const hourly = new Date(now() + 48 * 60_000).toISOString();
+    market.addSchedule({ agentName: cd.name, kind: "every", everyMinutes: 60, at: hourly, nextRunAt: hourly, message: "Review the portfolio and tell me how it's doing.", source: "agent", needsChat: true });
+    market.advance();
+    market.advance();
+    at(9);
+    market.recordFiring(watch, iso(), `COF is $${market.price("COF").toFixed(2)} (≥ $224) · paper trading, replay date ${market.clockDate()}.`);
+    market.end(watch, "fired");
+    at(8.8);
+    doSell(r, "COF");
+    at(7);
+    doCashout(r, "25.00");
+    market.advance();
+    market.advance();
+    at(5);
+    doBuy(r, "COF", "80.00", false);
+    at(4.5);
+    market.setRules(r.name, { stopLossPct: "5" });
+    at(3);
+    const later2h = new Date(now() + 2 * 3600_000).toISOString();
+    market.addSchedule({ agentName: r.name, kind: "at", at: later2h, nextRunAt: later2h, message: "Check JPM after the close and tell me how it did.", source: "agent" });
+    market.advance();
+    back = 0;
+    market.setPaused(paused);
+  }
+  if (invest) seedInvesting(opts.paused ?? false);
+
+  // The replay clock: one trading day per tick, then whatever is due fires and its agent reacts.
+  const dayMs = opts.marketDayMs ?? 8_000;
+  let marketTimer: ReturnType<typeof setTimeout> | undefined;
+  function marketTick() {
+    market.advance();
+    for (const f of market.due()) {
+      const agent = byName(f.schedule.agentName);
+      const rule = f.schedule.rule;
+      if (!agent || agent.frozen || !rule) continue;
+      // The woken agent acts through its tools, a moment later (§20.3: a firing never spends by itself).
+      later(2500, () => {
+        try {
+          const held = market.positions(agent.name);
+          if (rule === "stop_loss" || rule === "take_profit") for (const p of held) doSell(agent, p.ticker);
+          else {
+            let profit = 0;
+            for (const p of held.filter((x) => x.pct > 0)) profit += Number(doSell(agent, p.ticker).amount) * (p.pct / (100 + p.pct));
+            if (profit >= 0.01) doCashout(agent, fromCents(Math.min(toCents(agent.balance), Math.round(profit * 100))));
+          }
+        } catch {
+          /* the position is gone, or nothing to cash out: the agent says so in its chat */
+        }
+      });
+    }
+  }
+  function scheduleMarket() {
+    if (!invest || marketTimer) return;
+    marketTimer = setTimeout(() => {
+      marketTimer = undefined;
+      if (listeners.size === 0) return;
+      marketTick();
+      scheduleMarket();
+    }, dayMs);
+  }
+
   function randomStep(): Step {
     const roll = rand();
     if (roll < 0.42) {
@@ -1050,6 +1250,8 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
   function stop() {
     if (ticker) clearTimeout(ticker);
     ticker = undefined;
+    if (marketTimer) clearTimeout(marketTimer);
+    marketTimer = undefined;
     for (const t of timers) clearTimeout(t);
     timers.clear();
   }
@@ -1378,6 +1580,23 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
         linkNow();
         return bankSummary();
       }),
+    cashout: (agentId, amount) =>
+      delay(() => {
+        const agent = byId(agentId);
+        if (!agent) throw new HttpError(`No agent ${agentId}`, 404, "agent_not_found");
+        if (amount !== "all" && !/^\d+(\.\d{1,2})?$/.test(String(amount))) throw new HttpError("`amount` must be a dollar string or \"all\"", 400, "invalid_request");
+        return { ...doCashout(agent, amount) };
+      }),
+    // The services' own shapes, read by the same normalizers as HTTP.
+    getPortfolios: () => delay(() => normPortfolios(market.portfoliosRaw((name) => byName(name)?.address))),
+    getScheduler: () => delay(() => normScheduler(market.schedulerRaw())),
+    cancelSchedule: (scheduleId) => delay(() => market.cancel(scheduleId)),
+    setRules: (agent, rules) =>
+      delay(() => {
+        if (!byName(agent.name)) throw new HttpError(`No agent ${agent.name}`, 404, "agent_not_found");
+        market.setRules(agent.name, rules);
+      }),
+    setPaused: (p) => delay(() => market.setPaused(p)),
     subscribe(onEvent, onStatus) {
       listeners.add(onEvent);
       if (onStatus) {
@@ -1385,12 +1604,15 @@ export function createMockAdapter(opts: MockOptions = {}): MockAdapter {
         onStatus("demo");
       }
       schedule();
+      scheduleMarket();
       return () => {
         listeners.delete(onEvent);
         if (onStatus) statusListeners.delete(onStatus);
         if (listeners.size === 0) {
           if (ticker) clearTimeout(ticker);
           ticker = undefined;
+          if (marketTimer) clearTimeout(marketTimer);
+          marketTimer = undefined;
         }
       };
     },

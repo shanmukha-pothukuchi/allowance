@@ -107,6 +107,7 @@ const MONEY_EVENTS: ReadonlySet<EventType> = new Set<EventType>([
   "transfer.sent",
   "earning.received",
   "topup",
+  "cashout",
 ]);
 
 /** Events after which balances / spent today may have changed and the summary should be refetched. */

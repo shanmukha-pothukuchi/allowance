@@ -5,13 +5,13 @@
  * owner key. Owner actions (approve, unfreeze) stay on Telegram and the dashboard.
  */
 import express, { type Request, type Response } from "express";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { avatarFor, type Avatar } from "@allowance/shared/avatars";
-import { ChatAgent, BusyError, type AgentEvent, type LogEntry } from "./agent.js";
+import { ChatAgent, BusyError, type AgentEvent, type LogEntry, type ScheduledMeta } from "./agent.js";
 import { groupMembers, roleFor, type AgentSpec } from "./roster.js";
 import { GroupStore, GroupError, defaultGroups } from "./groups.js";
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { AGENT_NAME_RE, type ShopifyStoreRef } from "@allowance/shared";
 import type { LlmConfig } from "./llm.js";
 import { fontsDir, renderChatPage, staticDir } from "./ui.js";
@@ -117,6 +117,31 @@ export interface ChatAppOptions {
   tokensFile?: string;
   /** Origins allowed to register agents cross-origin (the owner's dashboard). */
   corsOrigins?: string[];
+  /**
+   * The scheduler's internal token (DATA_DIR/scheduler-token.json). Only a message carrying it as
+   * X-Scheduler-Token may say `source: "scheduler"`. A function is read on every such message, so the
+   * scheduler can create the file after this server started. Unset: scheduled messages are refused.
+   */
+  schedulerToken?: string | (() => string | undefined);
+}
+
+/** DATA_DIR/scheduler-token.json, written by the scheduler on its first start (mode 0600). */
+export function readSchedulerToken(dataDir: string): string | undefined {
+  try {
+    const j = JSON.parse(readFileSync(resolve(dataDir, "scheduler-token.json"), "utf8")) as { schedulerToken?: unknown };
+    return typeof j.schedulerToken === "string" && j.schedulerToken ? j.schedulerToken : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function safeEqual(a: string, b: string): boolean {
+  return timingSafeEqual(createHash("sha256").update(a).digest(), createHash("sha256").update(b).digest());
+}
+
+/** One line of plain text from the scheduler: no control characters, no markup, bounded. */
+function line(v: unknown, max: number): string {
+  return typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f<>]/g, " ").replace(/\s+/g, " ").trim().slice(0, max) : "";
 }
 
 export interface ChatApp {
@@ -321,19 +346,32 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
     res.json({ ...summary(a), log: a.log, tools: a.toolNames() });
   });
 
-  const sendTo = async (a: ChatAgent, text: string, groupId?: string, group?: string) => {
-    const { runId, done } = await a.send(text, { groupId, group });
+  const sendTo = async (a: ChatAgent, text: string, groupId?: string, group?: string, scheduled?: ScheduledMeta) => {
+    const { runId, done } = await a.send(text, { groupId, group, scheduled });
     void done.catch((err: Error) => console.warn(`[agent-chat] ${a.name}: ${err.message}`));
     return runId;
   };
 
   app.post("/api/agents/:name/messages", async (req: Request, res: Response) => {
+    // §20.3: only the scheduler, with its token, may send a scheduled message. Checked first, so a
+    // forged claim learns nothing (not even whether the agent exists).
+    let scheduled: ScheduledMeta | undefined;
+    if (req.body?.source === "scheduler") {
+      const want = typeof opts.schedulerToken === "function" ? opts.schedulerToken() : opts.schedulerToken;
+      const given = req.header("x-scheduler-token");
+      if (!want || !given || !safeEqual(given, want)) return void res.status(403).json({ error: "forbidden", message: "Only the scheduler can send scheduled messages" });
+      const scheduleId = typeof req.body.scheduleId === "string" && /^sch_[A-Za-z0-9]{1,64}$/.test(req.body.scheduleId) ? req.body.scheduleId : "";
+      if (!scheduleId) return void res.status(400).json({ error: "invalid_request", message: "A scheduled message needs a scheduleId" });
+      const setBy = req.body.setBy === "owner" ? "owner" : "agent";
+      const context = line(req.body.context, 400);
+      scheduled = { scheduleId, setBy, label: line(req.body.label, 80) || (setBy === "owner" ? "Rule your owner set" : "Reminder you set"), ...(context ? { context } : {}) };
+    }
     const a = agents.get(String(req.params.name));
     if (!a) return void res.status(404).json({ error: "agent_not_found", message: `No agent ${req.params.name}` });
     const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
     if (!text) return void res.status(400).json({ error: "invalid_request", message: "Body must be { text }" });
     try {
-      res.status(202).json({ agent: a.name, runId: await sendTo(a, text) });
+      res.status(202).json({ agent: a.name, runId: await sendTo(a, text, undefined, undefined, scheduled) });
     } catch (err) {
       if (err instanceof BusyError) return void res.status(409).json({ error: "agent_busy", message: err.message });
       res.status(500).json({ error: "internal_error", message: (err as Error).message });

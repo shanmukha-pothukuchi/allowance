@@ -97,6 +97,12 @@ export function bankNote(r: Pick<Receipt, "kind" | "agentName" | "bank">, checki
     const state = b.status === "queued" ? " · moving…" : b.status === "failed" ? " · not on statement" : "";
     return { line: `${from}${state}`, title: `${from}: the dollars leave checking and the wallet credits the same amount in test USDC (Nessie sandbox)` };
   }
+  if (r.kind === "cashout") {
+    // §20.2: the USDC goes back to the owner; the bank moves the same dollars into checking.
+    const to = `To ${PROVIDER} Checking${masked(checkingLast4) ? ` ${masked(checkingLast4)}` : ""}`;
+    const state = b.status === "queued" ? " · moving…" : b.status === "failed" ? " · not on statement" : "";
+    return { line: `${to}${state}`, title: `${to}: the USDC went back to you and Capital One moved the same dollars into checking (Nessie sandbox)` };
+  }
   const how = r.kind === "earn" ? "Earned in USDC" : "Paid in USDC";
   const acct = masked(b.account);
   const stmt = `${PROVIDER} statement${acct ? ` ${acct}` : ""}`;
@@ -107,7 +113,7 @@ export function bankNote(r: Pick<Receipt, "kind" | "agentName" | "bank">, checki
 }
 
 /** Feed rows that carry a marker: one per payment (the settled row, not its "is paying" or approval rows). */
-const MARKED_EVENTS = new Set(["payment.settled", "earning.received", "topup", "transfer.sent", "payment.blocked", "approval.denied"]);
+const MARKED_EVENTS = new Set(["payment.settled", "earning.received", "topup", "transfer.sent", "payment.blocked", "approval.denied", "cashout"]);
 export function feedMarker(e: Pick<WalletEvent, "type" | "receipt">, linked: boolean): BankMarker | null {
   if (!MARKED_EVENTS.has(e.type) || !e.receipt) return null;
   return bankMarker(e.receipt, linked);

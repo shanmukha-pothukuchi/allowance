@@ -154,14 +154,14 @@ describe("directory: adding Shopify stores", () => {
     expect(bridge.calls.at(-1)).toMatchObject({ method: "POST", path: "/stores", ownerKey: KEY, body: { url: "https://www.allbirds.com/products/mens-tree-runners" } });
 
     const list = await call("GET", "/services");
-    expect(list.body.services).toHaveLength(9);
+    expect(list.body.services).toHaveLength(10);
     expect(list.body.services.at(-1)).toMatchObject({ id: "shopify-weareallbirds" });
     expect(list.body.services.at(-1)).not.toHaveProperty("docs");
     expect((await call("GET", "/services?q=allbirds")).body.services.map((s: ServiceManifest) => s.id)).toEqual(["shopify-weareallbirds"]);
     expect((await call("GET", "/services?q=shopify")).body.services.map((s: ServiceManifest) => s.id)).toEqual(["shopify-weareallbirds"]);
     expect((await call("GET", "/services?category=shopping")).body.services.map((s: ServiceManifest) => s.id)).toEqual(["acme-pizza", "shopify-weareallbirds"]);
     expect((await call("GET", "/services/shopify-weareallbirds")).body.docs).toContain("/products?q=");
-    expect((await call("GET", "/health")).body).toEqual({ ok: true, services: 9 });
+    expect((await call("GET", "/health")).body).toEqual({ ok: true, services: 10 });
     const page = await call("GET", "/", undefined, {});
     expect(page.text).toContain('<a href="https://www.allbirds.com" rel="noopener noreferrer">allbirds.com</a>');
     expect(page.text).toContain("single-use Allowance card (simulated)");
@@ -219,7 +219,7 @@ describe("directory: adding Shopify stores", () => {
       expect((await call("GET", "/services/shopify-cool-socks")).status).toBe(404);
       expect(await call("DELETE", "/services/shopify-cool-socks")).toMatchObject({ status: 404, body: { error: "service_not_found" } });
       expect(JSON.parse(readFileSync(join(dir, "directory-extra.json"), "utf8")).shopify).toEqual([]);
-      expect((await call("GET", "/health")).body.services).toBe(8);
+      expect((await call("GET", "/health")).body.services).toBe(9);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -231,7 +231,7 @@ describe("directory: adding Shopify stores", () => {
       writeFileSync(join(dir, "directory-extra.json"), "{ not json");
       // The keyed bridge refuses a keyless directory: a clear 502, nothing added.
       const keyless = await start({ dataDir: dir, ownerApiKey: undefined });
-      expect((await keyless.call("GET", "/health")).body.services).toBe(8);
+      expect((await keyless.call("GET", "/health")).body.services).toBe(9);
       expect(await keyless.call("POST", "/services/shopify", { url: "cool-socks.myshopify.com" }, {})).toMatchObject({ status: 502, body: { error: "shopify_bridge_error" } });
       const openBridge = await startStubBridge();
       try {

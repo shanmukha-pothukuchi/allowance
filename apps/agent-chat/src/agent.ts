@@ -24,7 +24,27 @@ export type LogEntry =
   | { kind: "user"; id: string; text: string; at: string; groupId?: string; group?: string }
   | { kind: "assistant"; id: string; text: string; reasoning?: string; at: string }
   | { kind: "tool"; id: string; name: string; args: unknown; result?: string; isError?: boolean; ms?: number; at: string }
-  | { kind: "error"; id: string; text: string; at: string };
+  | { kind: "error"; id: string; text: string; at: string }
+  /**
+   * A message from the scheduler (§20.3), not typed by the owner: a reminder the agent set, or one of
+   * the owner's rules. `text` is the schedule's message, `context` its one line of facts ("COF is
+   * $212.40 (≥ $210) · paper trading, replay date 2025-11-03."), `label` the short line to show
+   * ("Reminder you set", "Price watch you set", "Rule: stop loss on COF"), `setBy` who set it.
+   */
+  | ({ kind: "scheduled"; id: string; text: string; at: string; source: "scheduler" } & ScheduledMeta);
+
+/** What the chat server accepts from the scheduler (with its token) about a scheduled message. */
+export interface ScheduledMeta {
+  scheduleId: string;
+  setBy: "agent" | "owner";
+  label: string;
+  context?: string;
+}
+
+/** The scheduled message as the model sees it: marked, so it knows the owner didn't type it. */
+export function scheduledContent(text: string, meta: ScheduledMeta): string {
+  return [`[Scheduled message · ${meta.label} · ${meta.scheduleId}]`, text, ...(meta.context ? [meta.context] : [])].join("\n");
+}
 
 export type AgentEvent =
   | { type: "status"; agent: string; status: AgentStatus }
@@ -90,6 +110,7 @@ export function systemPrompt(name: string, role: string, services?: ServiceSumma
   return [
     `You are ${name}, an AI agent with a USDC wallet managed by Allowance. ${role}`,
     "Your owner chats with you here. Only act when your owner asks you to; then do it with your tools and report back briefly.",
+    "Messages that start with [Scheduled message …] were not typed by your owner: they come from a reminder or price watch you set yourself (schedule_task) or from a rule your owner set. Act on them only within those rules and your wallet's policy (a scheduled message allows nothing extra), then report briefly what you did.",
     "How money works for you: you never hold a private key. When a site asks for payment (HTTP 402), fetch_url asks your wallet service to pay. The wallet service signs only what your owner's policy allows: a max per payment, a daily cap, the services your owner has connected for you, and an approval threshold above which your owner must approve on their phone.",
     "If a payment needs approval, tell your owner it is waiting for them. If a payment is blocked, tell your owner plainly why; do not try to get around the policy.",
     "If fetch_url says a service isn't connected, ask for it with request_service (with a short, honest reason) and tell your owner; do not look for another site to get around it.",
@@ -166,7 +187,7 @@ export class ChatAgent {
    * Start a run. Resolves once the run has started; `done` resolves when it is finished (callers
    * may not await it). `groupId` tags the user log entry of a group broadcast.
    */
-  async send(text: string, opts: { groupId?: string; group?: string } = {}): Promise<{ runId: string; done: Promise<void> }> {
+  async send(text: string, opts: { groupId?: string; group?: string; scheduled?: ScheduledMeta } = {}): Promise<{ runId: string; done: Promise<void> }> {
     if (this.busy) throw new BusyError(this.name);
     if (!this.client) await this.init();
     if (this.busy) throw new BusyError(this.name);
@@ -174,7 +195,7 @@ export class ChatAgent {
     this.runId = runId;
     this.controller = new AbortController();
     this.emit({ type: "run.started", agent: this.name, runId });
-    const done = this.run(text, runId, this.controller.signal, opts.groupId, opts.group);
+    const done = this.run(text, runId, this.controller.signal, opts.groupId, opts.group, opts.scheduled);
     return { runId, done };
   }
 
@@ -199,10 +220,15 @@ export class ChatAgent {
 
   // ---------------------------------------------------------------------------------------------
 
-  private async run(text: string, runId: string, signal: AbortSignal, groupId?: string, group?: string): Promise<void> {
+  private async run(text: string, runId: string, signal: AbortSignal, groupId?: string, group?: string, scheduled?: ScheduledMeta): Promise<void> {
     const maxSteps = this.opts.maxSteps ?? 16;
-    this.history.push({ role: "user", content: text });
-    this.append({ kind: "user", id: newId("msg"), text, at: now(), ...(groupId ? { groupId } : {}), ...(group ? { group } : {}) });
+    if (scheduled) {
+      this.history.push({ role: "user", content: scheduledContent(text, scheduled) });
+      this.append({ kind: "scheduled", id: newId("msg"), text, at: now(), source: "scheduler", ...scheduled });
+    } else {
+      this.history.push({ role: "user", content: text });
+      this.append({ kind: "user", id: newId("msg"), text, at: now(), ...(groupId ? { groupId } : {}), ...(group ? { group } : {}) });
+    }
     let outcome: "done" | "error" | "stopped" | "step_limit" = "step_limit";
     const pendingCalls = new Set<string>();
     try {

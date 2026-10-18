@@ -33,7 +33,7 @@ async function get(path: string) {
 describe("buildCatalog", () => {
   const catalog = buildCatalog({ merchantUrl: MERCHANT, directoryUrl: DIRECTORY });
 
-  it("has exactly the six §13.1 entries, Quantcomm (§17.2) and the Computer (§19.5)", () => {
+  it("has exactly the six §13.1 entries, Quantcomm (§17.2), the Computer (§19.5) and the paper brokerage (§20.1)", () => {
     expect(catalog.map((s) => [s.id, s.name, s.kind, s.baseUrl, s.maxPrice])).toEqual([
       ["directory", "Service Directory", "directory", DIRECTORY, "0.00"],
       ["acme-weather", "Acme Weather", "x402", `${MERCHANT}/api/weather`, "0.05"],
@@ -43,10 +43,12 @@ describe("buildCatalog", () => {
       ["acme-bounties", "Acme Bounties", "agent-work", MERCHANT, "0.00"],
       ["quantcomm", "Quantcomm Flood Research", "x402", "http://localhost:4080/quantcomm", "0.10"],
       ["computer-use", "Computer", "x402", "http://localhost:4090/computer", "0.10"],
+      ["brokerage", "Brokerage (paper)", "x402", "http://localhost:4110/brokerage", "1000.00"],
     ]);
-    const custom = buildCatalog({ merchantUrl: MERCHANT, directoryUrl: DIRECTORY, quantcommBridgeUrl: "http://127.0.0.1:4480/", computerUseUrl: "http://127.0.0.1:4490/" });
+    const custom = buildCatalog({ merchantUrl: MERCHANT, directoryUrl: DIRECTORY, quantcommBridgeUrl: "http://127.0.0.1:4480/", computerUseUrl: "http://127.0.0.1:4490/", brokerageUrl: "http://127.0.0.1:4510/" });
     expect(custom.find((s) => s.id === "quantcomm")!.baseUrl).toBe("http://127.0.0.1:4480/quantcomm");
     expect(custom.find((s) => s.id === "computer-use")!.baseUrl).toBe("http://127.0.0.1:4490/computer");
+    expect(custom.find((s) => s.id === "brokerage")!.baseUrl).toBe("http://127.0.0.1:4510/brokerage");
   });
 
   it("icons, colors and every field are filled in", () => {
@@ -59,12 +61,13 @@ describe("buildCatalog", () => {
       "acme-bounties": ["💼", "#9B5BFA"],
       quantcomm: ["🌊", "#1D4ED8"],
       "computer-use": ["🖥️", "#64748B"],
+      brokerage: ["💹", "#0E9F6E"],
     });
     for (const s of catalog) {
       for (const k of ["name", "provider", "summary", "description", "pricing", "docs"] as const) expect(s[k].length, `${s.id}.${k}`).toBeGreaterThan(3);
       expect(s.summary.length).toBeLessThanOrEqual(200);
       expect(s.permissions.length).toBeGreaterThan(0);
-      expect(["data", "shopping", "work", "tools"]).toContain(s.category);
+      expect(["data", "shopping", "work", "tools", "finance"]).toContain(s.category);
       expect(s.source).toBe("directory");
       expect(toBaseUnits(s.maxPrice)).toBeGreaterThanOrEqual(0n);
     }
@@ -138,6 +141,16 @@ describe("buildCatalog", () => {
     expect(c.docs).toContain("Never type card numbers or passwords into the computer; pay with your wallet tools instead.");
   });
 
+  it("the paper brokerage (§20.1): finance, capped at $1000.00 per buy, honest about paper trading, docs name the tools", () => {
+    const b = catalog.find((s) => s.id === "brokerage")!;
+    expect(b).toMatchObject({ name: "Brokerage (paper)", provider: "Allowance", category: "finance", kind: "x402", maxPrice: "1000.00", source: "directory" });
+    expect(b.summary).toMatch(/Paper trading/);
+    expect(b.summary).toMatch(/Not investment advice/);
+    expect(b.description).toMatch(/no real securities/);
+    expect(b.permissions[0]).toContain("$1000.00");
+    for (const s of ["get_quotes", "buy_stock", "sell_stock", "portfolio", "cash_out", `${b.baseUrl}/orders/buy?ticker=COF&amount=100.00`, "label", "disclaimer", "prices_unavailable"]) expect(b.docs).toContain(s);
+  });
+
   it("search matches name, summary, description, provider and category; all terms must match", () => {
     expect(searchCatalog(catalog, { q: "pizza" }).map((s) => s.id)).toEqual(["acme-pizza"]);
     expect(searchCatalog(catalog, { q: "FOOD" }).map((s) => s.id)).toEqual(["acme-pizza"]);
@@ -149,25 +162,27 @@ describe("buildCatalog", () => {
     expect(searchCatalog(catalog, { q: "capital one" }).map((s) => s.id)).toEqual(["quantcomm"]);
     expect(searchCatalog(catalog, { q: "work" }).map((s) => s.id)).toContain("acme-bounties");
     expect(searchCatalog(catalog, { q: "browser" }).map((s) => s.id)).toEqual(["computer-use"]);
-    expect(searchCatalog(catalog, {}).length).toBe(8);
+    expect(searchCatalog(catalog, { category: "finance" }).map((s) => s.id)).toEqual(["brokerage"]);
+    expect(searchCatalog(catalog, { q: "paper trading" }).map((s) => s.id)).toEqual(["brokerage"]);
+    expect(searchCatalog(catalog, {}).length).toBe(9);
   });
 });
 
 describe("directory HTTP", () => {
   it("GET /health", async () => {
-    expect((await get("/health")).body).toEqual({ ok: true, services: 8 });
+    expect((await get("/health")).body).toEqual({ ok: true, services: 9 });
   });
 
-  it("GET /services lists all eight without docs; trailing slashes in MERCHANT_URL are trimmed", async () => {
+  it("GET /services lists all nine without docs; trailing slashes in MERCHANT_URL are trimmed", async () => {
     const { status, body } = await get("/services");
     expect(status).toBe(200);
-    expect(body.services).toHaveLength(8);
+    expect(body.services).toHaveLength(9);
     for (const s of body.services) expect(s).not.toHaveProperty("docs");
     expect(body.services.find((s: ServiceManifest) => s.id === "acme-pizza").baseUrl).toBe(`${MERCHANT}/pizza`);
   });
 
   it("GET /services?q=&category= filters", async () => {
-    expect((await get("/services?q=stock")).body.services.map((s: ServiceManifest) => s.id)).toEqual(["acme-stocks", "quantcomm"]);
+    expect((await get("/services?q=stock")).body.services.map((s: ServiceManifest) => s.id)).toEqual(["acme-stocks", "quantcomm", "brokerage"]);
     expect((await get("/services?q=quantcomm")).body.services.map((s: ServiceManifest) => s.id)).toEqual(["quantcomm"]);
     expect((await get("/services?category=shopping")).body.services.map((s: ServiceManifest) => s.id)).toEqual(["acme-pizza"]);
     expect((await get("/services?q=nothing-like-this")).body.services).toEqual([]);
@@ -189,7 +204,7 @@ describe("directory HTTP", () => {
     expect(page.status).toBe(200);
     expect(page.type).toContain("text/html");
     expect(page.text).toContain("<title>Service Directory</title>");
-    for (const s of ["🍕", "Acme Pizza", "$18.50 per order", "🌤️", "Acme Bounties", "#E5523A", "🌊", "Quantcomm Flood Research", "#1D4ED8"]) expect(page.text).toContain(s);
+    for (const s of ["🍕", "Acme Pizza", "$18.50 per order", "🌤️", "Acme Bounties", "#E5523A", "🌊", "Quantcomm Flood Research", "#1D4ED8", "💹", "Brokerage (paper)", "Allowance · Finance"]) expect(page.text).toContain(s);
   });
 
   it("the page escapes everything", () => {

@@ -85,6 +85,13 @@ export interface AppConfig {
   /** Computer use (apps/computer-use, §19): a queued sandboxed desktop. Its own knobs live in that app. */
   computerUsePort: number;
   computerUseUrl: string;
+  /** Paper brokerage (apps/brokerage, §20.1) and scheduler (apps/scheduler, §20.3). */
+  brokeragePort: number;
+  brokerageUrl: string;
+  schedulerPort: number;
+  schedulerUrl: string;
+  /** Chain mode only: where cash-outs go. Mock mode creates DATA_DIR/owner-vault.json. */
+  ownerVaultAddress?: `0x${string}`;
   /** Agent chat server (apps/agent-chat). Binds to localhost by default: whoever can reach it can instruct agents. */
   agentChatPort: number;
   agentChatHost: string;
@@ -159,6 +166,11 @@ export function loadConfig(): AppConfig {
     quantcommUrl: (env.QUANTCOMM_URL || "http://127.0.0.1:8000").replace(/\/+$/, ""),
     computerUsePort: Number(env.COMPUTER_USE_PORT ?? 4090),
     computerUseUrl: (env.COMPUTER_USE_URL?.trim() || `http://localhost:${Number(env.COMPUTER_USE_PORT ?? 4090)}`).replace(/\/+$/, ""),
+    brokeragePort: Number(env.BROKERAGE_PORT ?? 4110),
+    brokerageUrl: env.BROKERAGE_URL ?? `http://localhost:${Number(env.BROKERAGE_PORT ?? 4110)}`,
+    schedulerPort: Number(env.SCHEDULER_PORT ?? 4100),
+    schedulerUrl: env.SCHEDULER_URL ?? `http://localhost:${Number(env.SCHEDULER_PORT ?? 4100)}`,
+    ownerVaultAddress: (env.OWNER_VAULT_ADDRESS as `0x${string}` | undefined) || undefined,
     directoryPort: Number(env.DIRECTORY_PORT ?? 4060),
     directoryUrl: env.DIRECTORY_URL ?? `http://localhost:${Number(env.DIRECTORY_PORT ?? 4060)}`,
     agentChatPort: Number(env.AGENT_CHAT_PORT ?? 4050),

@@ -16,6 +16,9 @@ import { StatementList } from "./BankParts";
 import { Chevron, Plus, Snowflake } from "./Icons";
 import { ReceiptRow } from "./ReceiptsList";
 import { Facts, Field, SheetShell } from "./SheetParts";
+import { RulesField } from "./RulesField";
+import { pnlTone, signedMoney, sumPortfolios, type AgentPortfolio, type AgentRules, type Order } from "../invest";
+import { CashOut } from "./Icons";
 
 interface Props {
   adapter: WalletAdapter | null;
@@ -35,12 +38,25 @@ interface Props {
   checkingLast4?: string;
   onRetry?(receiptId: string): void;
   onAddMoney(): void;
+  /** §20.2: open "Cash out" for this agent. */
+  onCashOut?(): void;
+  /** §20: its paper positions, and its owner rules on the scheduler. */
+  invest?: {
+    portfolio?: AgentPortfolio;
+    /** Orders by tx hash, so its trade receipts name shares and P/L. */
+    orders?: Map<string, Order>;
+    /** undefined while the scheduler hasn't answered. */
+    rules?: AgentRules;
+    rulesUnavailable?: string;
+    onSaveRules(rules: AgentRules): Promise<void>;
+    onOpenPortfolio(): void;
+  };
   onClose(): void;
 }
 
 type Statement = { state: "loading" } | { state: "ready"; entries: BankStatementEntry[] } | { state: "error"; message: string };
 
-export function AgentSheet({ adapter, agent, agentName, account, bankLinked, receipts, now, refreshKey, retrying = [], checkingLast4, onRetry, onAddMoney, onClose }: Props) {
+export function AgentSheet({ adapter, agent, agentName, account, bankLinked, receipts, now, refreshKey, retrying = [], checkingLast4, onRetry, onAddMoney, onCashOut, invest, onClose }: Props) {
   const [stmt, setStmt] = useState<Statement>({ state: "loading" });
   const seq = useRef(0);
   const agentId = agent?.id;
@@ -80,10 +96,18 @@ export function AgentSheet({ adapter, agent, agentName, account, bankLinked, rec
   );
 
   const footer = agent && (
-    <button type="button" className="btn btn-primary" onClick={onAddMoney}>
-      <Plus width={14} height={14} /> Add money
-    </button>
+    <>
+      {onCashOut && (
+        <button type="button" className="btn" onClick={onCashOut} title={`Move ${agent.name}'s money back to you`}>
+          <CashOut width={14} height={14} /> Cash out
+        </button>
+      )}
+      <button type="button" className="btn btn-primary" onClick={onAddMoney}>
+        <Plus width={14} height={14} /> Add money
+      </button>
+    </>
   );
+  const held = invest?.portfolio && invest.portfolio.positions.length > 0 ? sumPortfolios([invest.portfolio]) : null;
 
   // The balance once; the bank's figure only when it says something different.
   const bankDiffers = !!account && account.balance !== undefined && toCents(account.balance) !== toCents(agent?.balance);
@@ -98,10 +122,23 @@ export function AgentSheet({ adapter, agent, agentName, account, bankLinked, rec
             ["Balance", <span className="facts-num">{money(agent.balance)} <span className="muted">in USDC</span></span>],
             ["Spent today", <span className="facts-num">{money(agent.spentToday)} <span className="muted">of {money(agent.policy.dailyCap)}</span></span>],
             ["Limits", limitsLine({ maxPerTx: agent.policy.maxPerTx, dailyCap: agent.policy.dailyCap, approvalThreshold: agent.policy.approvalThreshold })],
+            ...(held && invest
+              ? ([
+                  [
+                    "Invested",
+                    <button type="button" className="facts-link facts-num" onClick={invest.onOpenPortfolio} title="Open the portfolio">
+                      {money(held.value)} <span className={`pnl-${pnlTone(held.unrealizedPnl)}`}>{signedMoney(held.unrealizedPnl)}</span>
+                      <span className="muted"> · {held.positions} {held.positions === 1 ? "position" : "positions"} · paper</span>
+                    </button>,
+                  ],
+                ] as [string, ReactNode][])
+              : []),
             ...(agent.frozenReason && agent.frozen ? ([["Why frozen", agent.frozenReason]] as [string, ReactNode][]) : []),
           ]}
         />
       )}
+
+      {agent && invest && <RulesField agent={agent} current={invest.rules} unavailable={invest.rulesUnavailable} onSave={invest.onSaveRules} />}
 
       {agent && bankLinked && account && (
         <Field label="Capital One statement" aside={<span title={SANDBOX_NOTE}>{masked(account.last4)} · Nessie sandbox{bankDiffers ? ` · balance ${money(account.balance)}` : ""}</span>}>
@@ -154,6 +191,7 @@ export function AgentSheet({ adapter, agent, agentName, account, bankLinked, rec
                   hideAgent
                   bankText
                   checkingLast4={checkingLast4}
+                  orders={invest?.orders}
                   onRetry={onRetry && (() => onRetry(r.id))}
                   busy={retrying.includes(r.id) || retrying.includes("*")}
                 />

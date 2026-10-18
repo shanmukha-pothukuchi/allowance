@@ -19,6 +19,8 @@ import {
 import { registerComputerTools } from "./computer.js";
 import { formatBody, receiptLine, receiptListLine, serviceLine, shopifyPayLine, shopifyTag, shortAddress, storefrontHost, txRef, usd, type ShopRef } from "./format.js";
 import { WalletApiError, WalletClient, WalletUnreachableError, type FetchLike } from "./wallet-client.js";
+import { registerScheduleTools } from "./schedule.js";
+import { registerInvestTools } from "./invest.js";
 
 export interface CreateServerOptions {
   walletServiceUrl: string;
@@ -1208,6 +1210,8 @@ export function createServer(opts: CreateServerOptions): McpServer {
 
   if (opts.computerTools) registerComputerTools(server, { wallet, fetch: doFetch, log, approvalWaitMs }); // §19.6
 
+  registerScheduleTools(server, { agentToken: opts.agentToken, fetch: doFetch, log });
+  registerInvestTools(server, { wallet, walletServiceUrl: opts.walletServiceUrl, agentToken: opts.agentToken, fetch: doFetch, log, approvalWaitMs, pending });
   return server;
 }
 

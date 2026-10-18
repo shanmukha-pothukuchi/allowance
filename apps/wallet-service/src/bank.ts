@@ -8,7 +8,8 @@
  * - a balance is computed here: opening balance + deposits − withdrawals − purchases − transfers on
  *   that account (cancelled records don't count);
  * - a top-up is two records: a transfer on checking (the bank's confirmation) and a deposit on the
- *   agent's account. A reversal is the mirror image.
+ *   agent's account. A reversal is the mirror image, and so is a cash-out (§20.2): a transfer on the
+ *   agent's account and a deposit on checking, so the owner's checking balance goes up.
  * Settled payments become purchases at a merchant named after the counterparty, earnings become
  * deposits; both go through a queue persisted in DATA_DIR/bank.json, one job at a time.
  *
@@ -317,10 +318,13 @@ export interface BankAccountRef {
   last4: string;
 }
 
-/** One queued Nessie write. `open` opens an agent's account; `refund` moves a top-up back to checking. */
+/**
+ * One queued Nessie write. `open` opens an agent's account; `refund` moves a top-up back to checking;
+ * `cashout` moves an agent's cash-out to checking (§20.2).
+ */
 export interface BankJob {
   id: string;
-  kind: "open" | "topup" | "purchase" | "deposit" | "refund";
+  kind: "open" | "topup" | "purchase" | "deposit" | "refund" | "cashout";
   agentId: string;
   agentName: string;
   receiptId?: string;
@@ -330,7 +334,7 @@ export interface BankJob {
   merchant?: { name: string; category: string };
   /** YYYY-MM-DD (local) of the Allowance event; sent as Nessie's transaction/purchase date. */
   date: string;
-  /** Two-record jobs (topup, refund): the first record once posted, so a retry only does the second. */
+  /** Two-record jobs (topup, refund, cashout): the first record once posted, so a retry only does the second. */
   firstRef?: string;
   status: "pending" | "failed";
   attempts: number;
@@ -870,6 +874,16 @@ export function createBank(config: AppConfig, store: Store, emit: Emit, opts: Ba
         link(d._id, job.firstRef);
         return { account, ref: job.firstRef };
       }
+      case "cashout": {
+        // Money back to the owner: a transfer on the agent's account, then a deposit on checking.
+        if (!job.firstRef) {
+          job.firstRef = (await client.createTransfer(account.id, transferBody(amount, job.date, description)))._id;
+          save();
+        }
+        const d = await client.createDeposit(state.checkingId!, depositBody(amount, job.date, `From ${agent.name}'s allowance account ${mask(account.last4)}`));
+        link(d._id, job.firstRef);
+        return { account, ref: job.firstRef };
+      }
       case "purchase": {
         const merchantId = await ensureMerchant(job.merchant!.name, job.merchant!.category);
         const p = await client.createPurchase(account.id, { merchant_id: merchantId, medium: "balance", purchase_date: job.date, amount, status: "completed", description: clip(description) });
@@ -944,6 +958,8 @@ export function createBank(config: AppConfig, store: Store, emit: Emit, opts: Ba
         return job.firstRef ? `the ${amt} top-up deposit for ${job.agentName}` : `the ${amt} top-up for ${job.agentName}`;
       case "refund":
         return `moving ${amt} back to checking from ${job.agentName}`;
+      case "cashout":
+        return job.firstRef ? `the checking deposit of ${job.agentName}'s ${amt} cash-out` : `${job.agentName}'s ${amt} cash-out to checking`;
       case "purchase":
         return `${job.agentName}'s ${amt} at ${job.merchant?.name}`;
       case "deposit":
@@ -955,6 +971,7 @@ export function createBank(config: AppConfig, store: Store, emit: Emit, opts: Ba
     const amt = formatUsd(toBaseUnits(job.amount!));
     if (job.kind === "topup") return `Couldn't move ${amt} from Capital One Checking to ${job.agentName}'s allowance account`;
     if (job.kind === "deposit") return `Couldn't post ${job.agentName}'s ${amt} earning to Capital One`;
+    if (job.kind === "cashout") return `Couldn't move ${job.agentName}'s ${amt} cash-out to Capital One Checking`;
     return `Couldn't post ${job.agentName}'s ${amt} at ${job.merchant?.name} to Capital One`;
   }
 
@@ -963,6 +980,7 @@ export function createBank(config: AppConfig, store: Store, emit: Emit, opts: Ba
     const acct = `${r.agentName}'s Capital One account ${mask(account.last4)}`;
     if (job.kind === "topup") return `Moved ${amt} from Capital One Checking ${mask(state.checkingLast4)} to ${acct}.`;
     if (job.kind === "deposit") return `Deposited ${amt} into ${acct}.`;
+    if (job.kind === "cashout") return `Moved ${amt} from ${acct} to Capital One Checking ${mask(state.checkingLast4)}.`;
     return `${amt} at ${job.merchant?.name} posted to ${acct}.`;
   }
 
@@ -1162,6 +1180,8 @@ export function createBank(config: AppConfig, store: Store, emit: Emit, opts: Ba
         enqueue({ ...base, kind: "topup", description: `Allowance top-up · ${receipt.agentName}` });
       } else if (receipt.kind === "earn") {
         enqueue({ ...base, kind: "deposit", description: `Earned · ${receipt.description}` });
+      } else if (receipt.kind === "cashout") {
+        enqueue({ ...base, kind: "cashout", description: `Cashed out to you · ${receipt.agentName}` });
       } else {
         const name =
           receipt.kind === "transfer"
