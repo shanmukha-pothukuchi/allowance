@@ -1,11 +1,17 @@
 /**
- * A fake Capital One Nessie API for tests (docs/ARCHITECTURE.md §16): the subset the wallet uses,
- * in memory, on port 0. Creates answer `{ code: 201, message, objectCreated: { _id, … } }`; every
- * call must carry `?key=`. Ids look like Mongo ObjectIds (creation time first), as Nessie's do.
+ * A fake Capital One Nessie API for tests (docs/ARCHITECTURE.md §16), in memory, behaving like the
+ * real one as verified live on 2026-10-18:
+ * - bodies are validated strictly: missing or extra fields are a 400 whose body is a JSON string
+ *   listing the bad fields;
+ * - amounts are stored as integers (truncated): 0.05 becomes 0;
+ * - `balance` never changes, whatever is posted;
+ * - a transfer sits on one account (no payee); transfer list items carry `id`, not `_id`;
+ * - creates answer `{ code: 201, message, objectCreated: { _id, … } }`; every call needs `?key=`.
+ * Ids look like Mongo ObjectIds (creation time first), as Nessie's do.
  *
- * Knobs: `fail` injects errors per route, `executeImmediately` decides whether transactions start
- * "executed" (balances move) or "pending" (they don't), `accountNumbers` whether accounts carry an
- * `account_number`, and `wipe()` empties everything like a sandbox reset.
+ * Knobs: `fail` injects errors per route, `accountNumbers` decides whether accounts carry an
+ * `account_number`, and `wipe()` empties everything like a sandbox reset. Tests may edit stored
+ * records directly (e.g. set a purchase's status to "cancelled").
  */
 import express from "express";
 import type { Request, Response } from "express";
@@ -14,6 +20,8 @@ import type { AddressInfo } from "node:net";
 import { randomBytes } from "node:crypto";
 
 type Obj = Record<string, unknown> & { _id: string };
+/** Transfers as Nessie lists them: `id`, not `_id`. */
+type Transfer = Record<string, unknown> & { id: string };
 
 export interface FakeFailure {
   method?: "GET" | "POST";
@@ -24,6 +32,8 @@ export interface FakeFailure {
   /** How many matching requests fail (default: all). */
   times?: number;
   message?: string;
+  /** Answer with a bare JSON string body, like Nessie's validation errors. */
+  stringBody?: boolean;
 }
 
 export interface FakeNessie {
@@ -32,15 +42,17 @@ export interface FakeNessie {
   customers: Map<string, Obj>;
   accounts: Map<string, Obj>;
   merchants: Map<string, Obj>;
-  transfers: Obj[];
+  transfers: Transfer[];
   purchases: Obj[];
   deposits: Obj[];
-  /** Every request, without the key: method, path, query (minus key), body. */
+  withdrawals: Obj[];
+  /** Every request, without the key: method, path, query (minus key), body, arrival time. */
   requests: { method: string; path: string; query: Record<string, string>; body: unknown; at: number }[];
   /** Requests that arrived without the right key. */
   unauthorized: number;
+  /** 400s for bad bodies (missing or extra fields), as Nessie would send them. */
+  rejected: { path: string; problems: string[] }[];
   fail: FakeFailure[];
-  executeImmediately: boolean;
   accountNumbers: boolean;
   /** Forget everything (a wiped sandbox): stored ids now 404. */
   wipe(): void;
@@ -56,7 +68,33 @@ function objectId(): string {
   return `${t}${machine}${counter.toString(16).padStart(6, "0")}`;
 }
 
-export async function startFakeNessie(opts: { key: string; executeImmediately?: boolean; accountNumbers?: boolean; port?: number }): Promise<FakeNessie> {
+/** Fields per body, as the real API validates them (verified 2026-10-18). */
+const SPECS = {
+  customer: { required: ["first_name", "last_name", "address"], optional: [] },
+  account: { required: ["type", "nickname", "rewards", "balance"], optional: ["account_number"] },
+  transfer: { required: ["amount", "transaction_date", "status", "description"], optional: [] },
+  deposit: { required: ["medium", "amount", "transaction_date", "status", "description"], optional: [] },
+  withdrawal: { required: ["medium", "amount"], optional: ["transaction_date", "status", "description"] },
+  purchase: { required: ["merchant_id", "medium", "amount"], optional: ["purchase_date", "status", "description"] },
+  merchant: { required: ["name"], optional: ["category", "address", "geocode"] },
+} as const;
+
+function problemsOf(body: unknown, spec: { required: readonly string[]; optional: readonly string[] }): string[] {
+  const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+  const allowed = new Set<string>([...spec.required, ...spec.optional]);
+  const out: string[] = [];
+  for (const f of spec.required) if (b[f] === undefined || b[f] === null) out.push(`${f}: field required`);
+  for (const f of Object.keys(b)) if (!allowed.has(f)) out.push(`${f}: extra fields not permitted`);
+  if ("amount" in b && (typeof b.amount !== "number" || !Number.isFinite(b.amount) || b.amount < 0)) out.push("amount: value is not a valid number");
+  if ("balance" in b && (typeof b.balance !== "number" || !Number.isFinite(b.balance))) out.push("balance: value is not a valid number");
+  if ("rewards" in b && typeof b.rewards !== "number") out.push("rewards: value is not a valid number");
+  if ("status" in b && !["pending", "completed"].includes(String(b.status))) out.push("status: value is not a valid enumeration member");
+  if ("medium" in b && !["balance", "rewards"].includes(String(b.medium))) out.push("medium: value is not a valid enumeration member");
+  if ("type" in b && spec === SPECS.account && !["Checking", "Savings", "Credit Card"].includes(String(b.type))) out.push("type: value is not a valid enumeration member");
+  return out;
+}
+
+export async function startFakeNessie(opts: { key: string; accountNumbers?: boolean; port?: number }): Promise<FakeNessie> {
   const fake: FakeNessie = {
     url: "",
     key: opts.key,
@@ -66,10 +104,11 @@ export async function startFakeNessie(opts: { key: string; executeImmediately?: 
     transfers: [],
     purchases: [],
     deposits: [],
+    withdrawals: [],
     requests: [],
     unauthorized: 0,
+    rejected: [],
     fail: [],
-    executeImmediately: opts.executeImmediately ?? true,
     accountNumbers: opts.accountNumbers ?? true,
     wipe() {
       fake.customers.clear();
@@ -78,6 +117,7 @@ export async function startFakeNessie(opts: { key: string; executeImmediately?: 
       fake.transfers.length = 0;
       fake.purchases.length = 0;
       fake.deposits.length = 0;
+      fake.withdrawals.length = 0;
     },
     writes: (path) => fake.requests.filter((r) => r.method === "POST" && (!path || path.test(r.path))),
     close: async () => {},
@@ -98,37 +138,41 @@ export async function startFakeNessie(opts: { key: string; executeImmediately?: 
       if (f.times !== undefined) f.times--;
       if (f.status === "hang") return void hanging.add(res);
       if (f.status === "drop") return void req.socket.destroy();
-      return void res.status(f.status).json({ code: f.status, message: f.message ?? "Simulated failure" });
+      const message = f.message ?? "Simulated failure";
+      return void res.status(f.status).json(f.stringBody ? message : { code: f.status, message });
     }
     next();
   });
 
-  const created = (res: Response, message: string, obj: Obj) => res.status(201).json({ code: 201, message, objectCreated: obj });
+  const created = (res: Response, message: string, obj: Record<string, unknown> & { _id: string }) => res.status(201).json({ code: 201, message, objectCreated: obj });
   const notFound = (res: Response, what: string) => res.status(404).json({ code: 404, message: `Invalid ${what} id` });
-  const bad = (res: Response, culprit: string[]) => res.status(400).json({ code: 400, message: "Invalid fields", culprit });
-  const num = (v: unknown) => typeof v === "number" && Number.isFinite(v);
-  const status = () => (fake.executeImmediately ? "executed" : "pending");
+  /** Nessie's validation 400: the body is a JSON string listing the bad fields. */
+  const invalid = (req: Request, res: Response, spec: (typeof SPECS)[keyof typeof SPECS]): boolean => {
+    const problems = problemsOf(req.body, spec);
+    if (!problems.length) return false;
+    fake.rejected.push({ path: req.path, problems });
+    res.status(400).json(JSON.stringify(problems.map((p) => ({ loc: ["body", p.split(":")[0]], msg: p.split(": ")[1] }))));
+    return true;
+  };
+  const int = (v: unknown) => Math.trunc(Number(v));
 
   app.post("/customers", (req, res) => {
-    const b = req.body ?? {};
-    if (typeof b.first_name !== "string" || typeof b.last_name !== "string" || typeof b.address !== "object") return void bad(res, ["first_name", "last_name", "address"]);
-    const c: Obj = { _id: objectId(), first_name: b.first_name, last_name: b.last_name, address: b.address };
+    if (invalid(req, res, SPECS.customer)) return;
+    const c: Obj = { _id: objectId(), ...req.body };
     fake.customers.set(c._id, c);
     created(res, "Created customer", c);
   });
 
   app.post("/customers/:id/accounts", (req, res) => {
     if (!fake.customers.has(String(req.params.id))) return void notFound(res, "customer");
-    const b = req.body ?? {};
-    if (!["Checking", "Savings", "Credit Card"].includes(b.type) || typeof b.nickname !== "string" || !num(b.rewards) || !num(b.balance)) {
-      return void bad(res, ["type", "nickname", "rewards", "balance"]);
-    }
+    if (invalid(req, res, SPECS.account)) return;
+    const b = req.body;
     const a: Obj = {
       _id: objectId(),
       type: b.type,
       nickname: b.nickname,
       rewards: b.rewards,
-      balance: b.balance,
+      balance: int(b.balance),
       customer_id: String(req.params.id),
       ...(fake.accountNumbers ? { account_number: String(4_000_000_000_000_000 + Math.floor(Math.random() * 1e12)) } : {}),
     };
@@ -142,62 +186,65 @@ export async function startFakeNessie(opts: { key: string; executeImmediately?: 
     res.json(a);
   });
 
-  const move = (fromId: string | undefined, toId: string | undefined, amount: number) => {
-    if (!fake.executeImmediately) return;
-    if (fromId) fake.accounts.get(fromId)!.balance = Math.round(((fake.accounts.get(fromId)!.balance as number) - amount) * 100) / 100;
-    if (toId) fake.accounts.get(toId)!.balance = Math.round(((fake.accounts.get(toId)!.balance as number) + amount) * 100) / 100;
-  };
-
+  // Balances never change: posting a record only stores it.
   app.post("/accounts/:id/transfers", (req, res) => {
     const payer = String(req.params.id);
-    const b = req.body ?? {};
-    if (!fake.accounts.has(payer)) return void notFound(res, "payer");
-    if (!fake.accounts.has(b.payee_id)) return void notFound(res, "payee");
-    if (b.medium !== "balance" || !num(b.amount) || b.amount <= 0) return void bad(res, ["medium", "amount"]);
-    const t: Obj = { _id: objectId(), type: "p2p", transaction_date: b.transaction_date, status: status(), medium: b.medium, payer_id: payer, payee_id: b.payee_id, amount: b.amount, description: b.description };
+    if (!fake.accounts.has(payer)) return void notFound(res, "account");
+    if (invalid(req, res, SPECS.transfer)) return;
+    const b = req.body;
+    const t: Transfer = { id: objectId(), type: "p2p", transaction_date: b.transaction_date, status: b.status, payer_id: payer, amount: int(b.amount), description: b.description };
     fake.transfers.push(t);
-    move(payer, b.payee_id, b.amount);
-    created(res, "Transfer created", t);
+    const { id, ...rest } = t;
+    created(res, "Transfer created", { _id: id, ...rest });
   });
 
   app.post("/accounts/:id/purchases", (req, res) => {
     const payer = String(req.params.id);
-    const b = req.body ?? {};
     if (!fake.accounts.has(payer)) return void notFound(res, "account");
+    if (invalid(req, res, SPECS.purchase)) return;
+    const b = req.body;
     if (!fake.merchants.has(b.merchant_id)) return void notFound(res, "merchant");
-    if (b.medium !== "balance" || !num(b.amount) || b.amount <= 0) return void bad(res, ["medium", "amount"]);
-    const p: Obj = { _id: objectId(), type: "merchant", merchant_id: b.merchant_id, payer_id: payer, purchase_date: b.purchase_date, amount: b.amount, status: status(), medium: b.medium, description: b.description };
+    const p: Obj = { _id: objectId(), type: "merchant", merchant_id: b.merchant_id, payer_id: payer, purchase_date: b.purchase_date, amount: int(b.amount), status: b.status ?? "pending", medium: b.medium, description: b.description };
     fake.purchases.push(p);
-    move(payer, undefined, b.amount);
     created(res, "Created purchase", p);
   });
 
   app.post("/accounts/:id/deposits", (req, res) => {
     const payee = String(req.params.id);
-    const b = req.body ?? {};
     if (!fake.accounts.has(payee)) return void notFound(res, "account");
-    if (b.medium !== "balance" || !num(b.amount) || b.amount <= 0) return void bad(res, ["medium", "amount"]);
-    const d: Obj = { _id: objectId(), type: "deposit", transaction_date: b.transaction_date, status: status(), medium: b.medium, payee_id: payee, amount: b.amount, description: b.description };
+    if (invalid(req, res, SPECS.deposit)) return;
+    const b = req.body;
+    const d: Obj = { _id: objectId(), type: "deposit", transaction_date: b.transaction_date, status: b.status, medium: b.medium, payee_id: payee, amount: int(b.amount), description: b.description };
     fake.deposits.push(d);
-    move(undefined, payee, b.amount);
     created(res, "Created deposit", d);
   });
 
-  const list = (pick: (req: Request) => Obj[]) => (req: Request, res: Response) => {
+  app.post("/accounts/:id/withdrawals", (req, res) => {
+    const payer = String(req.params.id);
+    if (!fake.accounts.has(payer)) return void notFound(res, "account");
+    if (invalid(req, res, SPECS.withdrawal)) return;
+    const b = req.body;
+    const w: Obj = { _id: objectId(), type: "withdrawal", transaction_date: b.transaction_date, status: b.status ?? "pending", medium: b.medium, payer_id: payer, amount: int(b.amount), description: b.description };
+    fake.withdrawals.push(w);
+    created(res, "Created withdrawal", w);
+  });
+
+  // Like the real Nessie, an empty list is a 404 with a JSON string ("No transfers found for this account").
+  const list = (noun: string, pick: (req: Request) => unknown[]) => (req: Request, res: Response) => {
     if (!fake.accounts.has(String(req.params.id))) return void notFound(res, "account");
-    res.json(pick(req));
+    const rows = pick(req);
+    if (!rows.length) return void res.status(404).json(`No ${noun} found for this account`);
+    res.json(rows);
   };
-  app.get("/accounts/:id/purchases", list((req) => fake.purchases.filter((p) => p.payer_id === req.params.id)));
-  app.get("/accounts/:id/deposits", list((req) => fake.deposits.filter((d) => d.payee_id === req.params.id)));
-  app.get(
-    "/accounts/:id/transfers",
-    list((req) => fake.transfers.filter((t) => (req.query.type === "payee" ? t.payee_id === req.params.id : req.query.type === "payer" ? t.payer_id === req.params.id : t.payer_id === req.params.id || t.payee_id === req.params.id))),
-  );
+  app.get("/accounts/:id/purchases", list("purchases", (req) => fake.purchases.filter((p) => p.payer_id === req.params.id)));
+  app.get("/accounts/:id/deposits", list("deposits", (req) => fake.deposits.filter((d) => d.payee_id === req.params.id)));
+  app.get("/accounts/:id/withdrawals", list("withdrawals", (req) => fake.withdrawals.filter((w) => w.payer_id === req.params.id)));
+  // No payees: `type=payer` (or no type) lists the account's own transfers; `type=payee` lists none.
+  app.get("/accounts/:id/transfers", list("transfers", (req) => (req.query.type === "payee" ? [] : fake.transfers.filter((t) => t.payer_id === req.params.id))));
 
   app.post("/merchants", (req, res) => {
-    const b = req.body ?? {};
-    if (typeof b.name !== "string" || !b.name) return void bad(res, ["name"]);
-    const m: Obj = { _id: objectId(), name: b.name, category: b.category, address: b.address, geocode: b.geocode };
+    if (invalid(req, res, SPECS.merchant)) return;
+    const m: Obj = { _id: objectId(), ...req.body };
     fake.merchants.set(m._id, m);
     created(res, "Created merchant", m);
   });

@@ -2,10 +2,15 @@
  * Capital One behind Allowance (docs/ARCHITECTURE.md §16), on Capital One's Nessie sandbox.
  *
  * The owner has one customer and a checking account; every agent gets its own allowance account.
- * A top-up moves dollars checking → agent account synchronously, before any USDC is credited.
- * Settled payments and transfers are mirrored as purchases at a merchant named after the
- * counterparty, earnings as deposits, seeds as transfers: all through a queue persisted in
- * DATA_DIR/bank.json, one job at a time.
+ * Nessie as verified live (2026-10-18): bodies are validated strictly (extra fields are a 400),
+ * amounts are integers, a transfer sits on ONE account (no payee), and `balance` never moves. So:
+ * - every amount Allowance posts, and every opening balance, is integer **cents**;
+ * - a balance is computed here: opening balance + deposits − withdrawals − purchases − transfers on
+ *   that account (cancelled records don't count);
+ * - a top-up is two records: a transfer on checking (the bank's confirmation) and a deposit on the
+ *   agent's account. A reversal is the mirror image.
+ * Settled payments become purchases at a merchant named after the counterparty, earnings become
+ * deposits; both go through a queue persisted in DATA_DIR/bank.json, one job at a time.
  *
  * Only this module talks to Nessie and only it holds the key. The key goes in `?key=` and is
  * scrubbed from every error message, so it never reaches a log line, a response or an event.
@@ -38,6 +43,9 @@ const MERCHANT_GEOCODE = { lat: 38.9897, lng: -76.9378 };
 /** One cent in USDC base units: anything smaller never reaches the bank. */
 const CENT = 10_000n;
 const MAX_TEXT = 120;
+/** Deposits on an agent's account that are the second half of a top-up start with this. */
+const TOPUP_DEPOSIT_PREFIX = "Top-up from";
+const MAX_LINKS = 5000;
 
 // ---------------------------------------------------------------------------
 // Nessie client
@@ -55,7 +63,7 @@ export class NessieError extends Error {
   }
 }
 
-/** A Nessie object as returned on create or read. Only `_id` is relied on; the rest is tolerated. */
+/** A Nessie object as returned on create or read. Ids are normalized to `_id` (transfer lists use `id`). */
 export interface NessieObject {
   _id: string;
   [k: string]: unknown;
@@ -74,6 +82,14 @@ export interface NessieClientOptions {
 export interface CallOpts {
   /** Overall deadline shared across several calls (the synchronous top-up). */
   signal?: AbortSignal;
+}
+
+/** `_id`, or `id` (Nessie's transfer lists), as `_id`; undefined when neither is a string. */
+function withId(x: unknown): NessieObject | undefined {
+  if (!x || typeof x !== "object") return undefined;
+  const o = x as Record<string, unknown>;
+  const id = typeof o._id === "string" && o._id ? o._id : typeof o.id === "string" && o.id ? o.id : undefined;
+  return id ? ({ ...o, _id: id } as NessieObject) : undefined;
 }
 
 export class NessieClient {
@@ -103,11 +119,12 @@ export class NessieClient {
   createAccount(customerId: string, body: unknown, o?: CallOpts) {
     return this.#create(`/customers/${enc(customerId)}/accounts`, body, o);
   }
-  getAccount(id: string, o?: CallOpts) {
-    return this.#request<NessieObject>("GET", `/accounts/${enc(id)}`, undefined, o);
+  async getAccount(id: string, o?: CallOpts): Promise<NessieObject> {
+    const res = await this.#request<unknown>("GET", `/accounts/${enc(id)}`, undefined, o);
+    return withId(res) ?? { _id: id, ...(res && typeof res === "object" ? res : {}) };
   }
-  createTransfer(fromAccountId: string, body: unknown, o?: CallOpts) {
-    return this.#create(`/accounts/${enc(fromAccountId)}/transfers`, body, o);
+  createTransfer(accountId: string, body: unknown, o?: CallOpts) {
+    return this.#create(`/accounts/${enc(accountId)}/transfers`, body, o);
   }
   createPurchase(accountId: string, body: unknown, o?: CallOpts) {
     return this.#create(`/accounts/${enc(accountId)}/purchases`, body, o);
@@ -121,27 +138,36 @@ export class NessieClient {
   listPurchases(accountId: string, o?: CallOpts) {
     return this.#list(`/accounts/${enc(accountId)}/purchases`, undefined, o);
   }
-  listTransfers(accountId: string, type: "payer" | "payee", o?: CallOpts) {
-    return this.#list(`/accounts/${enc(accountId)}/transfers`, { type }, o);
+  /** Transfers sit on the account that made them (Nessie has no payee): `type=payer`. */
+  listTransfers(accountId: string, o?: CallOpts) {
+    return this.#list(`/accounts/${enc(accountId)}/transfers`, { type: "payer" }, o);
   }
   listDeposits(accountId: string, o?: CallOpts) {
     return this.#list(`/accounts/${enc(accountId)}/deposits`, undefined, o);
   }
-
-  /** POST → `objectCreated` (or the body itself), which must carry an `_id`. */
-  async #create(path: string, body: unknown, o?: CallOpts): Promise<NessieObject> {
-    const res = await this.#request<{ objectCreated?: NessieObject } & Partial<NessieObject>>("POST", path, body, o);
-    const obj = res && typeof res === "object" && res.objectCreated && typeof res.objectCreated === "object" ? res.objectCreated : res;
-    if (!obj || typeof obj._id !== "string" || !obj._id) {
-      // It may have been created anyway; retrying could post twice, so this is not retryable.
-      throw new NessieError(502, `Nessie POST ${path} answered without an id`, false);
-    }
-    return obj as NessieObject;
+  listWithdrawals(accountId: string, o?: CallOpts) {
+    return this.#list(`/accounts/${enc(accountId)}/withdrawals`, undefined, o);
   }
 
+  /** POST → `objectCreated` (or the body itself), which must carry an id. */
+  async #create(path: string, body: unknown, o?: CallOpts): Promise<NessieObject> {
+    const res = await this.#request<{ objectCreated?: unknown }>("POST", path, body, o);
+    const obj = withId(res && typeof res === "object" && res.objectCreated ? res.objectCreated : res);
+    // It may have been created anyway; retrying could post twice, so this is not retryable.
+    if (!obj) throw new NessieError(502, `Nessie POST ${path} answered without an id`, false);
+    return obj;
+  }
+
+  /** Nessie answers an empty list with 404 ("No transfers found for this account"): that is no records. */
   async #list(path: string, query: Record<string, string> | undefined, o?: CallOpts): Promise<NessieObject[]> {
-    const res = await this.#request<unknown>("GET", path, undefined, o, query);
-    return Array.isArray(res) ? (res.filter((x) => x && typeof x === "object" && typeof (x as NessieObject)._id === "string") as NessieObject[]) : [];
+    let res: unknown;
+    try {
+      res = await this.#request<unknown>("GET", path, undefined, o, query);
+    } catch (err) {
+      if (err instanceof NessieError && err.status === 404) return [];
+      throw err;
+    }
+    return Array.isArray(res) ? res.map(withId).filter((x): x is NessieObject => Boolean(x)) : [];
   }
 
   async #request<T>(method: "GET" | "POST", path: string, body: unknown, o: CallOpts = {}, query?: Record<string, string>): Promise<T> {
@@ -170,14 +196,11 @@ export class NessieClient {
     try {
       parsed = text ? JSON.parse(text) : undefined;
     } catch {
-      parsed = undefined;
+      parsed = text || undefined;
     }
     if (res.status < 200 || res.status >= 300) {
-      const b = (parsed ?? {}) as { message?: unknown; culprit?: unknown };
-      const detail = [typeof b.message === "string" ? b.message : "", Array.isArray(b.culprit) ? b.culprit.filter((c) => typeof c === "string").join("; ") : ""]
-        .filter(Boolean)
-        .join(": ");
-      throw new NessieError(res.status, this.scrub(`${label} answered ${res.status}${detail ? `: ${detail}` : ""}`).slice(0, 300));
+      const detail = errorDetail(parsed);
+      throw new NessieError(res.status, this.scrub(`${label} answered ${res.status}${detail ? `: ${detail}` : ""}`).slice(0, 400));
     }
     return parsed as T;
   }
@@ -189,6 +212,19 @@ export class NessieClient {
     this.#nextWriteAt = at + this.#gap;
     if (at > now) await sleep(at - now, signal);
   }
+}
+
+/** Nessie's error bodies: a JSON string listing the bad fields (validation), or `{ message, culprit }`. */
+function errorDetail(b: unknown): string {
+  if (typeof b === "string") return b;
+  if (!b || typeof b !== "object") return "";
+  const o = b as { message?: unknown; culprit?: unknown; detail?: unknown };
+  const parts = [
+    typeof o.message === "string" ? o.message : "",
+    Array.isArray(o.culprit) ? o.culprit.filter((c) => typeof c === "string").join("; ") : "",
+    o.detail !== undefined ? (typeof o.detail === "string" ? o.detail : JSON.stringify(o.detail)) : "",
+  ];
+  return parts.filter(Boolean).join(": ");
 }
 
 function enc(id: string): string {
@@ -221,6 +257,56 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length) {
+        const i = next++;
+        out[i] = await fn(items[i]);
+      }
+    }),
+  );
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// money: integer cents at Nessie, dollar strings everywhere else
+// ---------------------------------------------------------------------------
+
+/** USDC base units → whole cents (rounded); undefined below one cent. */
+function centsOf(units: bigint): number | undefined {
+  if (units < CENT) return undefined;
+  return Number((units + CENT / 2n) / CENT);
+}
+/** 2000 → "20.00" */
+function centsToDollars(cents: number): string {
+  return toDollars(BigInt(cents) * CENT);
+}
+const usdCents = (cents: number) => formatUsd(BigInt(cents) * CENT);
+/** A Nessie amount or balance: an integer; anything else counts as 0. */
+function intOf(v: unknown): number {
+  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+  return Number.isFinite(n) ? Math.trunc(n) : 0;
+}
+
+/** One account's records at Nessie, enough to compute its balance and its statement. */
+interface Ledger {
+  opening: number;
+  deposits: NessieObject[];
+  withdrawals: NessieObject[];
+  purchases: NessieObject[];
+  transfers: NessieObject[];
+}
+
+const counts = (x: NessieObject) => String(x.status ?? "").toLowerCase() !== "cancelled";
+const total = (xs: NessieObject[]) => xs.filter(counts).reduce((s, x) => s + intOf(x.amount), 0);
+/** Nessie never moves `balance`: opening + deposits − withdrawals − purchases − transfers, in cents. */
+function balanceCents(l: Ledger): number {
+  return l.opening + total(l.deposits) - total(l.withdrawals) - total(l.purchases) - total(l.transfers);
+}
+
 // ---------------------------------------------------------------------------
 // bank.json
 // ---------------------------------------------------------------------------
@@ -238,12 +324,14 @@ export interface BankJob {
   agentId: string;
   agentName: string;
   receiptId?: string;
-  /** Dollars, rounded to cents. */
+  /** Dollars, rounded to cents (posted to Nessie as cents). */
   amount?: string;
   description?: string;
   merchant?: { name: string; category: string };
   /** YYYY-MM-DD (local) of the Allowance event; sent as Nessie's transaction/purchase date. */
   date: string;
+  /** Two-record jobs (topup, refund): the first record once posted, so a retry only does the second. */
+  firstRef?: string;
   status: "pending" | "failed";
   attempts: number;
   /** ISO time of the next attempt (absent: due now). */
@@ -253,6 +341,8 @@ export interface BankJob {
 }
 
 export interface BankFile {
+  /** Nessie amounts are integer cents. A file without this is from a dollar-based link and relinks. */
+  units: "cents";
   customerId?: string;
   checkingId?: string;
   checkingLast4?: string;
@@ -261,24 +351,27 @@ export interface BankFile {
   /** Every Nessie object this wallet created, for cleanup by hand. */
   created: { kind: "customer" | "account" | "merchant"; id: string; at: string }[];
   queue: BankJob[];
-  /** Last known balances by Nessie account id (served with `error` when Nessie can't be reached). */
+  /** Last computed balances (dollars) by Nessie account id, served with `error` when Nessie can't be reached. */
   balances: Record<string, { balance: string; at: string }>;
+  /** Second record of a two-record move → its first record (receipts carry the first as `bank.ref`). */
+  links: Record<string, string>;
 }
 
 function emptyBankFile(): BankFile {
-  return { accounts: {}, merchants: {}, created: [], queue: [], balances: {} };
+  return { units: "cents", accounts: {}, merchants: {}, created: [], queue: [], balances: {}, links: {} };
 }
 
 export function bankFilePath(dataDir: string): string {
   return join(dataDir, "bank.json");
 }
 
-function loadBankFile(file: string): BankFile {
-  if (!existsSync(file)) return emptyBankFile();
+function loadBankFile(file: string): { state: BankFile; legacy: boolean } {
+  if (!existsSync(file)) return { state: emptyBankFile(), legacy: false };
   try {
-    const raw = JSON.parse(readFileSync(file, "utf8")) as Partial<BankFile>;
+    const raw = JSON.parse(readFileSync(file, "utf8")) as Partial<Omit<BankFile, "units">> & { units?: unknown };
     const obj = <T>(v: unknown, d: T): T => (v && typeof v === "object" && !Array.isArray(v) ? (v as T) : d);
-    return {
+    const state: BankFile = {
+      units: "cents",
       ...(typeof raw.customerId === "string" ? { customerId: raw.customerId } : {}),
       ...(typeof raw.checkingId === "string" ? { checkingId: raw.checkingId } : {}),
       ...(typeof raw.checkingLast4 === "string" ? { checkingLast4: raw.checkingLast4 } : {}),
@@ -287,10 +380,12 @@ function loadBankFile(file: string): BankFile {
       created: Array.isArray(raw.created) ? raw.created : [],
       queue: Array.isArray(raw.queue) ? raw.queue : [],
       balances: obj(raw.balances, {}),
+      links: obj(raw.links, {}),
     };
+    return { state, legacy: Boolean(raw.customerId || raw.checkingId) && raw.units !== "cents" };
   } catch (err) {
     console.error(`${LOG} could not parse ${file} (${(err as Error).message}); starting unlinked`);
-    return emptyBankFile();
+    return { state: emptyBankFile(), legacy: false };
   }
 }
 
@@ -320,7 +415,7 @@ export interface BankOptions {
   callTimeoutMs?: number;
   /** Delays before each retry of a queued job (5 retries over about 2 minutes by default). */
   retryDelaysMs?: number[];
-  /** Live balances are cached this long. Default 10 s. */
+  /** Computed balances are cached this long. Default 10 s. */
   balanceTtlMs?: number;
 }
 
@@ -345,7 +440,7 @@ export interface Bank {
   cached(): SummaryResponse["bank"] | undefined;
   /** MeResponse.bank once the agent has an account. */
   agentBank(agentId: string): MeResponse["bank"] | undefined;
-  /** Synchronous top-up transfer. Throws BankError (409 bank_insufficient_funds, 502 bank_unavailable). */
+  /** Synchronous top-up. Throws BankError (409 bank_insufficient_funds, 502 bank_unavailable). */
   topup(agent: AgentRef, dollars: string): Promise<ReceiptBank>;
   /** Queue the mirror of a settled receipt (sets `receipt.bank` to queued). Caller saves and emits. */
   mirror(receipt: Receipt, merchant?: { name?: string; category?: string }): void;
@@ -388,18 +483,9 @@ function last4Of(obj: NessieObject): string {
 }
 
 const mask = (last4?: string) => (last4 ? `••${last4}` : "");
-/** Nessie numbers → "4982.00"; undefined when it isn't a number. */
-function dollarsOf(v: unknown): string | undefined {
-  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
-  return Number.isFinite(n) ? n.toFixed(2) : undefined;
-}
-/** Receipt amount → cents for Nessie; undefined below one cent. */
-function cents(amountBaseUnits: string | bigint): string | undefined {
-  const units = BigInt(amountBaseUnits);
-  if (units < CENT) return undefined;
-  return toDollars(((units + CENT / 2n) / CENT) * CENT);
-}
 const clip = (s: string, n = MAX_TEXT) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+const transferBody = (amount: number, date: string, description: string) => ({ amount, transaction_date: date, status: "completed", description: clip(description) });
+const depositBody = (amount: number, date: string, description: string) => ({ medium: "balance", amount, transaction_date: date, status: "completed", description: clip(description) });
 
 export function createBank(config: AppConfig, store: Store, emit: Emit, opts: BankOptions = {}): Bank {
   const key = config.nessie?.apiKey;
@@ -407,12 +493,14 @@ export function createBank(config: AppConfig, store: Store, emit: Emit, opts: Ba
   if (key && !usableBaseUrl(baseUrl)) console.warn(`${LOG} NESSIE_BASE_URL must be https; the bank stays off`);
   const enabled = Boolean(key) && usableBaseUrl(baseUrl);
   const file = bankFilePath(config.dataDir);
-  const state: BankFile = enabled ? loadBankFile(file) : emptyBankFile();
+  const loaded = enabled ? loadBankFile(file) : { state: emptyBankFile(), legacy: false };
+  const state: BankFile = loaded.state;
   const client = new NessieClient({ apiKey: key ?? "", baseUrl, fetch: opts.fetch, minWriteGapMs: opts.minWriteGapMs, timeoutMs: opts.callTimeoutMs });
   const retryDelays = opts.retryDelaysMs ?? DEFAULT_RETRY_DELAYS;
   const balanceTtl = opts.balanceTtlMs ?? 10_000;
-  const configuredOpening = Number(config.nessie?.openingBalance);
-  const openingBalance = Number.isFinite(configuredOpening) && configuredOpening >= 0 ? configuredOpening : 5000;
+  // NESSIE_OPENING_BALANCE is dollars ("5000.00"); Nessie gets cents (500000).
+  const openingUnits = toBaseUnitsOr(config.nessie?.openingBalance, 5000n * 1_000_000n);
+  const openingCents = openingUnits >= 0n ? Number((openingUnits + CENT / 2n) / CENT) : 500_000;
 
   let started = false;
   let closed = false;
@@ -438,9 +526,32 @@ export function createBank(config: AppConfig, store: Store, emit: Emit, opts: Ba
     renameSync(tmp, file);
   }
 
-  function noteBalance(id: string, raw: unknown): void {
-    const balance = dollarsOf(raw);
-    if (balance !== undefined) state.balances[id] = { balance, at: nowIso() };
+  function noteBalance(id: string, cents: number): void {
+    state.balances[id] = { balance: centsToDollars(cents), at: nowIso() };
+  }
+
+  function link(second: string, first: string): void {
+    state.links[second] = first;
+    const keys = Object.keys(state.links);
+    if (keys.length > MAX_LINKS) for (const k of keys.slice(0, keys.length - MAX_LINKS)) delete state.links[k];
+  }
+
+  /** Forget the link (a wiped sandbox, or a dollar-based bank.json): the next move links a new customer. */
+  function forgetLink(): void {
+    delete state.customerId;
+    delete state.checkingId;
+    delete state.checkingLast4;
+    state.accounts = {};
+    state.merchants = {};
+    state.balances = {};
+    for (const j of state.queue) delete j.firstRef; // their first records went with the old link
+    balancesAt = 0;
+    save();
+  }
+
+  if (loaded.legacy) {
+    warn('bank.json is from a dollar-based link (no "units": "cents"); relinking with a new customer');
+    forgetLink();
   }
 
   // ---- objects -------------------------------------------------------------
@@ -457,11 +568,11 @@ export function createBank(config: AppConfig, store: Store, emit: Emit, opts: Ba
           save();
         }
         if (!state.checkingId) {
-          const a = await client.createAccount(state.customerId, { type: "Checking", nickname: CHECKING_NICKNAME, rewards: 0, balance: openingBalance }, o);
+          const a = await client.createAccount(state.customerId, { type: "Checking", nickname: CHECKING_NICKNAME, rewards: 0, balance: openingCents }, o);
           state.checkingId = a._id;
           state.checkingLast4 = last4Of(a);
           state.created.push({ kind: "account", id: a._id, at: nowIso() });
-          noteBalance(a._id, a.balance ?? openingBalance);
+          noteBalance(a._id, a.balance === undefined ? openingCents : intOf(a.balance));
           save();
         }
         lastError = undefined;
@@ -500,7 +611,7 @@ export function createBank(config: AppConfig, store: Store, emit: Emit, opts: Ba
           const ref: BankAccountRef = { id: a._id, nickname, last4: last4Of(a) };
           state.accounts[agent.id] = ref;
           state.created.push({ kind: "account", id: a._id, at: nowIso() });
-          noteBalance(a._id, a.balance ?? 0);
+          noteBalance(a._id, intOf(a.balance));
           save();
           log(`opened ${nickname} ${mask(ref.last4)}`);
           return ref;
@@ -548,14 +659,7 @@ export function createBank(config: AppConfig, store: Store, emit: Emit, opts: Ba
 
   function forgetAll(why: string): void {
     warn(`${why} is gone at Nessie (sandbox wiped?); relinking`);
-    delete state.customerId;
-    delete state.checkingId;
-    delete state.checkingLast4;
-    state.accounts = {};
-    state.merchants = {};
-    state.balances = {};
-    balancesAt = 0;
-    save();
+    forgetLink();
   }
 
   /**
@@ -589,44 +693,54 @@ export function createBank(config: AppConfig, store: Store, emit: Emit, opts: Ba
 
   // ---- balances --------------------------------------------------------------
 
-  /** Live balances (checking + every agent's account), cached for balanceTtl; failures keep the last known. */
+  /** The account's own records (an empty or missing list counts as none; a gone account still 404s on getAccount). */
+  async function ledgerOf(id: string, o?: CallOpts): Promise<Ledger> {
+    const [acct, deposits, withdrawals, purchases, transfers] = await Promise.all([
+      client.getAccount(id, o),
+      client.listDeposits(id, o),
+      client.listWithdrawals(id, o),
+      client.listPurchases(id, o),
+      client.listTransfers(id, o),
+    ]);
+    return { opening: intOf(acct.balance), deposits, withdrawals, purchases, transfers };
+  }
+
+  /** Computed balances (checking + every agent's account), cached for balanceTtl; failures keep the last known. */
   function refreshBalances(force = false): Promise<void> {
     if (!enabled || !state.checkingId) return Promise.resolve();
     if (!force && Date.now() - balancesAt < balanceTtl) return Promise.resolve();
     refreshing ??= (async () => {
       try {
         const ids = [state.checkingId!, ...store.state.agents.map((a) => state.accounts[a.id]?.id).filter((x): x is string => Boolean(x))];
-        const results = await Promise.allSettled(ids.map((id) => client.getAccount(id)));
-        let failure: string | undefined;
-        let checkingGone = false;
-        results.forEach((r, i) => {
-          const id = ids[i];
-          if (r.status === "fulfilled") return noteBalance(id, r.value.balance);
-          const err = r.reason;
-          if (err instanceof NessieError && err.status === 404) {
-            if (i === 0) checkingGone = true;
-            else {
-              const agentId = Object.keys(state.accounts).find((k) => state.accounts[k].id === id);
-              if (agentId) {
-                warn(`${state.accounts[agentId].nickname} is gone at Nessie; it reopens when money next moves`);
-                const agent = store.agentById(agentId);
-                delete state.accounts[agentId];
-                if (agent) openAccount(agent);
-              }
-            }
-          } else {
-            failure ??= errText(err);
+        const results = await mapLimit(ids, 3, async (id): Promise<"ok" | "gone" | { error: string }> => {
+          try {
+            noteBalance(id, balanceCents(await ledgerOf(id)));
+            return "ok";
+          } catch (err) {
+            if (err instanceof NessieError && err.status === 404 && (await gone(id).catch(() => false))) return "gone";
+            return { error: errText(err) };
           }
         });
-        if (checkingGone) {
+        if (results[0] === "gone") {
           forgetAll(`checking ${mask(state.checkingLast4)}`);
           await ensureLinked();
           for (const a of store.state.agents) openAccount(a);
+        } else {
+          results.forEach((r, i) => {
+            if (r !== "gone") return;
+            const agentId = Object.keys(state.accounts).find((k) => state.accounts[k].id === ids[i]);
+            if (!agentId) return;
+            warn(`${state.accounts[agentId].nickname} is gone at Nessie; it reopens when money next moves`);
+            const agent = store.agentById(agentId);
+            delete state.accounts[agentId];
+            if (agent) openAccount(agent);
+          });
         }
         save();
         balancesAt = Date.now();
+        const failure = results.find((r): r is { error: string } => typeof r === "object");
         if (failure) {
-          warn(`could not read balances: ${failure}`);
+          warn(`could not read balances: ${failure.error}`);
           lastError = "Couldn't reach Capital One (Nessie sandbox); balances are the last known ones.";
         } else {
           lastError = undefined;
@@ -675,8 +789,8 @@ export function createBank(config: AppConfig, store: Store, emit: Emit, opts: Ba
 
   // ---- queue -------------------------------------------------------------------
 
-  function enqueue(job: Omit<BankJob, "id" | "status" | "attempts" | "createdAt" | "date">): BankJob {
-    const full: BankJob = { id: newId("bjob"), status: "pending", attempts: 0, createdAt: nowIso(), date: localDayKey(), ...job };
+  function enqueue(job: Omit<BankJob, "id" | "status" | "attempts" | "createdAt" | "date"> & { date?: string }): BankJob {
+    const full: BankJob = { id: newId("bjob"), status: "pending", attempts: 0, createdAt: nowIso(), ...job, date: job.date ?? localDayKey() };
     state.queue.push(full);
     save();
     kick();
@@ -725,30 +839,44 @@ export function createBank(config: AppConfig, store: Store, emit: Emit, opts: Ba
     timer.unref();
   }
 
+  const topupDepositText = () => `${TOPUP_DEPOSIT_PREFIX} Capital One Checking ${mask(state.checkingLast4)}`;
+
   async function perform(job: BankJob): Promise<{ account: BankAccountRef; ref?: string }> {
     const agent: AgentRef = store.agentById(job.agentId) ?? { id: job.agentId, name: job.agentName };
     await ensureLinked();
     const account = await ensureAgentAccount(agent);
-    const amount = Number(job.amount);
-    const description = clip(job.description ?? "");
+    const amount = job.amount ? Number((toBaseUnits(job.amount) + CENT / 2n) / CENT) : 0;
+    const description = job.description ?? "";
     switch (job.kind) {
       case "open":
         return { account };
       case "topup": {
-        const t = await client.createTransfer(state.checkingId!, { medium: "balance", payee_id: account.id, amount, transaction_date: job.date, description });
-        return { account, ref: t._id };
+        // Transfer on checking (the money leaving), then the deposit on the agent's account.
+        if (!job.firstRef) {
+          job.firstRef = (await client.createTransfer(state.checkingId!, transferBody(amount, job.date, description)))._id;
+          save();
+        }
+        const d = await client.createDeposit(account.id, depositBody(amount, job.date, topupDepositText()));
+        link(d._id, job.firstRef);
+        return { account, ref: job.firstRef };
       }
       case "refund": {
-        const t = await client.createTransfer(account.id, { medium: "balance", payee_id: state.checkingId!, amount, transaction_date: job.date, description });
-        return { account, ref: t._id };
+        // The mirror image: a transfer on the agent's account, then a deposit back on checking.
+        if (!job.firstRef) {
+          job.firstRef = (await client.createTransfer(account.id, transferBody(amount, job.date, description)))._id;
+          save();
+        }
+        const d = await client.createDeposit(state.checkingId!, depositBody(amount, job.date, `Top-up reversed from ${agent.name}'s allowance account ${mask(account.last4)}`));
+        link(d._id, job.firstRef);
+        return { account, ref: job.firstRef };
       }
       case "purchase": {
         const merchantId = await ensureMerchant(job.merchant!.name, job.merchant!.category);
-        const p = await client.createPurchase(account.id, { merchant_id: merchantId, medium: "balance", purchase_date: job.date, amount, description });
+        const p = await client.createPurchase(account.id, { merchant_id: merchantId, medium: "balance", purchase_date: job.date, amount, status: "completed", description: clip(description) });
         return { account, ref: p._id };
       }
       case "deposit": {
-        const d = await client.createDeposit(account.id, { medium: "balance", transaction_date: job.date, amount, description });
+        const d = await client.createDeposit(account.id, depositBody(amount, job.date, description));
         return { account, ref: d._id };
       }
     }
@@ -763,8 +891,10 @@ export function createBank(config: AppConfig, store: Store, emit: Emit, opts: Ba
       state.queue = state.queue.filter((j) => j.id !== job.id);
       balancesAt = 0;
       save();
-      if (job.kind === "refund") log(`moved ${formatUsd(toBaseUnits(job.amount!))} back to checking from ${job.agentName}'s account (ref ${ref})`);
-      if (!receipt) return;
+      if (!receipt) {
+        if (job.kind !== "open") log(`${what(job)} posted (ref ${ref})`);
+        return;
+      }
       receipt.bank = { status: "posted", ref, account: mask(account.last4), postedAt: nowIso() };
       store.save();
       emit("bank.posted", {
@@ -811,7 +941,7 @@ export function createBank(config: AppConfig, store: Store, emit: Emit, opts: Ba
       case "open":
         return `opening ${job.agentName}'s account`;
       case "topup":
-        return `the ${amt} transfer to ${job.agentName}`;
+        return job.firstRef ? `the ${amt} top-up deposit for ${job.agentName}` : `the ${amt} top-up for ${job.agentName}`;
       case "refund":
         return `moving ${amt} back to checking from ${job.agentName}`;
       case "purchase":
@@ -838,23 +968,21 @@ export function createBank(config: AppConfig, store: Store, emit: Emit, opts: Ba
 
   // ---- statement -------------------------------------------------------------
 
-  function entriesOf(objs: NessieObject[], kind: BankStatementEntry["kind"], refs: Map<string, string>, merchantNames: Map<string, string>): BankStatementEntry[] {
-    return objs.map((o) => {
-      const merchantId = typeof o.merchant_id === "string" ? o.merchant_id : undefined;
-      const merchant = merchantId ? merchantNames.get(merchantId) : undefined;
-      const date = [o.purchase_date, o.transaction_date].find((d) => typeof d === "string") as string | undefined;
-      const receiptId = refs.get(o._id);
-      return {
-        id: o._id,
-        kind,
-        amount: dollarsOf(o.amount) ?? "0.00",
-        description: typeof o.description === "string" ? o.description : "",
-        ...(merchant ? { merchant } : {}),
-        date: date ?? "",
-        status: typeof o.status === "string" ? o.status : "unknown",
-        ...(receiptId ? { receiptId } : {}),
-      };
-    });
+  function entryOf(o: NessieObject, kind: BankStatementEntry["kind"], receiptOf: (id: string) => string | undefined, merchantNames: Map<string, string>): BankStatementEntry {
+    const merchantId = typeof o.merchant_id === "string" ? o.merchant_id : undefined;
+    const merchant = merchantId ? merchantNames.get(merchantId) : undefined;
+    const date = [o.purchase_date, o.transaction_date].find((d) => typeof d === "string") as string | undefined;
+    const receiptId = receiptOf(o._id);
+    return {
+      id: o._id,
+      kind,
+      amount: centsToDollars(intOf(o.amount)),
+      description: typeof o.description === "string" ? o.description : "",
+      ...(merchant ? { merchant } : {}),
+      date: date ?? "",
+      status: typeof o.status === "string" ? o.status : "unknown",
+      ...(receiptId ? { receiptId } : {}),
+    };
   }
 
   /** Newest first: Nessie's date, then the id (Mongo ObjectIds start with their creation time). */
@@ -947,8 +1075,10 @@ export function createBank(config: AppConfig, store: Store, emit: Emit, opts: Ba
       const agent = agentId ? store.agentById(agentId) : undefined;
       if (agentId && !agent) throw new BankError(404, "agent_not_found", `No agent ${agentId}`);
       const n = Math.min(200, Math.max(1, Math.floor(limit) || 50));
+      // Receipts carry the first record of a move as `bank.ref`; `links` maps second records to first ones.
       const refs = new Map<string, string>();
       for (const r of store.state.receipts) if (r.bank?.ref) refs.set(r.bank.ref, r.id);
+      const receiptOf = (id: string) => refs.get(id) ?? (state.links[id] ? refs.get(state.links[id]) : undefined);
       const merchantNames = new Map(Object.entries(state.merchants).map(([name, id]) => [id, name]));
       try {
         return await withRelink({ agent }, async () => {
@@ -956,22 +1086,20 @@ export function createBank(config: AppConfig, store: Store, emit: Emit, opts: Ba
           const ref = agent ? state.accounts[agent.id] : undefined;
           if (agent && !ref) throw new BankError(404, "bank_account_not_found", `${agent.name} has no Capital One account yet; it opens the first time money moves.`);
           const id = ref?.id ?? state.checkingId!;
-          // Agent: purchases, transfers in (top-ups), deposits, and transfers out (refunds).
-          // Checking: transfers out (top-ups), transfers in (refunds).
-          const [acct, purchases, payee, payer, deposits] = await Promise.all([
-            client.getAccount(id),
-            agent ? client.listPurchases(id) : Promise.resolve([]),
-            client.listTransfers(id, "payee"),
-            client.listTransfers(id, "payer"),
-            agent ? client.listDeposits(id) : Promise.resolve([]),
-          ]);
-          noteBalance(id, acct.balance);
+          const ledger = await ledgerOf(id);
+          noteBalance(id, balanceCents(ledger));
           save();
+          const of = (o: NessieObject, kind: BankStatementEntry["kind"]) => entryOf(o, kind, receiptOf, merchantNames);
+          // Agent: top-up deposits are money in from checking; other deposits are earnings.
+          // Checking: deposits are money coming back (reversals). Transfers and withdrawals leave.
+          const deposits = ledger.deposits.map((d) =>
+            of(d, !ref || (typeof d.description === "string" && d.description.startsWith(TOPUP_DEPOSIT_PREFIX)) ? "transfer_in" : "deposit"),
+          );
           const entries = [
-            ...entriesOf(purchases, "purchase", refs, merchantNames),
-            ...entriesOf(payee, "transfer_in", refs, merchantNames),
-            ...entriesOf(payer, "transfer_out", refs, merchantNames),
-            ...entriesOf(deposits, "deposit", refs, merchantNames),
+            ...deposits,
+            ...ledger.purchases.map((p) => of(p, "purchase")),
+            ...ledger.transfers.map((t) => of(t, "transfer_out")),
+            ...ledger.withdrawals.map((w) => of(w, "transfer_out")),
           ].sort(newestFirst);
           const account = ref
             ? { id: ref.id, nickname: ref.nickname, last4: ref.last4, balance: balanceOf(ref.id), agentId: agent!.id, agentName: agent!.name }
@@ -985,46 +1113,49 @@ export function createBank(config: AppConfig, store: Store, emit: Emit, opts: Ba
 
     async topup(agent, dollars) {
       requireEnabled();
-      const amountStr = cents(toBaseUnits(dollars));
-      if (!amountStr) throw new BankError(400, "invalid_request", "Capital One moves whole cents; add at least $0.01.");
-      const amount = Number(amountStr);
+      const amount = centsOf(toBaseUnits(dollars));
+      if (!amount) throw new BankError(400, "invalid_request", "Capital One moves whole cents; add at least $0.01.");
       const o: CallOpts = { signal: AbortSignal.timeout(opts.topupTimeoutMs ?? 10_000) };
+      const date = localDayKey();
+      const description = `Allowance top-up · ${agent.name}`;
+      let moved: { account: BankAccountRef; ref: string };
       try {
-        const result = await withRelink({ agent, o }, async () => {
+        moved = await withRelink({ agent, o }, async () => {
           await within(ensureLinked(o), o);
           const account = await within(ensureAgentAccount(agent, o), o);
-          const checking = await client.getAccount(state.checkingId!, o);
-          noteBalance(state.checkingId!, checking.balance);
-          const available = dollarsOf(checking.balance);
-          if (available !== undefined && Number(available) < amount) {
+          const available = balanceCents(await ledgerOf(state.checkingId!, o));
+          noteBalance(state.checkingId!, available);
+          if (available < amount) {
             save();
-            throw new BankError(
-              409,
-              "bank_insufficient_funds",
-              `Your Capital One checking has ${formatUsd(toBaseUnits(available))}, not enough to add ${formatUsd(toBaseUnits(amountStr))}.`,
-            );
+            throw new BankError(409, "bank_insufficient_funds", `Your Capital One checking has ${usdCents(available)}, not enough to add ${usdCents(amount)}.`);
           }
-          const t = await client.createTransfer(
-            state.checkingId!,
-            { medium: "balance", payee_id: account.id, amount, transaction_date: localDayKey(), description: clip(`Allowance top-up · ${agent.name}`) },
-            o,
-          );
+          // The checking transfer is the bank's confirmation: only after it is the USDC credited.
+          const t = await client.createTransfer(state.checkingId!, transferBody(amount, date, description), o);
           return { account, ref: t._id };
         });
-        balancesAt = 0;
-        save();
-        return { status: "posted", ref: result.ref, account: mask(result.account.last4), postedAt: nowIso() };
       } catch (err) {
         if (err instanceof BankError) throw err;
-        warn(`top-up of ${formatUsd(toBaseUnits(amountStr))} for ${agent.name} failed: ${errText(err)}`);
+        warn(`top-up of ${usdCents(amount)} for ${agent.name} failed: ${errText(err)}`);
         throw new BankError(502, "bank_unavailable", "Capital One didn't confirm the transfer, so nothing was added.");
       }
+      // Then the deposit on the agent's account. If it fails the money is still on its way: queue it.
+      try {
+        const d = await client.createDeposit(moved.account.id, depositBody(amount, date, topupDepositText()), o);
+        link(d._id, moved.ref);
+      } catch (err) {
+        warn(`the deposit half of ${agent.name}'s ${usdCents(amount)} top-up failed (${errText(err)}); queued`);
+        enqueue({ kind: "topup", agentId: agent.id, agentName: agent.name, amount: centsToDollars(amount), description, date, firstRef: moved.ref });
+      }
+      balancesAt = 0;
+      save();
+      return { status: "posted", ref: moved.ref, account: mask(moved.account.last4), postedAt: nowIso() };
     },
 
     mirror(receipt, merchant) {
       if (!enabled || receipt.status !== "settled") return; // blocked, denied, pending and failed never reach the bank
-      const amount = cents(receipt.amountBaseUnits);
-      if (!amount) return;
+      const cents = centsOf(BigInt(receipt.amountBaseUnits));
+      if (!cents) return;
+      const amount = centsToDollars(cents);
       const account = mask(state.accounts[receipt.agentId]?.last4);
       const base = { agentId: receipt.agentId, agentName: receipt.agentName, receiptId: receipt.id, amount };
       if (receipt.kind === "topup") {
@@ -1044,10 +1175,10 @@ export function createBank(config: AppConfig, store: Store, emit: Emit, opts: Ba
     openAccount,
 
     refund(agent, dollars, ref) {
-      const amount = enabled ? cents(toBaseUnits(dollars)) : undefined;
-      if (!amount) return;
-      warn(`USDC for ${agent.name}'s top-up${ref ? ` (transfer ${ref})` : ""} could not be credited; moving ${formatUsd(toBaseUnits(amount))} back to checking`);
-      enqueue({ kind: "refund", agentId: agent.id, agentName: agent.name, amount, description: `Allowance top-up reversed · ${agent.name}` });
+      const cents = enabled ? centsOf(toBaseUnits(dollars)) : undefined;
+      if (!cents) return;
+      warn(`USDC for ${agent.name}'s top-up${ref ? ` (transfer ${ref})` : ""} could not be credited; moving ${usdCents(cents)} back to checking`);
+      enqueue({ kind: "refund", agentId: agent.id, agentName: agent.name, amount: centsToDollars(cents), description: `Allowance top-up reversed · ${agent.name}` });
     },
 
     retry(receiptId) {
@@ -1087,4 +1218,12 @@ export function createBank(config: AppConfig, store: Store, emit: Emit, opts: Ba
     },
   };
   return bank;
+}
+
+function toBaseUnitsOr(dollars: string | undefined, fallback: bigint): bigint {
+  try {
+    return dollars === undefined ? fallback : toBaseUnits(dollars);
+  } catch {
+    return fallback;
+  }
 }

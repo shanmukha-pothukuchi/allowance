@@ -673,17 +673,22 @@ sandbox)" wherever balances appear.
 Without it, nothing changes, and mock mode stays offline. Only wallet-service reads the key. It goes
 to Nessie as `?key=` and is never logged; `redact()` covers it. Agents never talk to Nessie.
 
-Nessie facts verified on 2026-10-17 (from the Quantcomm build):
-- POST returns `{ objectCreated: { _id, … } }`.
-- Reads are scoped to the key, so a wrong key sees empty lists.
-- Writes need a real key (401 otherwise).
-- Customer and account bodies are verified.
-
-**Not yet verified live, so the code must tolerate either outcome:**
-- the transfer, purchase, deposit and merchant bodies;
-- whether new transactions sit `pending` before Nessie executes them, and when balances move.
-
-The lead verifies these against the real API once the key is in `.env`.
+Nessie facts, verified live on 2026-10-18:
+- POST returns `{ objectCreated: { _id, … } }`. Reads are scoped to the key; writes need a real key (401 otherwise).
+- Bodies are validated strictly (extra fields → 400 with a list of the bad fields).
+- **Amounts are integers** (a $0.05 purchase posted as `0.05` was stored as `0`). Allowance therefore
+  stores every Nessie amount, and each account's opening `balance`, in **integer cents**; dollars
+  appear only in Allowance's own API and UI. `bank.json` carries `units: "cents"`; a link without it
+  is replaced by a fresh customer.
+- **Balances never move**: transactions (any status) leave `GET /accounts/{id}` `balance` unchanged.
+  Allowance computes each balance from the account's own Nessie transactions: opening balance +
+  deposits − withdrawals − purchases − transfers.
+- **Transfers have no payee**: `{ amount, transaction_date, status, description }` only, recorded on
+  one account (`?type=payer`); list items use `id`, not `_id`. Moving money between two accounts is
+  therefore two records (a transfer on the payer, a deposit on the payee).
+- Deposits need `{ medium: "balance", amount, transaction_date, status, description }`; purchases
+  `{ merchant_id, medium, amount, purchase_date, status, description }`; merchants only need `name`.
+  Allowance posts everything with `status: "completed"`.
 
 ### 16.2 Objects (created by wallet-service, ids in `DATA_DIR/bank.json`)
 
@@ -704,14 +709,14 @@ merchants: { [name]: id }, created: [{ kind, id, at }], queue: BankJob[] }`.
 
 | Allowance event | Nessie call | Timing |
 |---|---|---|
-| Owner adds money (`POST /v1/agents/:id/topup`) | `POST /accounts/{checking}/transfers { medium: "balance", payee_id: <agent account>, amount, transaction_date: "YYYY-MM-DD", description: "Allowance top-up · <agent>" }` | **Synchronous, before the USDC is credited** (10 s timeout). See the failure rule below. |
-| Agent created with `initialBalance`; mock seed balances at startup | same transfer | queued (startup must not wait on the bank) |
-| x402 payment settled (`spend` receipt → `settled`) or transfer sent | `POST /accounts/{agent account}/purchases { merchant_id, medium: "balance", purchase_date, amount, description: "<receipt description> · paid in USDC" }`. The merchant is the connected service's name when the URL is under one (e.g. "Quantcomm Flood Research"), else the counterparty name; a transfer's merchant is "Transfer to 0x12…ab". | queued |
-| Earning received (agent-work payout) | `POST /accounts/{agent account}/deposits { medium: "balance", transaction_date, amount, description: "Earned · <description>" }` | queued |
+| Owner adds money (`POST /v1/agents/:id/topup`) | `POST /accounts/{checking}/transfers { amount, transaction_date: "YYYY-MM-DD", status: "completed", description: "Allowance top-up · <agent>" }`, then `POST /accounts/{agent account}/deposits { medium: "balance", amount, transaction_date, status: "completed", description: "Top-up from Capital One Checking ••1234" }` | The checking transfer is **synchronous, before the USDC is credited** (10 s timeout); it is the bank's confirmation. If the deposit then fails, the top-up still counts and the deposit is queued. See the failure rule below. |
+| Agent created with `initialBalance`; mock seed balances at startup | the same two records | queued (startup must not wait on the bank) |
+| x402 payment settled (`spend` receipt → `settled`) or transfer sent | `POST /accounts/{agent account}/purchases { merchant_id, medium: "balance", purchase_date, amount, status: "completed", description: "<receipt description> · paid in USDC" }`. The merchant is the connected service's name when the URL is under one (e.g. "Quantcomm Flood Research"), else the counterparty name; a transfer's merchant is "Transfer to 0x12…ab". | queued |
+| Earning received (agent-work payout) | `POST /accounts/{agent account}/deposits { medium: "balance", transaction_date, amount, status: "completed", description: "Earned · <description>" }` | queued |
 | Blocked, denied, pending, failed | none | never reaches the bank |
 
 **Top-up failure.** If the bank fails, nothing is credited:
-- `409 bank_insufficient_funds` when `GET /accounts/{checking}` shows a balance below the amount. Message: "Your Capital One checking has $X.XX, not enough to add $Y.YY."
+- `409 bank_insufficient_funds` when checking's computed balance is below the amount. Message: "Your Capital One checking has $X.XX, not enough to add $Y.YY."
 - `502 bank_unavailable` otherwise. Message: "Capital One didn't confirm the transfer, so nothing was added."
 
 **Queue.** Persisted in `bank.json`, processed one job at a time, at least 150 ms between Nessie
@@ -721,8 +726,8 @@ anything under $0.01 is skipped. Each mirrored receipt carries `bank` (shared ty
 postedAt?, error? }`. The wallet emits `bank.posted` / `bank.failed` with `{ receipt }`, and the
 `topup` receipt is created already `posted`, with `ref` set to the transfer id. An owner top-up emits
 only `topup` (no `bank.posted`). `account` is `""` while the agent's account is still being opened.
-If the bank moved money but the USDC credit then fails, the wallet reverses it with a transfer from
-the agent's account back to checking ("Allowance top-up reversed · <agent>").
+If the bank moved money but the USDC credit then fails, the wallet reverses it: a transfer on the
+agent's account ("Allowance top-up reversed · <agent>") plus a deposit on checking.
 
 Known gap: Nessie has no idempotency keys. A write that Nessie commits but whose response is lost
 shows on the statement without a `receiptId` (top-up), or can post twice when a queued job retries.
@@ -747,11 +752,11 @@ Owner (`X-Owner-Key`):
 nickname, last4, balance }, accounts: [{ agentId, agentName, id, nickname, last4, balance }], queue:
 { pending, failed }, error?, updatedAt }`.
 - `enabled: false` when there is no key.
-- Balances are read live with `GET /accounts/{id}` and cached for 10 s.
+- Balances are computed from each account's Nessie transactions (§16.1) and cached for 10 s.
 - If Nessie can't be reached, `/v1/bank` returns the last known balances plus `error`.
 
 `/v1/bank/statement`:
-- Built from Nessie's own lists: `GET /accounts/{id}/purchases`, `/transfers?type=payee`, `/transfers?type=payer` (reversals, as `transfer_out`), `/deposits`; for checking (no `agentId`), `/transfers?type=payer` and `type=payee`.
+- Built from Nessie's own lists (`GET /accounts/{id}/purchases`, `/transfers?type=payer`, `/deposits`, `/withdrawals`). Agent account: a deposit whose description starts with "Top-up from" is `transfer_in`, other deposits `deposit`, purchases `purchase`, transfers `transfer_out` (reversals). Checking (no `agentId`): transfers `transfer_out`, deposits `transfer_in`.
 - `limit` 1–200 (default 50). Errors: `409 bank_not_enabled` (also on link and retry), `409 bank_not_linked`, `404 agent_not_found`, `404 bank_account_not_found` ("<name> has no Capital One account yet; it opens the first time money moves."), `502 bank_unavailable`.
 - `status` is Nessie's own status.
 - `receiptId` is matched through the stored refs.
