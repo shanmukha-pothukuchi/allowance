@@ -1,4 +1,4 @@
-import { describeEvent, isServiceApproval, isSoftBlock, money, relativeTime, serviceOfEvent, shortHex } from "../format";
+import { describeEvent, isServiceApproval, isShopifyGrant, isSoftBlock, money, relativeTime, serviceOfEvent, shortHex } from "../format";
 import { connectedByLabel } from "../services";
 import type { ConnectedService, EventType, WalletEvent } from "../types";
 import { AgentAvatar, ServiceTile } from "./Avatar";
@@ -126,7 +126,7 @@ export function ActivityFeed({ events, pendingIds, busyApprovals, showDetails, n
                   </div>
                 )}
               </div>
-              {svc && <ServiceTile name={svc.name} color={svc.color} size="md" title={svc.name} />}
+              {svc && <ServiceTile name={svc.name} color={svc.color} size="md" title={svc.name} shopify={isShopifyGrant(svc)} />}
             </li>
           );
         })}

@@ -2,11 +2,12 @@
 import { useEffect, useRef } from "react";
 import { relativeTime } from "../format";
 import { CATEGORIES, connectedByLabel, priceCapLabel, requestsFor, type CatalogEntry } from "../services";
+import { capLabel, modeExplain, modeLabel, shopifyRefOf } from "../shopify";
 import { serviceKey, type DashboardState } from "../state";
 import type { WalletActions } from "../useWallet";
 import { ApprovalCard } from "./ApprovalCard";
 import { AgentAvatar, ServiceTile } from "./Avatar";
-import { Close, Warn } from "./Icons";
+import { Close, ExternalLink, ShoppingBag, Warn } from "./Icons";
 import { Switch } from "./Switch";
 
 interface Props {
@@ -25,9 +26,12 @@ export function ServiceSheet({ entry, state, actions, now, onClose }: Props) {
   const requests = requestsFor(state.approvals, s.id);
   const docs = s.docs || state.serviceDocs[s.id];
   const category = CATEGORIES.find((c) => c.id === s.category)?.label ?? s.category;
+  const shop = shopifyRefOf(s);
+  // A store an agent asked for that is not in the directory yet: nothing to switch on until approved.
+  const notListed = !!entry.proposal && !entry.custom;
 
   useEffect(() => {
-    if (!s.docs && state.serviceDocs[s.id] === undefined && !entry.custom) void actions.loadServiceDocs(s.id);
+    if (!s.docs && state.serviceDocs[s.id] === undefined && !entry.custom && !entry.proposal) void actions.loadServiceDocs(s.id);
   }, [s.id]);
 
   useEffect(() => {
@@ -42,12 +46,24 @@ export function ServiceSheet({ entry, state, actions, now, onClose }: Props) {
       <div className="sheet-backdrop" onClick={onClose} aria-hidden />
       <aside className={`sheet${entry.custom ? " sheet-custom" : ""}`} role="dialog" aria-modal="true" aria-label={s.name}>
         <header className="sheet-head">
-          <ServiceTile name={s.name} color={s.color} size="xl" />
+          <ServiceTile name={s.name} color={s.color} size="xl" shopify={!!shop} />
           <div className="sheet-title">
             <h2>{s.name}</h2>
-            <p className="muted">
-              {entry.custom ? s.provider : `by ${s.provider}`} · {category} · {KIND_LABEL[s.kind] ?? s.kind}
-            </p>
+            {shop ? (
+              <>
+                <p className="muted sheet-shop-sub">
+                  <span>
+                    <ShoppingBag width={15} height={15} /> Shopify store
+                  </span>
+                  <span>· {modeLabel(shop.mode)}</span>
+                </p>
+                <p className="muted sheet-shop-domain">{shop.domain}</p>
+              </>
+            ) : (
+              <p className="muted">
+                {entry.custom ? s.provider : `by ${s.provider}`} · {category} · {KIND_LABEL[s.kind] ?? s.kind}
+              </p>
+            )}
           </div>
           <button ref={closeRef} className="icon-btn sheet-close" onClick={onClose} aria-label="Close">
             <Close width={22} height={22} />
@@ -72,20 +88,52 @@ export function ServiceSheet({ entry, state, actions, now, onClose }: Props) {
 
           <p className="sheet-desc">{s.description || s.summary}</p>
 
-          <dl className="sheet-facts">
-            <div>
-              <dt>Pricing</dt>
-              <dd>{s.pricing}</dd>
+          {shop && (
+            <div className={`shop-mode shop-mode-block shop-mode-${shop.mode}`}>
+              <span className={`mode-chip mode-${shop.mode}`}>{modeLabel(shop.mode)}</span>
+              <span className="shop-mode-text">{modeExplain(shop.mode, s.maxPrice)}</span>
             </div>
-            <div>
-              <dt>Price cap</dt>
-              <dd>{priceCapLabel(s.maxPrice)}</dd>
-            </div>
-            <div className="fact-wide">
-              <dt>Pays only under</dt>
-              <dd><code>{s.baseUrl}</code></dd>
-            </div>
-          </dl>
+          )}
+
+          {shop ? (
+            <dl className="sheet-facts">
+              <div>
+                <dt>Pricing</dt>
+                <dd>{s.pricing}</dd>
+              </div>
+              <div>
+                <dt>Per-order cap</dt>
+                <dd>{capLabel(shop.mode, s.maxPrice)}</dd>
+              </div>
+              <div className="fact-wide">
+                <dt>Store</dt>
+                <dd>
+                  <a className="shop-link" href={`https://${shop.domain}`} target="_blank" rel="noopener noreferrer">
+                    {shop.domain} <ExternalLink width={14} height={14} />
+                  </a>
+                </dd>
+              </div>
+              <div className="fact-wide">
+                <dt>{shop.mode === "handoff" ? "Agents browse under" : "Pays only under"}</dt>
+                <dd><code>{s.baseUrl}</code></dd>
+              </div>
+            </dl>
+          ) : (
+            <dl className="sheet-facts">
+              <div>
+                <dt>Pricing</dt>
+                <dd>{s.pricing}</dd>
+              </div>
+              <div>
+                <dt>Price cap</dt>
+                <dd>{priceCapLabel(s.maxPrice)}</dd>
+              </div>
+              <div className="fact-wide">
+                <dt>Pays only under</dt>
+                <dd><code>{s.baseUrl}</code></dd>
+              </div>
+            </dl>
+          )}
 
           {s.permissions.length > 0 && (
             <section className="sheet-section">
@@ -102,6 +150,8 @@ export function ServiceSheet({ entry, state, actions, now, onClose }: Props) {
             <h3>Agents</h3>
             {entry.builtIn ? (
               <p className="muted">Every agent always has the directory. It cannot spend money.</p>
+            ) : notListed ? (
+              <p className="muted">Not in your services yet. Approve {entry.proposedBy.map((a) => a.name).join(", ") || "the agent"}'s request above to add it and connect it.</p>
             ) : (
               <ul className="switch-list">
                 {(entry.custom ? entry.connections.map((c) => c.agent) : state.agents).map((agent) => {
@@ -138,7 +188,7 @@ export function ServiceSheet({ entry, state, actions, now, onClose }: Props) {
 
           <details className="docs">
             <summary>Usage docs <span className="muted">(what the agent reads before calling it)</span></summary>
-            {docs ? <pre>{docs}</pre> : <p className="muted">{state.serviceDocs[s.id] === undefined && !entry.custom ? "Loading…" : "No docs."}</p>}
+            {docs ? <pre>{docs}</pre> : <p className="muted">{state.serviceDocs[s.id] === undefined && !entry.custom && !entry.proposal ? "Loading…" : notListed ? "Written when the store is added." : "No docs."}</p>}
           </details>
         </div>
       </aside>

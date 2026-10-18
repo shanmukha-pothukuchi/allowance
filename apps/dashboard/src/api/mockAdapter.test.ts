@@ -196,10 +196,10 @@ describe("mockAdapter", () => {
       await check;
     };
 
-    it("serves the six directory services of §13.1, without docs in the list, with docs by id", async () => {
+    it("serves the six directory services of §13.1 plus the owner's Shopify store, without docs in the list, with docs by id", async () => {
       const m = createMockAdapter({ seed: 1, latencyMs: 0 });
       const list = await flush(m.getDirectory());
-      expect(list.map((s) => s.id)).toEqual(["directory", "acme-weather", "acme-news", "acme-stocks", "acme-pizza", "acme-bounties"]);
+      expect(list.map((s) => s.id)).toEqual(["directory", "acme-weather", "acme-news", "acme-stocks", "acme-pizza", "acme-bounties", "shopify-crypto-app-test"]);
       expect(list.every((s) => s.docs === undefined)).toBe(true);
       expect(list.find((s) => s.id === "acme-pizza")!.maxPrice).toBe("18.50");
       expect(list.find((s) => s.id === "acme-bounties")!.kind).toBe("agent-work");
@@ -420,6 +420,106 @@ describe("mockAdapter", () => {
       for (let i = 0; i < 13; i++) later.push(...n.tick());
       expect(later.filter((e) => e.type === "agent.created")).toHaveLength(0);
       n.stop();
+    });
+  });
+  describe("Shopify stores (§15)", () => {
+    const flush = async <T>(p: Promise<T>) => {
+      await vi.advanceTimersByTimeAsync(1);
+      return p;
+    };
+    const rejectsWith = async (p: Promise<unknown>, status: number, code: string) => {
+      const check = expect(p).rejects.toMatchObject({ status, code });
+      await vi.advanceTimersByTimeAsync(1);
+      await check;
+    };
+    const fresh = () => createMockAdapter({ seed: 1, latencyMs: 0, previewLatencyMs: 0 });
+
+    it("lists the owner's own store (agent checkout, $100 cap), connected to nobody", async () => {
+      const m = fresh();
+      const store = (await flush(m.getDirectory())).find((s) => s.id === "shopify-crypto-app-test")!;
+      expect(store).toMatchObject({
+        name: "Crypto App Test",
+        provider: "Shopify",
+        color: "#95BF47",
+        category: "shopping",
+        kind: "x402",
+        maxPrice: "100.00",
+        pricing: "Varies by item · up to $100.00 per order",
+        baseUrl: "http://localhost:4070/shops/crypto-app-test",
+        shopify: { handle: "crypto-app-test", domain: "crypto-app-test.myshopify.com", mode: "agent_checkout" },
+        connectedAgents: [],
+      });
+      expect(store.permissions).toEqual(["Browse the store's catalog", "Pay up to $100.00 per order", "Place orders on your behalf"]);
+      expect((await flush(m.getService("shopify-crypto-app-test"))).docs).toMatch(/carts\/<cartId>\/checkout/);
+      m.stop();
+    });
+
+    it("previews stores like the bridge: own store, any other store as browse-only, and the error codes", async () => {
+      const m = fresh();
+      expect(await flush(m.previewShopifyStore("https://crypto-app-test.myshopify.com/products/x"))).toMatchObject({ handle: "crypto-app-test", mode: "agent_checkout", currency: "USD", productCount: 14 });
+      const other = await flush(m.previewShopifyStore("some-other-store.myshopify.com"));
+      expect(other).toMatchObject({ handle: "some-other-store", domain: "some-other-store.myshopify.com", name: "Some Other Store", mode: "handoff", currency: "USD" });
+      expect(await flush(m.previewShopifyStore("some-other-store.myshopify.com"))).toEqual(other); // deterministic
+      await rejectsWith(m.previewShopifyStore("not a url"), 400, "invalid_store_url");
+      await rejectsWith(m.previewShopifyStore("nope.myshopify.com"), 404, "store_not_found");
+      await rejectsWith(m.previewShopifyStore("locked.myshopify.com"), 422, "store_unsupported");
+      await rejectsWith(m.previewShopifyStore("euro-shop.myshopify.com"), 422, "store_unsupported");
+      m.stop();
+    });
+
+    it("adds a store, connects the picked agents (by you), and refuses duplicates, bad caps and unknown agents", async () => {
+      const m = fresh();
+      const got: WalletEvent[] = [];
+      m.subscribe((e) => got.push(e));
+      const shopper = (await flush(m.getAgents())).find((a) => a.name === "shopper")!;
+      await rejectsWith(m.addShopifyStore({ url: "crypto-app-test.myshopify.com" }), 409, "service_exists");
+      await rejectsWith(m.addShopifyStore({ url: "https://gift-shop.myshopify.com", maxPrice: "1000.01" }), 400, "invalid_request");
+      await rejectsWith(m.addShopifyStore({ url: "https://gift-shop.myshopify.com", connectTo: ["agt_nope"] }), 404, "agent_not_found");
+      expect((await flush(m.getDirectory())).some((s) => s.id === "shopify-gift-shop")).toBe(false);
+      expect(got).toEqual([]);
+
+      const res = await flush(m.addShopifyStore({ url: "https://gift-shop.myshopify.com", connectTo: [shopper.id] }));
+      expect(res.service).toMatchObject({ id: "shopify-gift-shop", name: "Gift Shop", source: "directory", pricing: "Browse only · you pay at Shopify checkout", shopify: { mode: "handoff" } });
+      expect(res.service.permissions).toEqual(["Browse the store's catalog", "Build carts for you to check out"]);
+      expect(res.agents!.map((a) => a.name)).toEqual(["shopper"]);
+      expect(got.map((e) => [e.type, e.agentName, e.message])).toEqual([["service.connected", "shopper", "Gift Shop connected to shopper."]]);
+      const after = (await flush(m.getAgents())).find((a) => a.id === shopper.id)!;
+      expect(after.services.map((s) => [s.id, s.connectedBy, s.shopify?.domain])).toEqual([["shopify-gift-shop", "owner", "gift-shop.myshopify.com"]]);
+      expect((await flush(m.getDirectory())).at(-1)!.id).toBe("shopify-gift-shop");
+      m.stop();
+    });
+
+    it("the opening ends with shopper asking to add Juniper Goods (not in the directory, browse only)", () => {
+      const m = createMockAdapter({ seed: 3 });
+      const got: WalletEvent[] = [];
+      for (let i = 0; i < 14; i++) got.push(...m.tick());
+      const req = got.at(-1)!;
+      expect(req.type).toBe("service.requested");
+      expect(req.message).toBe("shopper wants to add the Shopify store Juniper Goods (juniper-goods.myshopify.com).");
+      expect(req.approval).toMatchObject({
+        id: "apr_demo_shopify",
+        kind: "service",
+        agentName: "shopper",
+        status: "pending",
+        service: { id: "shopify-juniper-goods", source: "agent", category: "shopping", shopify: { domain: "juniper-goods.myshopify.com", mode: "handoff" } },
+      });
+      expect(req.approval!.reason).toMatch(/candle/);
+      m.stop();
+    });
+
+    it("approving the proposed store adds it to the directory and connects that entry to shopper", async () => {
+      const m = createMockAdapter({ seed: 3, latencyMs: 0 });
+      const got: WalletEvent[] = [];
+      m.subscribe((e) => got.push(e));
+      expect(await flush(m.getApproval("apr_demo_shopify"))).toMatchObject({ status: "pending" }); // the embed fast-forwards
+      expect((await flush(m.getDirectory())).some((s) => s.id === "shopify-juniper-goods")).toBe(false);
+      await flush(m.approve("apr_demo_shopify"));
+      expect(got.slice(-2).map((e) => e.type)).toEqual(["approval.approved", "service.connected"]);
+      const listed = (await flush(m.getDirectory())).find((s) => s.id === "shopify-juniper-goods")!;
+      expect(listed).toMatchObject({ source: "directory", shopify: { mode: "handoff" } });
+      const shopper = (await flush(m.getAgents())).find((a) => a.name === "shopper")!;
+      expect(shopper.services.find((s) => s.id === "shopify-juniper-goods")).toMatchObject({ connectedBy: "approval", source: "directory", shopify: { domain: "juniper-goods.myshopify.com" } });
+      m.stop();
     });
   });
 });

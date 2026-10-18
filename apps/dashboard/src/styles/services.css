@@ -375,8 +375,10 @@
   font-size: 0.85rem;
 }
 .svc-summary {
-  flex: 1;
+  /* not flex: 1, which stretches the clamped box and shows a third line in tall cards */
+  flex: none;
   margin-top: 4px;
+  margin-bottom: 12px;
   color: var(--text-2);
   font-size: 0.92rem;
   line-height: 1.4;
@@ -390,7 +392,7 @@
   justify-content: space-between;
   align-items: center;
   gap: 10px;
-  margin-top: 12px;
+  margin-top: auto;
   padding-top: 12px;
   border-top: 1px solid var(--border);
   min-height: 42px;
@@ -675,4 +677,288 @@ html.embed {
   gap: 6px;
   font-size: 0.72rem;
   color: var(--muted);
+}
+
+/* ---------- Shopify stores (§15.5) ---------- */
+/* The tile: a white bag on solid Shopify green, same as the chat. */
+.svc-tile-shopify {
+  background: var(--tile);
+  color: #fff;
+}
+.svc-tile-bag {
+  width: 54%;
+  height: 54%;
+  stroke-width: 2;
+}
+.badge-shopify {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: color-mix(in srgb, #95bf47 18%, var(--surface));
+  color: color-mix(in srgb, #5e8e3e 70%, var(--text));
+}
+.mode-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+  flex: none;
+}
+.mode-agent_checkout {
+  background: var(--in-dim);
+  color: var(--in);
+}
+.mode-handoff {
+  background: var(--surface-3);
+  color: var(--text-2);
+}
+.shop-mode {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.shop-mode-text {
+  font-size: 0.92rem;
+  line-height: 1.4;
+  color: var(--text-2);
+}
+.shop-mode-block {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.shop-domain,
+.sheet-shop-sub {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  overflow-wrap: anywhere;
+}
+.shop-domain svg,
+.sheet-shop-sub svg {
+  flex: none;
+}
+.sheet-shop-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 6px;
+}
+.sheet-shop-domain {
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+.sheet-shop-sub > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.shop-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 0.88rem;
+  color: var(--text-2);
+  line-height: 1.4;
+}
+.shop-note svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--muted);
+}
+.shop-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent);
+  text-decoration: none;
+}
+.shop-link:hover {
+  text-decoration: underline;
+}
+
+/* gallery header + the "Add a Shopify store" card */
+.services-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.btn-shopify {
+  height: 48px;
+  padding: 0 18px;
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.btn-shopify svg {
+  color: #5e8e3e;
+}
+.svc-card-add {
+  border: 1.5px dashed var(--border-strong);
+  background: transparent;
+  box-shadow: none;
+}
+.svc-card-add:hover {
+  border-color: #95bf47;
+  background: color-mix(in srgb, #95bf47 6%, transparent);
+}
+.svc-add-plus {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text-2);
+}
+.svc-card-add .svc-price {
+  color: var(--text-2);
+}
+
+/* the add sheet */
+.shop-link-input {
+  font-size: 1.05rem;
+}
+.shop-preview-slot:empty {
+  display: none;
+}
+.shop-checking {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-2);
+  font-size: 0.95rem;
+  padding: 4px 2px;
+}
+.spinner {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-top-color: currentColor;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.shop-error {
+  padding: 2px 2px 0;
+}
+.shop-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  animation: popIn 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.shop-preview-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+.shop-preview-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.3;
+}
+.shop-preview-text .muted {
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+.shop-preview-name {
+  font-size: 1.15rem;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+.shop-exists {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.shop-exists span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 650;
+  color: var(--in);
+}
+
+@media (max-width: 760px) {
+  .services-view {
+    padding: 14px 16px 0;
+  }
+  .services-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .services-actions {
+    flex-wrap: wrap;
+  }
+  .services-actions .search {
+    width: auto;
+    flex: 1 1 220px;
+  }
+  .btn-shopify {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+}
+/* the service detail sheet at phone width (the owner sheets have their own rules in sheets.css) */
+@media (max-width: 560px) {
+  .sheet:not(.osheet) {
+    left: 0;
+    width: auto;
+  }
+  .sheet:not(.osheet) .sheet-head {
+    padding: 16px 16px 14px;
+    gap: 12px;
+  }
+  .sheet:not(.osheet) .sheet-head .svc-tile-xl {
+    --size: 52px;
+  }
+  .sheet:not(.osheet) .sheet-title h2 {
+    font-size: 1.35rem;
+  }
+  .sheet:not(.osheet) .sheet-body {
+    padding: 16px 16px 28px;
+  }
+  .sheet-facts {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 480px) {
+  .shop-preview-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .shop-preview-row .mode-chip {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 2s;
+  }
+  .shop-preview {
+    animation: none;
+  }
 }

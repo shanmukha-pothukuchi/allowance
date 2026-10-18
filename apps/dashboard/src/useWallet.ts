@@ -6,8 +6,9 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { mockRequested, type WalletAdapter } from "./api/adapter";
 import { createHttpAdapter, walletServiceReachable } from "./api/httpAdapter";
 import { createMockAdapter, mockChainMode } from "./api/mockAdapter";
+import { serviceIdOfEvent } from "./format";
 import { initialState, reducer, refreshesSummary, serviceKey, type DashboardState } from "./state";
-import type { ConnectionStatus, WalletEvent } from "./types";
+import type { ConnectionStatus, DirectoryService, WalletEvent } from "./types";
 
 export interface WalletActions {
   approve(id: string): Promise<void>;
@@ -20,6 +21,8 @@ export interface WalletActions {
   /** Fetch usage docs for the detail sheet (once per service). */
   loadServiceDocs(serviceId: string): Promise<void>;
   reloadDirectory(): Promise<void>;
+  /** The owner added a service (a Shopify store): show it now, then reload the directory and balances. */
+  serviceAdded(service: DirectoryService): void;
   /** Refetch the summary soon (after a sheet created an agent or added money). */
   refresh(): void;
   toggleDetails(): void;
@@ -34,6 +37,11 @@ export function useWallet(): { state: DashboardState; actions: WalletActions; ad
   const [adapter, setAdapter] = useState<WalletAdapter | null>(null);
   const summaryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const docsRequested = useRef(new Set<string>());
+  // Directory ids we know, so a connection to a new entry (an approved Shopify store) reloads it.
+  const knownIds = useRef(new Set<string>());
+  useEffect(() => {
+    knownIds.current = new Set(state.directory.map((s) => s.id));
+  }, [state.directory]);
 
   const refetchSummary = useCallback(() => {
     clearTimeout(summaryTimer.current);
@@ -103,6 +111,12 @@ export function useWallet(): { state: DashboardState; actions: WalletActions; ad
       const onEvent = (e: WalletEvent) => {
         dispatch({ type: "event", event: e });
         if (refreshesSummary(e.type)) refetchSummary();
+        // §15.3: approving an agent's Shopify store adds it to the directory first.
+        const sid = e.type === "service.connected" ? serviceIdOfEvent(e) : undefined;
+        if (sid && knownIds.current.size && !knownIds.current.has(sid)) {
+          knownIds.current.add(sid);
+          void loadDirectory(adapter);
+        }
       };
       const onStatus = (s: ConnectionStatus) => {
         if (adapter.kind === "mock") return; // stays "demo"
@@ -165,6 +179,12 @@ export function useWallet(): { state: DashboardState; actions: WalletActions; ad
       if (adapterRef.current) await loadDirectory(adapterRef.current);
     },
     refresh: () => refetchSummary(),
+    serviceAdded: (service) => {
+      dispatch({ type: "directoryUpsert", service });
+      knownIds.current.add(service.id);
+      if (adapterRef.current) void loadDirectory(adapterRef.current);
+      refetchSummary();
+    },
     toggleDetails: () => dispatch({ type: "toggleDetails" }),
   };
 

@@ -1,3 +1,4 @@
+import { unwrapAdded, unwrapStore } from "../shopify";
 import type { AgentPublic, Approval, CreateAgentResponse, DirectoryService, Receipt, SummaryResponse, WalletEvent } from "../types";
 import { EVENT_TYPES } from "../types";
 import { HttpError, type WalletAdapter } from "./adapter";
@@ -72,6 +73,11 @@ export function createHttpAdapter(): WalletAdapter {
     connectService: async (agentId, serviceId) => (await post<{ agent: AgentPublic }>(`/v1/agents/${enc(agentId)}/services`, { serviceId })).agent,
     disconnectService: async (agentId, serviceId) =>
       (await req<{ agent: AgentPublic }>(`/v1/agents/${enc(agentId)}/services/${enc(serviceId)}`, { method: "DELETE" })).agent,
+    previewShopifyStore: async (url) => unwrapStore(await req<unknown>(`/v1/directory/shopify/preview?url=${enc(url)}`)),
+    addShopifyStore: async (body) => {
+      const out = unwrapAdded(await post<unknown>("/v1/directory/shopify", body));
+      return { service: out.service, ...(out.agents ? { agents: out.agents as AgentPublic[] } : {}) };
+    },
     subscribe(onEvent, onStatus) {
       // EventSource reconnects on its own; we only surface the status. Named events
       // (`event: payment.signed`) do not fire `onmessage`, so listen to each type.

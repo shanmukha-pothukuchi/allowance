@@ -70,3 +70,10 @@ export const Chevron = (p: SVGProps<SVGSVGElement>) => (
 export const Lock = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p}><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>
 );
+/** Shopify stores (§15): a shopping bag, drawn on Shopify green by `ServiceTile shopify`. */
+export const ShoppingBag = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}><path d="M5 8h14l-1.2 12.1a1 1 0 0 1-1 .9H7.2a1 1 0 0 1-1-.9L5 8Z" /><path d="M9 8V6.5a3 3 0 0 1 6 0V8" /></svg>
+);
+export const ExternalLink = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}><path d="M14 4h6v6M20 4l-9 9" /><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></svg>
+);

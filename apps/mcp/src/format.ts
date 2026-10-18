@@ -90,10 +90,24 @@ export interface ServiceLike {
   icon?: string;
   summary?: string;
   pricing?: string;
+  /** Shopify stores only (ARCHITECTURE §15). */
+  shopify?: { domain: string; mode: string };
 }
 
-/** "- 🌤️ Acme Weather (acme-weather): Current weather for any city · $0.05 per call" */
+/** "- 🌤️ Acme Weather (acme-weather): Current weather for any city · $0.05 per call" (+ " · Shopify store x.myshopify.com, agent checkout") */
 export function serviceLine(s: ServiceLike): string {
   const summary = (s.summary ?? "").replace(/\s+/g, " ").trim();
-  return `- ${s.icon ? `${s.icon} ` : ""}${s.name} (${s.id})${summary ? `: ${summary}` : ""}${s.pricing ? ` · ${s.pricing}` : ""}`;
+  return `- ${s.icon ? `${s.icon} ` : ""}${s.name} (${s.id})${summary ? `: ${summary}` : ""}${s.pricing ? ` · ${s.pricing}` : ""}${s.shopify ? ` · ${shopifyTag(s.shopify)}` : ""}`;
+}
+
+/** "Shopify store crypto-app-test.myshopify.com, agent checkout" / "…, browse only" */
+export function shopifyTag(shop: { domain: string; mode: string }): string {
+  return `Shopify store ${shop.domain}, ${shop.mode === "agent_checkout" ? "agent checkout" : "browse only"}`;
+}
+
+/** What the mode means for the agent, one sentence. */
+export function shopifyModeLine(shop: { mode: string }, maxPrice?: string): string {
+  return shop.mode === "agent_checkout"
+    ? `Agent checkout: you pay orders in USDC from your wallet${maxPrice ? ` (up to ${usd(maxPrice)} per order)` : ""} and the store gets a real, paid order.`
+    : "Browse only: you can search and build a cart, but you cannot pay here. Give the user the cart's checkout link to finish at Shopify.";
 }

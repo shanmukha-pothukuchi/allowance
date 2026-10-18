@@ -5,7 +5,19 @@
  * The mock is used only on explicit request (?mock=1 in the URL or VITE_MOCK=1); otherwise HTTP,
  * and an unreachable wallet-service shows "offline" (never a silent fallback, §12).
  */
-import type { AgentPublic, Approval, ConnectionStatus, CreateAgentRequest, CreateAgentResponse, DirectoryService, Receipt, SummaryResponse, WalletEvent } from "../types";
+import type {
+  AddShopifyStoreRequest,
+  AgentPublic,
+  Approval,
+  ConnectionStatus,
+  CreateAgentRequest,
+  CreateAgentResponse,
+  DirectoryService,
+  Receipt,
+  ShopifyStore,
+  SummaryResponse,
+  WalletEvent,
+} from "../types";
 
 /** A failed wallet call: HTTP status plus the contract's `error` code (both adapters throw these). */
 export class HttpError extends Error {
@@ -42,6 +54,10 @@ export interface WalletAdapter {
   /** Owner connects a directory service to an agent directly (`connectedBy: "owner"`). */
   connectService(agentId: string, serviceId: string): Promise<AgentPublic>;
   disconnectService(agentId: string, serviceId: string): Promise<AgentPublic>;
+  /** `GET /v1/directory/shopify/preview?url=` (§15.3): what the bridge sees at that link. No side effects. */
+  previewShopifyStore(url: string): Promise<ShopifyStore>;
+  /** `POST /v1/directory/shopify` (§15.3): add the store to the directory, optionally connecting agents. */
+  addShopifyStore(req: AddShopifyStoreRequest): Promise<{ service: DirectoryService; agents?: AgentPublic[] }>;
   /** Live events. Returns an unsubscribe function. `onStatus` reports stream health. */
   subscribe(onEvent: (e: WalletEvent) => void, onStatus?: (s: ConnectionStatus) => void): () => void;
 }

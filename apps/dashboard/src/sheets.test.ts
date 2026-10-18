@@ -158,6 +158,13 @@ describe("sheet URLs", () => {
     expect(embedSheet("?sheet=new-agent")).toBeNull(); // the dashboard opens it as a sheet instead
   });
 
+  it("opens Add a Shopify store on the dashboard only, never as a chat embed", () => {
+    expect(sheetFromSearch("?mock=1&sheet=add-shopify")).toEqual({ sheet: "add-shopify" });
+    expect(embedSheet("?sheet=add-shopify&embed=1")).toBeNull();
+    expect(withSheet("?mock=1", { sheet: "add-shopify" })).toBe("?mock=1&sheet=add-shopify");
+    expect(withSheet("?mock=1&sheet=add-shopify", null)).toBe("?mock=1");
+  });
+
   it("sets and clears the sheet params, keeping the others", () => {
     expect(withSheet("?mock=1", { sheet: "add-money", agent: "shopper" })).toBe("?mock=1&sheet=add-money&agent=shopper");
     expect(withSheet("?mock=1&sheet=add-money&agent=shopper", null)).toBe("?mock=1");

@@ -20,9 +20,12 @@ import type {
   ServiceManifest,
   ServiceRequest,
   ServiceRequestResponse,
+  ShopifyStore,
   TransferRequest,
   TransferResponse,
 } from "@allowance/shared";
+// Relative on purpose (like the agents' seeds): Shopify manifests built exactly as the directory builds them.
+import { shopifyManifest } from "../../directory/src/shopify.js";
 
 const USDC = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 const NETWORK = "eip155:84532" as const;
@@ -62,7 +65,16 @@ export interface StubApproval {
   docs?: string;
   /** Service approvals only: the connection made on approval. */
   connected?: ConnectedService;
+  /** Shopify only: a store the agent found; approving adds this manifest to the stub directory. */
+  newShopify?: ServiceManifest;
 }
+
+/** Stores the stub "bridge" can discover (ARCHITECTURE §15.1). None is in the directory until added. */
+export const STUB_SHOPIFY_STORES: ShopifyStore[] = [
+  { handle: "crypto-app-test", domain: "crypto-app-test.myshopify.com", mode: "agent_checkout", name: "Crypto App Test", currency: "USD", productCount: 3 },
+  { handle: "cool-socks", domain: "cool-socks.myshopify.com", mode: "handoff", name: "Cool Socks", currency: "USD", productCount: 40 },
+  { handle: "euro-shop", domain: "euro-shop.myshopify.com", mode: "handoff", name: "Euro Shop", currency: "EUR" },
+];
 
 /**
  * The stub directory: the directory itself plus three services on the merchant stub.
@@ -144,8 +156,8 @@ export function stubDirectory(merchantUrl: string, walletUrl = ""): ServiceManif
 }
 
 function toGrant(m: ServiceManifest): ServiceGrant {
-  const { id, name, provider, icon, color, kind, summary, baseUrl, pricing, maxPrice, permissions, source } = m;
-  return { id, name, provider, icon, color, kind, summary, baseUrl, pricing, maxPrice, permissions, source };
+  const { id, name, provider, icon, color, kind, summary, baseUrl, pricing, maxPrice, permissions, source, shopify } = m;
+  return { id, name, provider, icon, color, kind, summary, baseUrl, pricing, maxPrice, permissions, source, ...(shopify ? { shopify } : {}) };
 }
 
 /** Path-boundary prefix match, like the real wallet's connected-service check. */
@@ -177,6 +189,12 @@ export interface WalletStub {
   /** Agents by token. The default `token` is "claude-desktop". */
   agents: Map<string, StubAgent>;
   serviceRequests: ServiceRequest[];
+  /** Shopify stores discovery can find (by handle). Defaults to STUB_SHOPIFY_STORES. */
+  shopifyStores: Map<string, ShopifyStore>;
+  /** Directory entries added at runtime (Shopify stores), listed after the built-in ones. */
+  extraServices: ServiceManifest[];
+  /** Add a discoverable Shopify store to the directory (as the owner would), with its cap. */
+  addShopifyStore(handle: string, maxPrice?: string): ServiceManifest | undefined;
   directory(): ServiceManifest[];
   /** Add another agent token with these directory services connected (connectedBy "default"). */
   addToken(name: string, serviceIds?: string[]): string;
@@ -216,7 +234,19 @@ export async function startWalletStub(opts: WalletStubOptions = {}): Promise<Wal
     merchantUrl: opts.merchantUrl ?? "",
     agents: new Map(),
     serviceRequests: [],
-    directory: () => stubDirectory(stub.merchantUrl, stub.url),
+    shopifyStores: new Map(STUB_SHOPIFY_STORES.map((x) => [x.handle, x])),
+    extraServices: [],
+    addShopifyStore(handle, maxPrice) {
+      const store = stub.shopifyStores.get(handle);
+      if (!store) return undefined;
+      const existing = stub.extraServices.find((m) => m.id === `shopify-${handle}`);
+      if (existing) return existing;
+      // The merchant stub plays the bridge: its /shops/<handle>/… routes serve products, carts and checkout.
+      const m = shopifyManifest(store, { bridgeUrl: stub.merchantUrl, maxPrice });
+      stub.extraServices.push(m);
+      return m;
+    },
+    directory: () => [...stubDirectory(stub.merchantUrl, stub.url), ...stub.extraServices],
     addToken(name, serviceIds = []) {
       const t = `aw_${(++tokenSeq).toString(16).padStart(4, "0")}${"cd".repeat(22)}`;
       stub.agents.set(t, { id: `agt_${name}`, name, services: [] });
@@ -239,8 +269,11 @@ export async function startWalletStub(opts: WalletStubOptions = {}): Promise<Wal
       a.status = "approved";
       if (a.kind === "service") {
         const agent = a.token ? stub.agents.get(a.token) : undefined;
+        // A store the agent found joins the directory first; the connection then comes from there.
+        if (a.newShopify && !stub.extraServices.some((m) => m.id === a.newShopify!.id)) stub.extraServices.push(a.newShopify);
         if (agent && a.service) {
-          const c: ConnectedService = { ...a.service, connectedAt: new Date().toISOString(), connectedBy: "approval", ...(a.docs ? { docs: a.docs } : {}) };
+          const grant: ServiceGrant = a.newShopify ? { ...a.service, source: "directory" } : a.service;
+          const c: ConnectedService = { ...grant, connectedAt: new Date().toISOString(), connectedBy: "approval", ...(a.docs ? { docs: a.docs } : {}) };
           agent.services = [...agent.services.filter((x) => x.id !== c.id), c];
           a.connected = c;
         }
@@ -405,9 +438,11 @@ export async function startWalletStub(opts: WalletStubOptions = {}): Promise<Wal
     }
     let out: ApprovalWaitResponse;
     const kind = a.kind === "service" ? "service" : "payment";
-    if (a.status === "pending") out = { status: "pending", approvalId: id, kind };
-    else if (a.status === "denied") out = kind === "service" ? { status: "denied", approvalId: id, kind } : { status: "denied", approvalId: id, kind, receipt: a.receipt };
-    else if (a.status === "expired") out = { status: "expired", approvalId: id, kind };
+    // Like the wallet: service approvals carry the grant in every state.
+    const svc = kind === "service" && a.service ? { service: a.service } : {};
+    if (a.status === "pending") out = { status: "pending", approvalId: id, kind, ...svc };
+    else if (a.status === "denied") out = kind === "service" ? { status: "denied", approvalId: id, kind, ...svc } : { status: "denied", approvalId: id, kind, receipt: a.receipt };
+    else if (a.status === "expired") out = { status: "expired", approvalId: id, kind, ...svc };
     else if (kind === "service") out = { status: "approved", approvalId: id, kind, paymentId: "", service: a.connected };
     else out = { status: "approved", approvalId: id, kind, paymentId: a.paymentId, paymentHeader: a.paymentHeader || undefined, receipt: a.receipt };
     res.json(out);
@@ -447,7 +482,36 @@ export async function startWalletStub(opts: WalletStubOptions = {}): Promise<Wal
     stub.serviceRequests.push(body);
     const agent = agentOf(res);
     let grant: ServiceGrant;
-    if (body.serviceId) {
+    let newShopify: ServiceManifest | undefined;
+    if (body.shopifyStoreUrl) {
+      // ARCHITECTURE §15.3: discover via the bridge; listed → normal request; otherwise ask to add it.
+      const host = (() => {
+        try {
+          const raw = String(body.shopifyStoreUrl).trim().toLowerCase();
+          return new URL(/^[a-z]+:\/\//.test(raw) ? raw : `https://${raw}`).hostname;
+        } catch {
+          return "";
+        }
+      })();
+      const handle = /^([a-z0-9][a-z0-9-]*)\.myshopify\.com$/.exec(host)?.[1];
+      if (!handle) return void res.status(400).json({ error: "invalid_store_url", message: "That is not a Shopify store link" });
+      const store = stub.shopifyStores.get(handle);
+      if (!store) return void res.status(404).json({ error: "store_not_found", message: `No Shopify store at ${handle}.myshopify.com` });
+      if (store.currency !== "USD") return void res.status(422).json({ error: "store_unsupported", message: `${store.name} prices in ${store.currency}; only USD stores are supported` });
+      const cap = body.maxPrice ?? "20.00";
+      if (!/^\d+(\.\d{1,2})?$/.test(cap) || Number(cap) > 20) {
+        return void res.status(400).json({ error: "invalid_request", message: `maxPrice $${cap} is over this agent's $20.00 per-payment limit` });
+      }
+      const id = `shopify-${handle}`;
+      const existing = agent.services.find((c) => c.id === id);
+      if (existing) return void res.json({ status: "connected", service: existing } satisfies ServiceRequestResponse);
+      const listed = stub.directory().find((m) => m.id === id);
+      if (listed) grant = toGrant(listed);
+      else {
+        newShopify = shopifyManifest(store, { bridgeUrl: stub.merchantUrl, maxPrice: cap });
+        grant = { ...toGrant(newShopify), source: "agent" };
+      }
+    } else if (body.serviceId) {
       const m = stub.directory().find((s) => s.id === body.serviceId);
       if (!m) return void res.status(404).json({ error: "service_not_found", message: `No service ${body.serviceId} in the directory` });
       if (m.kind === "directory") return void res.status(400).json({ error: "invalid_request", message: "The directory is always available" });
@@ -464,7 +528,7 @@ export async function startWalletStub(opts: WalletStubOptions = {}): Promise<Wal
       return void res.status(400).json({ error: "invalid_request", message: "Give serviceId or custom" });
     }
     const approvalId = nid("apr");
-    stub.approvals.set(approvalId, { status: "pending", kind: "service", paymentId: "", service: grant, token: res.locals.token as string, docs: body.custom?.docs });
+    stub.approvals.set(approvalId, { status: "pending", kind: "service", paymentId: "", service: grant, token: res.locals.token as string, docs: body.custom?.docs, newShopify });
     if (stub.autoApproveAfterMs !== null) setTimeout(() => stub.approve(approvalId), stub.autoApproveAfterMs);
     const out: ServiceRequestResponse = { status: "needs_approval", approvalId, service: grant, message: `${agent.name} wants to connect ${grant.name}.` };
     res.status(202).json(out);
@@ -539,6 +603,53 @@ export async function startMerchantStub(): Promise<MerchantStub> {
   paid("/pizza/order", "8000000", "Pizza Co", (req) => ({ orderId: "ord_1", status: "placed", eta: "25 min", size: req.body?.size ?? "large", simulated: true }));
   paid("/api/expensive", "50000000", "Gold Plated API", () => ({ gold: true }));
   paid("/api/stock", "150000", "Acme Stocks", (req) => ({ symbol: req.query.symbol ?? "ACME", price: 101.5, change: 0.8 }));
+
+  // ---- a tiny Shopify bridge (ARCHITECTURE §15.1) for crypto-app-test: products, carts, paid checkout
+  const sticker = {
+    id: "gid://shopify/Product/1",
+    handle: "agent-sticker",
+    title: "Agent Sticker",
+    description: "A sticker for your laptop.",
+    image: null,
+    url: "https://crypto-app-test.myshopify.com/products/agent-sticker",
+    priceMin: "4.00",
+    priceMax: "4.00",
+    currency: "USD",
+    available: true,
+    variants: [{ id: "gid://shopify/ProductVariant/11", title: "Default Title", price: "4.00", available: true }],
+  };
+  const shopInfo = { name: "Crypto App Test", currency: "USD", mode: "agent_checkout" };
+  app.get("/shops/crypto-app-test/products", (_req, res) => {
+    res.json({ store: shopInfo, products: [sticker] });
+  });
+  app.post("/shops/crypto-app-test/carts", (req, res) => {
+    const lines = (req.body?.lines ?? []) as { variantId: string; quantity: number }[];
+    if (lines.length !== 1 || lines[0].variantId !== sticker.variants[0].id || lines[0].quantity !== 1) {
+      return void res.status(400).json({ error: "invalid_request", message: "This stub sells exactly one Agent Sticker" });
+    }
+    res.status(201).json({
+      cartId: "cart_1",
+      store: shopInfo,
+      lines: [{ variantId: sticker.variants[0].id, title: sticker.title, variantTitle: "Default Title", quantity: 1, unitPrice: "4.00", lineTotal: "4.00", image: null }],
+      subtotal: "4.00",
+      shipping: "0.00",
+      total: "4.00",
+      currency: "USD",
+      expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+      mode: "agent_checkout",
+      checkoutUrl: `${stub.url}/shops/crypto-app-test/carts/cart_1/checkout`,
+    });
+  });
+  paid("/shops/crypto-app-test/carts/cart_1/checkout", "4000000", "Crypto App Test order", () => ({
+    status: "placed",
+    orderId: "gid://shopify/Order/1001",
+    orderName: "#1001",
+    adminUrl: "https://admin.shopify.com/store/crypto-app-test/orders/1001",
+    store: "Crypto App Test",
+    total: "4.00",
+    currency: "USD",
+    items: [{ title: "Agent Sticker", quantity: 1 }],
+  }));
 
   app.get("/free", (_req, res) => {
     res.type("text/plain").send("hello, free world");

@@ -13,14 +13,17 @@ export { AGENT_NAME_RE, MAX_TOPUP };
 
 // ---------------------------------------------------------------------------- routes
 
+/** The sheets the chat can embed (§14.3); their ids ride on the postMessage contract. */
 export type SheetId = "new-agent" | "add-money";
-export type SheetRoute = { sheet: "new-agent" } | { sheet: "add-money"; agent?: string };
+export type EmbedSheetRoute = { sheet: "new-agent" } | { sheet: "add-money"; agent?: string };
+/** Plus "Add a Shopify store" (§15.5), which lives on the dashboard only. */
+export type SheetRoute = EmbedSheetRoute | { sheet: "add-shopify" };
 
-/** `?sheet=new-agent` / `?sheet=add-money&agent=<name>` → the sheet to show, else null. */
+/** `?sheet=new-agent` / `?sheet=add-money&agent=<name>` / `?sheet=add-shopify` → the sheet to show, else null. */
 export function sheetFromSearch(search: string): SheetRoute | null {
   const p = new URLSearchParams(search);
   const sheet = p.get("sheet");
-  if (sheet === "new-agent") return { sheet };
+  if (sheet === "new-agent" || sheet === "add-shopify") return { sheet };
   if (sheet === "add-money") {
     const agent = p.get("agent")?.trim();
     return agent ? { sheet, agent } : { sheet };
@@ -33,9 +36,11 @@ export function embedRequested(search: string): boolean {
   return e === "1" || e === "true";
 }
 
-/** `?sheet=…&embed=1` → the sheet to render alone for the chat, else null. */
-export function embedSheet(search: string): SheetRoute | null {
-  return embedRequested(search) ? sheetFromSearch(search) : null;
+/** `?sheet=…&embed=1` → the sheet to render alone for the chat, else null (add-shopify is dashboard-only). */
+export function embedSheet(search: string): EmbedSheetRoute | null {
+  if (!embedRequested(search)) return null;
+  const r = sheetFromSearch(search);
+  return r && r.sheet !== "add-shopify" ? r : null;
 }
 
 /** The query string with the sheet params set (or removed), keeping everything else (mock, theme). */

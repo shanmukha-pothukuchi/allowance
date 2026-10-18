@@ -37,7 +37,7 @@ if (isMain) {
     groupsFile: resolve(config.dataDir, "agent-chat", "groups.json"),
     tokensFile: resolve(config.dataDir, "agent-tokens.json"),
     corsOrigins: [`http://localhost:${config.dashboardPort}`, `http://127.0.0.1:${config.dashboardPort}`],
-    blockedUrls: [...DEFAULT_BLOCKED_URLS, config.agentChatUrl, `http://localhost:${config.dashboardPort}`],
+    blockedUrls: [...DEFAULT_BLOCKED_URLS, config.agentChatUrl, `http://localhost:${config.dashboardPort}`, `${config.shopifyBridgeUrl}/stores`],
     links: {
       dashboard: `http://localhost:${config.dashboardPort}`,
       board: `${config.merchantUrl}/.well-known/agent-work`,

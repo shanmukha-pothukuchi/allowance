@@ -7,10 +7,10 @@
 import { useLayoutEffect, useRef } from "react";
 import { AddMoneySheet } from "./components/AddMoneySheet";
 import { NewAgentSheet } from "./components/NewAgentSheet";
-import { agentCreatedMessage, chatUrlFrom, moneyAddedMessage, postSheetMessage, sheetCloseMessage, sheetSizeMessage, type SheetRoute } from "./sheets";
+import { agentCreatedMessage, chatUrlFrom, moneyAddedMessage, postSheetMessage, sheetCloseMessage, sheetSizeMessage, type EmbedSheetRoute } from "./sheets";
 import { useStandaloneAdapter } from "./useAdapter";
 
-export function EmbedSheet({ route }: { route: SheetRoute }) {
+export function EmbedSheet({ route }: { route: EmbedSheetRoute }) {
   const chatUrl = chatUrlFrom();
   const { adapter, offline } = useStandaloneAdapter();
   const rootRef = useRef<HTMLDivElement>(null);

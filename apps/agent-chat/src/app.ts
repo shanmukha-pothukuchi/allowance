@@ -33,6 +33,10 @@ export interface ServiceChip {
   name: string;
   icon: string;
   color: string;
+  pricing?: string;
+  maxPrice?: string;
+  /** Shopify stores: domain and mode, so the page needn't infer them from tool text. */
+  shopify?: { handle: string; domain: string; mode: "agent_checkout" | "handoff" };
 }
 
 /** Preview for the conversation list: the last user / assistant / error entry. */
@@ -143,7 +147,15 @@ export function createChatApp(opts: ChatAppOptions): ChatApp {
         const me = (await res.json()) as { agent: WalletView & { address: string; services?: Array<Partial<ServiceChip> & { kind?: string }> }; limits: WalletView["limits"] };
         chips = (Array.isArray(me.agent.services) ? me.agent.services : [])
           .filter((x) => x && x.id && x.kind !== "directory")
-          .map((x) => ({ id: String(x.id), name: x.name ?? String(x.id), icon: x.icon ?? "", color: x.color ?? "" }));
+          .map((x) => ({
+            id: String(x.id),
+            name: x.name ?? String(x.id),
+            icon: x.icon ?? "",
+            color: x.color ?? "",
+            ...(x.pricing ? { pricing: String(x.pricing) } : {}),
+            ...(x.maxPrice ? { maxPrice: String(x.maxPrice) } : {}),
+            ...(x.shopify && typeof x.shopify === "object" ? { shopify: { handle: String(x.shopify.handle), domain: String(x.shopify.domain), mode: x.shopify.mode === "agent_checkout" ? ("agent_checkout" as const) : ("handoff" as const) } } : {}),
+          }));
         view = {
           address: me.agent.address,
           balance: me.agent.balance,

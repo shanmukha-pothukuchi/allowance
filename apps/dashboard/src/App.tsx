@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityFeed } from "./components/ActivityFeed";
 import { AddMoneySheet } from "./components/AddMoneySheet";
+import { AddShopifySheet } from "./components/AddShopifySheet";
 import { AgentCard } from "./components/AgentCard";
 import { ApprovalsPanel } from "./components/ApprovalsPanel";
 import { Plus } from "./components/Icons";
@@ -8,7 +9,7 @@ import { NewAgentSheet } from "./components/NewAgentSheet";
 import { ReceiptsList } from "./components/ReceiptsList";
 import { ServicesView } from "./components/ServicesView";
 import { TopBar } from "./components/TopBar";
-import { useRoute, useSheetRoute } from "./route";
+import { navigate, useRoute, useSheetRoute } from "./route";
 import { chatUrlFrom } from "./sheets";
 import { applyTheme, effectiveTheme, saveTheme, storedTheme, themeFromSearch, type ThemePref } from "./theme";
 import { useNow, useWallet } from "./useWallet";
@@ -50,7 +51,7 @@ export default function App() {
     <div className="app">
       <TopBar state={state} route={route} theme={theme} onToggleTheme={toggleTheme} onToggleDetails={actions.toggleDetails} />
       {route.view === "services" ? (
-        <ServicesView state={state} actions={actions} selectedId={route.serviceId} now={now} />
+        <ServicesView state={state} actions={actions} selectedId={route.serviceId} now={now} onAddShopify={() => setSheet({ sheet: "add-shopify" })} />
       ) : (
         <main className="columns">
           <section className="panel agents">
@@ -102,6 +103,24 @@ export default function App() {
 
       {sheet?.sheet === "new-agent" && (
         <NewAgentSheet adapter={adapter} offline={state.connection === "offline"} embed={false} chatUrl={chatUrl} knownNames={agentNames} onClose={closeSheet} onCreated={actions.refresh} />
+      )}
+      {sheet?.sheet === "add-shopify" && (
+        <AddShopifySheet
+          adapter={adapter}
+          offline={state.connection === "offline"}
+          agents={state.agents}
+          directory={state.directory}
+          onClose={closeSheet}
+          onAdded={(service) => {
+            actions.serviceAdded(service);
+            closeSheet();
+            navigate({ view: "services", serviceId: service.id });
+          }}
+          onOpen={(id) => {
+            closeSheet();
+            navigate({ view: "services", serviceId: id });
+          }}
+        />
       )}
       {sheet?.sheet === "add-money" && (
         <AddMoneySheet adapter={adapter} offline={state.connection === "offline"} embed={false} agentName={sheet.agent} showDetails={state.showDetails} onClose={closeSheet} onAdded={actions.refresh} />

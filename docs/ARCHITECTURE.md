@@ -611,7 +611,17 @@ x402 `payTo` for every store, and a store registry (`DATA_DIR/shopify-stores.jso
 | GET | `/shops/:handle/products/:productHandle` | none | `{ product }` (same shape, full variant list ≤ 50) |
 | POST | `/shops/:handle/carts` | none | `{ lines: [{ variantId, quantity }], email?, shippingAddress? { name, address1, city, province, zip, country } , note? }` → `201 { cartId, store, lines: [{ variantId, title, variantTitle, quantity, unitPrice, lineTotal, image }], subtotal, shipping: "0.00", total, currency, expiresAt, mode, checkoutUrl }` where `checkoutUrl` is `{BRIDGE}/shops/:handle/carts/:cartId/checkout` (agent_checkout) or Shopify's checkout link (handoff). Prices are re-read from Shopify; quantity 1–20, ≤ 20 lines; 30-minute carts kept in memory. |
 | POST | `/shops/:handle/carts/:cartId/checkout` | **x402** | agent_checkout only. Dynamic price = cart total; `payTo` = bridge wallet; resource description "{Shop name} order". After payment verifies, create the Shopify order (`orderCreate`, financial status PAID, a SALE transaction with gateway "Allowance USDC (x402)", note "Paid by an Allowance agent with USDC · tx …", tags `allowance, x402`, `email` if given); only then let the payment settle. → `200 { status: "placed", orderId, orderName, adminUrl, store, total, currency, items, txHash? }`. A cart can be paid once (second call → `409 cart_already_paid` with the order). Handoff stores → `409 agent_checkout_unavailable { handoffUrl }`. If order creation fails → error status so the x402 middleware does **not** settle. |
-| GET | `/health` | none | `{ ok, stores, adminShop, adminConfigured }` |
+| GET | `/health` | none | `{ ok, stores, adminShop, adminConfigured, adminStatus }` |
+
+Implementation notes: orders are created as Shopify **test orders** by default (`SHOPIFY_TEST_ORDERS=false`
+for normal ones), with no customer emails. The x402 middleware verifies before the handler and
+settles only if the handler answered < 400, so a failed `orderCreate` (502 `order_failed`) never
+takes the payment; if settlement fails after the order exists, the order is cancelled. The first
+200 body has no `txHash` (settlement happens after it is built); it is in the `PAYMENT-RESPONSE`
+header, the wallet receipt, the 409 replay and the order note. The checkout precheck answers
+404/409 before the paywall, so an unpayable cart is never charged. Extra codes: `variant_not_found`,
+`variant_unavailable`, `product_not_found`, `cart_not_found`, `checkout_in_progress`,
+`payment_reused`, `order_failed`, `payment_not_settled`, `shopify_unavailable`, `shopify_error`.
 
 ### 15.2 Directory additions
 
@@ -643,6 +653,14 @@ store's name, and `shopify: { handle, domain, mode }`.
 - Payments to `{BRIDGE}/shops/<handle>/…` follow the normal rules: connected-service prefix,
   `service_cap` (order total ≤ the store's cap), approval threshold, daily cap.
 - The bridge's `POST /stores` is owner-only and in the MCP `fetch_url` blocklist.
+
+Implementation notes: browse-only (handoff) stores always get `maxPrice "0.00"`, so nothing can be
+paid through them. The owner add returns `201 { service, created: true, connectedAgents }`, or `200`
+with `created: false` if the store was already listed (`connectTo` still connects). The preview
+returns the bridge's store fields plus `serviceId` and `existing` (the listed manifest or `null`). If
+adding a store fails during approval, the approve call returns the error and the approval stays
+pending. Owner-key files are created with an exclusive write, so services starting together agree
+on one key.
 
 ### 15.4 MCP
 

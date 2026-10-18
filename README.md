@@ -80,6 +80,19 @@ the wallet's own form, because creating an agent and adding money are owner powe
 tops up any agent. **New broadcast** makes a group of agents you message at once, like a WhatsApp
 broadcast list; each agent replies on its own and pays only within its own policy.
 
+**Shop at Shopify stores.** Paste a store link in the dashboard (Services › Add a Shopify store),
+or just tell an agent "buy me a sticker from https://your-store.myshopify.com": it finds the store,
+asks you to add it, and shops. For **your own store** (with Admin API credentials in `.env`, see
+below) the agent pays in USDC through its wallet and a real, paid order appears in your Shopify
+admin (as a test order). Any **other store** is browse-only: the agent searches and builds a cart,
+and gives you Shopify's checkout link to pay yourself.
+
+To enable agent checkout on your store: in Shopify's [Dev Dashboard](https://dev.shopify.com/dashboard)
+create an app with Admin API scopes `read_products,read_orders,write_orders`, release it, install it
+on your store, and put `SHOPIFY_ADMIN_SHOP`, `SHOPIFY_CLIENT_ID` and `SHOPIFY_CLIENT_SECRET` in
+`.env`. The bridge (`apps/shopify-bridge`, port 4070) gets 24-hour tokens with the client
+credentials grant and refreshes them itself.
+
 `npm run reset` wipes `.data/` (keys, tokens, ledger, receipts, conversations) and re-runs setup.
 Stop `npm run dev` first; reset refuses to run under live services.
 
@@ -174,6 +187,7 @@ apps/mcp/               MCP server for Claude Desktop
 apps/dashboard/         Vite + React owner UI
 apps/agent-chat/        chat agents (LLM tool loop over the MCP tools), chat page on :4050
 apps/directory/         service directory (catalog of services agents can connect) on :4060
+apps/shopify-bridge/    Shopify stores as x402 services: catalog, carts, USDC checkout → real orders, on :4070
 apps/agents/            setup, reset, scripted offline demo
 docs/                   ARCHITECTURE.md, agent-work-spec.md, DEMO.md
 ```

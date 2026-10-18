@@ -56,6 +56,7 @@ import type {
   ServiceRequest,
   ServiceRequestResponse,
   SettledRequest,
+  ShopifyStore,
   SummaryResponse,
   TransferRequest,
   TransferResponse,
@@ -73,8 +74,13 @@ import {
   toAgentPublic,
 } from "./store.js";
 import type { PendingPayment, StoredAgent } from "./store.js";
-import { DirectoryUnavailableError, httpDirectoryClient } from "./directory-client.js";
+import { DirectoryRequestError, DirectoryUnavailableError, httpDirectoryClient } from "./directory-client.js";
 import type { DirectoryClient } from "./directory-client.js";
+import { ShopifyBridgeError, ShopifyBridgeUnavailableError, httpShopifyBridgeClient } from "./shopify-bridge-client.js";
+import type { ShopifyBridgeClient } from "./shopify-bridge-client.js";
+// Relative import on purpose (like the agents' seeds): the proposal an agent makes is built exactly
+// like the manifest the directory will list once the owner approves.
+import { parseShopifyCap, shopifyManifest, shopifyServiceId } from "../../directory/src/shopify.js";
 
 const LOG = "[wallet-service]";
 const APPROVAL_TTL_MS = 10 * 60 * 1000;
@@ -95,6 +101,8 @@ export interface AppDeps {
   lookupTx?: LookupTx;
   /** Service directory client. Defaults to HTTP against `config.directoryUrl` (3 s timeout, 30 s list cache). */
   directory?: DirectoryClient;
+  /** Shopify bridge discovery (§15.1). Defaults to HTTP against `config.shopifyBridgeUrl`. */
+  shopifyBridge?: ShopifyBridgeClient;
 }
 
 export type VerifyChallenge = (
@@ -221,7 +229,9 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
   const accountOf = (a: StoredAgent) => privateKeyToAccount(a.privateKey);
 
   function emit(type: EventType, partial: Omit<WalletEvent, "id" | "type" | "at">): WalletEvent {
-    const event: WalletEvent = redact({ id: newId("evt"), type, at: nowIso(), ...partial });
+    // JSON round trip first: an event often holds one object twice (approval.service and
+    // data.service), and redact() would turn the second into "[circular]". Events are JSON anyway.
+    const event: WalletEvent = redact(JSON.parse(JSON.stringify({ id: newId("evt"), type, at: nowIso(), ...partial })) as WalletEvent);
     store.state.events.push(event);
     if (store.state.events.length > MAX_EVENTS) store.state.events.splice(0, store.state.events.length - MAX_EVENTS);
     store.save();
@@ -231,7 +241,8 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
   }
 
   const verifyChallenge: VerifyChallenge = deps.verifyChallenge ?? liveVerifyChallenge();
-  const directory: DirectoryClient = deps.directory ?? httpDirectoryClient(config.directoryUrl);
+  const directory: DirectoryClient = deps.directory ?? httpDirectoryClient(config.directoryUrl, { ownerApiKey: config.ownerApiKey });
+  const shopifyBridge: ShopifyBridgeClient = deps.shopifyBridge ?? httpShopifyBridgeClient(config.shopifyBridgeUrl);
   const lookupTx: LookupTx = deps.lookupTx ?? (config.chainMode === "mock" ? liveLookupTx(config.facilitatorUrl) : async () => "unavailable");
   let seeded = config.chainMode !== "mock";
   /** Approvals being settled right now. Claimed synchronously so two concurrent approve calls
@@ -587,12 +598,24 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     return service;
   }
 
-  /** Approving a service request connects exactly what the owner was shown (the stored grant). */
-  function settleServiceApproval(approval: Approval, by: string): Approval {
+  /**
+   * Approving a service request connects exactly what the owner was shown (the stored grant). A Shopify
+   * store an agent found is first added to the directory (owner key); if that fails the approval stays
+   * pending and the owner sees the error, so they can retry or deny.
+   */
+  async function settleServiceApproval(approval: Approval, by: string): Promise<Approval> {
     const agent = requireAgentById(approval.agentId);
     const request = store.state.serviceRequests[approval.id];
-    const grant = request?.grant ?? approval.service;
+    let grant = request?.grant ?? approval.service;
     if (!grant) throw new HttpError(500, "pending_missing", "The service request is missing");
+    if (grant.shopify && grant.source === "agent") {
+      const { service } = await addShopifyToDirectory(`https://${grant.shopify.domain}`, grant.maxPrice);
+      if (service.baseUrl !== grant.baseUrl) {
+        console.warn(`${LOG} directory lists ${service.id} at ${service.baseUrl}, not ${grant.baseUrl}; connecting the directory's URL (check SHOPIFY_BRIDGE_URL)`);
+      }
+      // It now lives in the directory, which serves its docs; the cap is the one the owner approved.
+      grant = { ...grant, baseUrl: service.baseUrl, source: "directory" };
+    }
     approval.status = "approved";
     approval.decidedAt = nowIso();
     approval.decidedBy = by;
@@ -614,6 +637,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     try {
       return await fn();
     } catch (err) {
+      if (err instanceof DirectoryRequestError) throw new HttpError(err.status, err.code, err.message);
       if (err instanceof DirectoryUnavailableError) {
         console.warn(`${LOG} ${err.message}`);
         throw new HttpError(503, "directory_unavailable", "The service directory is not reachable right now; try again shortly.");
@@ -628,6 +652,54 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     const manifest = await directoryCall(() => directory.get(id));
     if (!manifest) throw new HttpError(404, "service_not_found", `No service "${id}" in the directory. Use search_services to find one.`);
     return manifest;
+  }
+
+  // ---- Shopify stores (§15.3) ------------------------------------------------
+
+  /** Bridge discovery, with the bridge's errors (invalid_store_url / store_not_found / store_unsupported) passed through. */
+  async function discoverShopify(url: string): Promise<ShopifyStore> {
+    try {
+      return await shopifyBridge.discover(url);
+    } catch (err) {
+      if (err instanceof ShopifyBridgeError) throw new HttpError(err.status, err.code, err.message);
+      if (err instanceof ShopifyBridgeUnavailableError) {
+        console.warn(`${LOG} ${err.message}`);
+        throw new HttpError(503, "shopify_bridge_unavailable", "The Shopify bridge is not reachable right now; try again shortly.");
+      }
+      throw err;
+    }
+  }
+
+  /** Directory `POST /services/shopify` (owner key). An existing entry is fine (`created: false`). Listing cache cleared. */
+  async function addShopifyToDirectory(url: string, maxPrice?: string): Promise<{ service: ServiceManifest; created: boolean }> {
+    try {
+      return await directoryCall(() => directory.addShopify({ url, ...(maxPrice !== undefined ? { maxPrice } : {}) }));
+    } finally {
+      directory.invalidate();
+    }
+  }
+
+  function storeUrlParam(raw: unknown, field: string): string {
+    if (typeof raw !== "string" || !raw.trim() || raw.length > 500) {
+      throw new HttpError(400, "invalid_request", `\`${field}\` must be the store's link, e.g. https://example.myshopify.com`);
+    }
+    return raw.trim();
+  }
+
+  /** An agent's per-order cap for a store it proposes: defaults to its max per payment and may not exceed it. */
+  function agentShopifyCap(agent: StoredAgent, raw: unknown): string {
+    const limit = toBaseUnits(agent.policy.maxPerTx);
+    if (raw === undefined || raw === null) return parseShopifyCap(toDollars(limit < toBaseUnits(MAX_TOPUP) ? limit : toBaseUnits(MAX_TOPUP)));
+    let cap: string;
+    try {
+      cap = parseShopifyCap(raw);
+    } catch (err) {
+      throw new HttpError(400, "invalid_request", (err as Error).message);
+    }
+    if (toBaseUnits(cap) > limit) {
+      throw new HttpError(400, "invalid_request", `maxPrice ${formatUsd(toBaseUnits(cap))} is over this agent's ${formatUsd(limit)} per-payment limit`);
+    }
+    return cap;
   }
 
   /** A connected custom service rendered as a manifest (its docs are the agent's own). */
@@ -718,6 +790,8 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
   }
 
   function openServiceApproval(agent: StoredAgent, grant: ServiceGrant, reason: string | undefined, docs: string | undefined): Approval {
+    const shop = grant.shopify;
+    const newStore = Boolean(shop && grant.source === "agent");
     const approval: Approval = {
       id: newId("apr"),
       kind: "service",
@@ -725,7 +799,13 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
       agentName: agent.name,
       paymentId: "",
       amount: toDollars(toBaseUnits(grant.maxPrice)),
-      description: grant.source === "agent" ? `Connect ${grant.name} (proposed by ${agent.name})` : `Connect ${grant.name}`,
+      description: shop
+        ? newStore
+          ? `Add the Shopify store ${grant.name} (${shop.domain})`
+          : `Connect ${grant.name} (${shop.domain})`
+        : grant.source === "agent"
+          ? `Connect ${grant.name} (proposed by ${agent.name})`
+          : `Connect ${grant.name}`,
       counterparty: { address: ZERO_ADDRESS, origin: originOf(grant.baseUrl) || undefined, name: grant.name },
       service: grant,
       reason,
@@ -738,9 +818,9 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     emit("service.requested", {
       agentId: agent.id,
       agentName: agent.name,
-      message: `${agent.name} wants to connect ${grant.name}.`,
+      message: newStore ? `${agent.name} wants to add the Shopify store ${grant.name} (${shop!.domain}).` : `${agent.name} wants to connect ${grant.name}.`,
       approval,
-      data: { approvalId: approval.id, service: grant, custom: grant.source === "agent" },
+      data: { approvalId: approval.id, service: grant, custom: grant.source === "agent" && !shop, ...(shop ? { shopify: shop, newStore } : {}) },
     });
     return approval;
   }
@@ -1363,28 +1443,59 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
     // Custom services are not in the directory: the agent's own connection (or, for the owner, any) answers.
     const custom = (agent ? [agent] : store.state.agents)
       .flatMap((a) => a.services)
-      .find((s) => s.id === id && s.source === "agent");
+      .find((s) => s.id === id && s.source === "agent" && !s.shopify);
     if (custom) {
       res.json(decorate(agent, customManifest(custom)));
       return;
     }
     const manifest = await requireManifest(id);
-    res.json(decorate(agent, manifest));
+    // An agent sees its own connection's terms (caps are per connection), not the listing default.
+    const mine = agent?.services.find((x) => x.id === id);
+    const view = mine
+      ? {
+          ...manifest,
+          maxPrice: mine.maxPrice,
+          pricing: mine.pricing,
+          permissions: mine.permissions,
+          docs: manifest.maxPrice !== mine.maxPrice ? manifest.docs.split(`$${manifest.maxPrice}`).join(`$${mine.maxPrice}`) : manifest.docs,
+        }
+      : manifest;
+    res.json(decorate(agent, view));
   });
 
   router.post("/services/requests", agentAuth, async (req: AuthedRequest, res) => {
     const agent = req.agent!;
     const body = (req.body ?? {}) as Partial<ServiceRequest>;
-    if (typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "invalid_request", "Body must be { serviceId } or { custom }, plus reason");
+    if (typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "invalid_request", "Body must be { serviceId }, { custom } or { shopifyStoreUrl }, plus reason");
     if (body.reason !== undefined && typeof body.reason !== "string") throw new HttpError(400, "invalid_request", "`reason` must be a string");
     const reason = body.reason?.trim().slice(0, 500) || undefined;
     const hasId = body.serviceId !== undefined && body.serviceId !== null;
     const hasCustom = body.custom !== undefined && body.custom !== null;
-    if (hasId === hasCustom) throw new HttpError(400, "invalid_request", "Send either `serviceId` (a directory id) or `custom` (a proposal), not both");
+    const hasShopify = body.shopifyStoreUrl !== undefined && body.shopifyStoreUrl !== null;
+    if (Number(hasId) + Number(hasCustom) + Number(hasShopify) !== 1) {
+      throw new HttpError(400, "invalid_request", "Send exactly one of `serviceId` (a directory id), `custom` (a proposal) or `shopifyStoreUrl` (a Shopify store link)");
+    }
 
     let grant: ServiceGrant;
     let docs: string | undefined;
-    if (hasId) {
+    if (hasShopify) {
+      // A Shopify store by link (§15.3): already in the directory → a normal request; otherwise the
+      // owner is asked to add it (the proposed manifest, flagged source "agent").
+      const url = storeUrlParam(body.shopifyStoreUrl, "shopifyStoreUrl");
+      const cap = agentShopifyCap(agent, body.maxPrice); // validated before any network call
+      const shop = await discoverShopify(url);
+      const id = shopifyServiceId(shop.handle);
+      const already = agent.services.find((s) => s.id === id);
+      if (already) {
+        const out: ServiceRequestResponse = { status: "connected", service: already };
+        res.json(out);
+        return;
+      }
+      const listed = await directoryCall(() => directory.get(id));
+      grant = listed
+        ? toGrant({ ...listed, source: "directory" })
+        : toGrant({ ...shopifyManifest(shop, { bridgeUrl: config.shopifyBridgeUrl, maxPrice: cap }), source: "agent" });
+    } else if (hasId) {
       if (typeof body.serviceId !== "string") throw new HttpError(400, "invalid_request", "`serviceId` must be a string");
       const id = body.serviceId.trim();
       const already = id === "directory" ? directoryConnection(agent) : agent.services.find((s) => s.id === id);
@@ -1419,9 +1530,75 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): WalletApp {
       status: "needs_approval",
       approvalId: approval.id,
       service: approval.service!,
-      message: `Waiting for your owner to approve connecting ${grant.name}. Approval id ${approval.id}.`,
+      message:
+        grant.shopify && grant.source === "agent"
+          ? `Waiting for your owner to approve adding the Shopify store ${grant.name} (${grant.shopify.domain}). Approval id ${approval.id}.`
+          : `Waiting for your owner to approve connecting ${grant.name}. Approval id ${approval.id}.`,
     };
     res.status(202).json(out);
+  });
+
+  // Owner: preview a Shopify store before adding it (bridge discovery; no side effects).
+  router.get("/directory/shopify/preview", ownerAuth, async (req, res) => {
+    const url = storeUrlParam(req.query.url, "url");
+    const shop = await discoverShopify(url);
+    const serviceId = shopifyServiceId(shop.handle);
+    let existing: ServiceManifest | null = null;
+    try {
+      existing = await directory.get(serviceId);
+    } catch (err) {
+      console.warn(`${LOG} preview: directory lookup for ${serviceId} failed (${(err as Error).message})`);
+    }
+    // The bridge's store preview (top level, as the bridge sends it, and under `store`), plus whether
+    // the directory already lists it.
+    res.json({
+      ...shop,
+      store: shop,
+      serviceId,
+      existing: existing ? (({ docs: _docs, ...m }) => decorate(null, m))(existing) : null,
+    });
+  });
+
+  // Owner: add a Shopify store to the directory, optionally connecting it to agents right away.
+  router.post("/directory/shopify", ownerAuth, async (req, res) => {
+    const body = (req.body ?? {}) as { url?: unknown; maxPrice?: unknown; connectTo?: unknown };
+    const url = storeUrlParam(body.url, "url");
+    let maxPrice: string | undefined;
+    if (body.maxPrice !== undefined && body.maxPrice !== null) {
+      try {
+        maxPrice = parseShopifyCap(body.maxPrice);
+      } catch (err) {
+        throw new HttpError(400, "invalid_request", (err as Error).message);
+      }
+    }
+    if (body.connectTo !== undefined && (!Array.isArray(body.connectTo) || body.connectTo.some((x) => typeof x !== "string"))) {
+      throw new HttpError(400, "invalid_request", "`connectTo` must be an array of agent ids");
+    }
+    // Resolve agents before anything is added, so a bad id doesn't leave a half-done change.
+    const agents = [...new Set((body.connectTo as string[] | undefined) ?? [])].map((id) => requireAgentById(id));
+    const { service, created } = await addShopifyToDirectory(url, maxPrice);
+    // Caps are per connection: the owner's cap for this add applies to the agents connected now, even
+    // when the store was already listed with a different default (browse-only stores stay at $0).
+    const cap = service.shopify?.mode === "handoff" ? "0.00" : (maxPrice ?? service.maxPrice);
+    const capText = cap === service.maxPrice ? undefined : `$${cap}`;
+    const grant = toGrant({
+      ...service,
+      source: "directory",
+      maxPrice: cap,
+      ...(capText ? { pricing: `Varies by item · up to ${capText} per order`, permissions: service.permissions.map((p) => p.replace(/\$[0-9,]+\.[0-9]{2}/, capText)) } : {}),
+    });
+    for (const agent of agents) {
+      const existing = agent.services.find((x) => x.id === service.id);
+      if (existing) {
+        if (existing.maxPrice !== grant.maxPrice) {
+          Object.assign(existing, { maxPrice: grant.maxPrice, pricing: grant.pricing, permissions: grant.permissions });
+          store.save();
+        }
+      } else {
+        connectService(agent, grant, "owner");
+      }
+    }
+    res.status(created ? 201 : 200).json({ service, created, connectedAgents: connectedAgents(service.id) });
   });
 
   router.post("/agents/:id/services", ownerAuth, async (req, res) => {
@@ -1738,6 +1915,7 @@ function toGrant(s: ServiceGrant): ServiceGrant {
     maxPrice: s.maxPrice,
     permissions: [...(s.permissions ?? [])],
     source: s.source ?? "directory",
+    ...(s.shopify ? { shopify: { handle: s.shopify.handle, domain: s.shopify.domain, mode: s.shopify.mode } } : {}),
   };
 }
 

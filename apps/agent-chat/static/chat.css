@@ -491,6 +491,100 @@ svg.i { width: 1em; height: 1em; flex: none; display: inline-block; vertical-ali
 .chip-card.lost { color: var(--text-2); }
 .chip-card.warn { color: var(--amber-ink); background: var(--amber-bg); border-color: transparent; }
 
+/* ------------------------------------------------------------------ Shopify stores (§15.5) */
+.tile.shop { background: #95bf47; color: #fff; }
+.tile.shop svg { stroke-width: 2.2; }
+/* as wide as its products need, between a normal card and the thread's reading width */
+.card.wide { width: auto; min-width: min(360px, 100%); max-width: min(640px, 100%); }
+.pill.mode.agent_checkout { background: color-mix(in srgb, #95bf47 20%, var(--card)); color: #3b6612; }
+.pill.mode.handoff { background: var(--fill-2); color: var(--text-2); }
+:root[data-theme="dark"] .pill.mode.agent_checkout { color: #b5dc82; }
+/* the mode chip leads the sentence and the text flows after it, at any width */
+.conn .c-mode { margin-top: 12px; font-size: 13.5px; line-height: 1.5; color: var(--text-2); }
+.conn .c-mode .pill { margin-right: 6px; padding: 1px 9px; vertical-align: 1px; }
+.conn .c-note { font-size: 12.5px; color: var(--text-2); margin-top: 10px; }
+.conn .c-fail { font-size: 13px; color: var(--red-ink); margin-top: 10px; overflow-wrap: anywhere; }
+
+/* product image: a fixed box, the bag icon underneath while it loads or if it fails */
+.pimg {
+  position: relative; display: grid; place-items: center; width: 100%; aspect-ratio: 1 / 1; flex: none;
+  border-radius: 12px; overflow: hidden; background: var(--fill); color: var(--text-3); font-size: 26px;
+}
+.pimg::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px rgba(15, 15, 20, 0.05); pointer-events: none; }
+.pimg img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.pimg.broken img { display: none; }
+/* no image, or it failed: a soft Shopify-green tile with the product's initial */
+.pimg .pi-ch { display: none; }
+.pimg.noimg, .pimg.broken { background: color-mix(in srgb, #95bf47 16%, var(--card)); color: #4f7a22; }
+:root[data-theme="dark"] .pimg.noimg, :root[data-theme="dark"] .pimg.broken { background: color-mix(in srgb, #95bf47 18%, var(--card)); color: #b5dc82; }
+.pimg.has-ch.noimg > svg, .pimg.has-ch.broken > svg { display: none; }
+.pimg.noimg .pi-ch, .pimg.broken .pi-ch { display: block; font-size: 1.75em; font-weight: 500; line-height: 1; letter-spacing: -0.01em; }
+.pimg.sm .pi-ch { font-size: 1.1em !important; }
+.pimg.lg .pi-ch { font-size: 1.45em !important; }
+.pimg.sm { width: 44px; height: 44px; border-radius: 9px; font-size: 17px; }
+.pimg.lg { width: 104px; height: 104px; border-radius: 12px; font-size: 30px; }
+
+/* search results: a row of products */
+.shop-prods { padding-bottom: 2px; }
+.sp-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px 10px; }
+.sp-head .c-name { font-size: 15px; }
+.prods {
+  display: flex; gap: 12px; overflow-x: auto; padding: 2px 16px 14px; scroll-snap-type: x proximity; scroll-padding: 0 16px;
+  scrollbar-width: thin; overscroll-behavior-x: contain;
+}
+.prod { position: relative; flex: none; width: 148px; display: flex; flex-direction: column; gap: 2px; text-decoration: none; color: var(--text); scroll-snap-align: start; }
+.prod .pimg { margin-bottom: 6px; }
+a.prod:hover .p-title { text-decoration: underline; text-underline-offset: 2px; }
+a.prod:focus-visible { outline-offset: 3px; border-radius: 12px; }
+.p-title { font-size: 13.5px; line-height: 1.3; min-height: 2.6em; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.p-price { font-size: 13.5px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.p-opt { font-size: 12px; color: var(--text-3); min-height: 1.4em; }
+.p-flag { position: absolute; top: 7px; left: 7px; font-size: 11.5px; font-weight: 500; padding: 2px 8px; border-radius: 99px; background: rgba(255, 255, 255, 0.92); color: #1f1f22; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+.prod.more .pimg { font-size: 20px; font-weight: 500; color: var(--text-2); }
+.prod.more .p-title { color: var(--text-2); }
+
+/* one product */
+.pd { display: flex; gap: 14px; align-items: flex-start; }
+.pd-txt { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.pd-price { font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.pd-out { font-size: 12.5px; color: var(--red-ink); font-weight: 500; margin-left: 4px; }
+.pd-desc { font-size: 13px; color: var(--text-2); line-height: 1.4; margin-top: 4px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.vchips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.vchip { font-size: 12.5px; padding: 3px 10px; border-radius: 99px; border: 1px solid var(--line-2); color: var(--text); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vchip.out { color: var(--text-3); text-decoration: line-through; border-style: dashed; }
+.vchip.more { color: var(--text-2); border-color: transparent; background: var(--fill); }
+
+/* cart lines, totals */
+.lines { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+.lines li { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 11px; align-items: center; }
+.lines li.l-more { display: block; font-size: 13px; color: var(--text-2); padding-left: 55px; }
+.l-t { min-width: 0; display: flex; flex-direction: column; }
+.l-name { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.l-sub { font-size: 12.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.l-amt { font-size: 14px; font-variant-numeric: tabular-nums; }
+.totals { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 3px; font-size: 14px; }
+.totals > div { display: flex; justify-content: space-between; gap: 12px; }
+.totals dt { color: var(--text-2); }
+.totals dd { margin: 0; font-variant-numeric: tabular-nums; }
+.totals .tot dt, .totals .tot dd { color: var(--text); font-weight: 600; font-size: 15.5px; }
+.cart .c-title, .handoff .c-title, .shop-order .c-title { font-weight: 500; font-size: 15.5px; }
+.shop-btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px; height: 42px; margin-top: 14px; border-radius: 99px;
+  background: #008060; color: #fff; font-size: 15px; font-weight: 500; text-decoration: none;
+}
+.shop-btn:hover { background: #006e52; }
+.shop-btn svg:last-child { opacity: 0.8; font-size: 14px; }
+:root[data-theme="dark"] .shop-btn { background: #2b9a73; }
+.c-foot a.plain { font: 13px var(--font); color: var(--text-2); }
+.nw { white-space: nowrap; }
+.shop-admin { width: 100%; margin-top: 14px; height: 38px; text-decoration: none; }
+.shop-admin svg { color: var(--text-2); }
+.shop-order { border-color: color-mix(in srgb, var(--green) 28%, var(--card-line)); }
+.mini .card.wide { width: 100%; }
+.mini .prod { width: 120px; }
+.mini .prods { padding: 2px 12px 12px; gap: 10px; }
+.mini .sp-head { padding: 10px 12px 8px; }
+
 /* approval card (embedded dashboard view) */
 .approval {
   width: 400px; max-width: 100%; border-radius: 16px; overflow: hidden; background: var(--card);
@@ -827,6 +921,8 @@ button.btn-pill { border: 0; }
   .sub-act .i { font-size: 16px; }
   .thread { padding: 10px 12px 18px; }
   .composer { padding: 6px 10px 10px; }
+  .sp-head .pill.mode { display: none; }
+  .prod { width: 132px; }
 }
 @media (max-height: 760px) {
   .head { min-height: 62px; padding: 6px 14px 5px; }

@@ -308,6 +308,15 @@ describe("services: reducer", () => {
     s = reducer(s, { type: "busyService", key: serviceKey("agt_b", "acme-pizza"), busy: true });
     expect(s.busyServices).toEqual(["agt_b:acme-pizza"]);
   });
+
+  it("shows a store the owner just added before the directory reloads (directoryUpsert)", () => {
+    const store = { ...grant, id: "shopify-gift-shop", name: "Gift Shop", category: "shopping" as const, description: "", shopify: { handle: "gift-shop", domain: "gift-shop.myshopify.com", mode: "handoff" as const } };
+    let s = reducer(initialState, { type: "directoryUpsert", service: store });
+    expect(s.directory.map((x) => x.id)).toEqual(["shopify-gift-shop"]);
+    expect(s.directoryStatus).toBe("ready");
+    s = reducer(s, { type: "directoryUpsert", service: { ...store, name: "Gift Shop Co" } });
+    expect(s.directory.map((x) => x.name)).toEqual(["Gift Shop Co"]);
+  });
 });
 
 describe("collapseFeed: services and freezes", () => {

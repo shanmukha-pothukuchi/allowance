@@ -84,7 +84,8 @@ export function formatEvent(e: WalletEvent): TelegramMessage | null {
       const s = e.data?.service as Partial<ConnectedService> | undefined;
       if (!s?.name) return { text: `🔌 ${esc(e.message)}` };
       const verb = e.type === "service.connected" ? "connected to" : "disconnected from";
-      return { text: `🔌 ${esc(s.icon ?? "")}${s.icon ? " " : ""}<b>${esc(s.name)}</b> ${verb} ${agent}.` };
+      const shop = s.shopify ? ` (Shopify store <code>${esc(s.shopify.domain)}</code>)` : "";
+      return { text: `🔌 ${esc(s.icon ?? "")}${s.icon ? " " : ""}<b>${esc(s.name)}</b>${shop} ${verb} ${agent}.` };
     }
     case "payment.blocked": {
       if (e.reason === "service_not_connected" || r?.reason === "service_not_connected") {
@@ -126,6 +127,7 @@ export function formatEvent(e: WalletEvent): TelegramMessage | null {
 export function serviceRequestMessage(a: Approval): TelegramMessage | null {
   const s: Partial<ServiceGrant> | undefined = a.service;
   if (!s?.name) return null;
+  if (s.shopify) return shopifyRequestMessage(a, s, s.shopify);
   const agent = esc(a.agentName || "An agent");
   const custom = s.source === "agent";
   const lines = [`🔌 <b>${agent}</b> wants to connect ${s.icon ? `${esc(s.icon)} ` : ""}<b>${esc(s.name)}</b>${!custom && s.provider ? ` (${esc(s.provider)})` : ""}.`];
@@ -134,6 +136,35 @@ export function serviceRequestMessage(a: Approval): TelegramMessage | null {
   const perms = (s.permissions ?? []).slice(0, 6);
   if (perms.length) lines.push("", "It could:", ...perms.map((p) => `• ${esc(p)}`));
   if (s.pricing) lines.push(`Pricing: ${esc(s.pricing)}`);
+  if (a.reason) {
+    const reason = a.reason.length > 300 ? `${a.reason.slice(0, 300)}…` : a.reason;
+    lines.push("", `Reason (from the agent): “${esc(reason)}”`);
+  }
+  return { text: lines.join("\n"), keyboard: approvalKeyboard(a.id) };
+}
+
+/**
+ * A Shopify store (ARCHITECTURE §15): say it is a Shopify store, show the domain, the mode and the
+ * per-order cap. A store the agent found is "added" (approving puts it in the directory).
+ *   🛍️ shopper wants to add the Shopify store Crypto App Test.
+ *   Store: crypto-app-test.myshopify.com (new: approving adds it to your directory)
+ *   Mode: 💳 Agent checkout: it pays in USDC and the store gets a real, paid order.
+ *   Per-order cap: $20.00
+ */
+function shopifyRequestMessage(a: Approval, s: Partial<ServiceGrant>, shop: NonNullable<ServiceGrant["shopify"]>): TelegramMessage {
+  const agent = esc(a.agentName || "An agent");
+  const adding = s.source === "agent";
+  const checkout = shop.mode === "agent_checkout";
+  const lines = [
+    `🛍️ <b>${agent}</b> wants to ${adding ? "add" : "connect"} the Shopify store <b>${esc(s.name)}</b>.`,
+    `Store: <code>${esc(shop.domain)}</code>${adding ? " (new: approving adds it to your directory)" : ""}`,
+    checkout
+      ? "Mode: 💳 <b>Agent checkout</b>: it pays in USDC and the store gets a real, paid order."
+      : "Mode: 👀 <b>Browse only</b>: it can search and build carts; you finish checkout at Shopify.",
+    checkout ? `Per-order cap: <b>${esc(money(s.maxPrice ?? a.amount))}</b>` : "Per-order cap: none (it cannot pay this store)",
+  ];
+  const perms = (s.permissions ?? []).slice(0, 6);
+  if (perms.length) lines.push("", "It could:", ...perms.map((p) => `• ${esc(p)}`));
   if (a.reason) {
     const reason = a.reason.length > 300 ? `${a.reason.slice(0, 300)}…` : a.reason;
     lines.push("", `Reason (from the agent): “${esc(reason)}”`);

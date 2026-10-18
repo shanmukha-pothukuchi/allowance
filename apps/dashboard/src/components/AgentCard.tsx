@@ -1,4 +1,4 @@
-import { money, pctOf, shortHex } from "../format";
+import { isShopifyGrant, money, pctOf, shortHex } from "../format";
 import { navigate } from "../route";
 import type { AgentPublic } from "../types";
 import { AgentAvatar, roleLabel, ServiceTile } from "./Avatar";
@@ -66,7 +66,7 @@ export function AgentCard({ agent, showDetails, busy, onFreeze, onUnfreeze, onAd
           <span className="agent-service-tiles">
             {services.map((s) => (
               <button key={s.id} className="tile-btn" title={`${s.name} (${s.pricing})`} onClick={() => navigate({ view: "services", serviceId: s.id })}>
-                <ServiceTile name={s.name} color={s.color} size="sm" />
+                <ServiceTile name={s.name} color={s.color} size="sm" shopify={isShopifyGrant(s)} />
               </button>
             ))}
           </span>

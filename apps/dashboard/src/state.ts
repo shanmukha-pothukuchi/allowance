@@ -82,6 +82,8 @@ export type Action =
   | { type: "busyAgent"; id: string; busy: boolean }
   | { type: "busyService"; key: string; busy: boolean }
   | { type: "directory"; services: DirectoryService[] }
+  /** One entry added or changed (the owner just added a Shopify store, §15.3). */
+  | { type: "directoryUpsert"; service: DirectoryService }
   | { type: "directoryError"; message: string }
   | { type: "directoryLoading" }
   | { type: "serviceDocs"; id: string; docs: string }
@@ -335,6 +337,11 @@ export function reducer(state: DashboardState, action: Action): DashboardState {
       return { ...state, directoryStatus: state.directoryStatus === "ready" ? "ready" : "loading" };
     case "directory":
       return { ...state, directory: action.services, directoryStatus: "ready", directoryError: undefined };
+    case "directoryUpsert": {
+      const idx = state.directory.findIndex((s) => s.id === action.service.id);
+      const directory = idx >= 0 ? state.directory.map((s, i) => (i === idx ? { ...s, ...action.service } : s)) : [...state.directory, action.service];
+      return { ...state, directory, directoryStatus: "ready" };
+    }
     case "directoryError":
       // Keep a catalog we already have; only show the error when there is nothing to show.
       return { ...state, directoryStatus: state.directory.length ? "ready" : "error", directoryError: action.message };

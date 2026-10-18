@@ -372,3 +372,13 @@ html.embed .agent-quote blockquote {
   margin-top: 2px;
   font-style: normal;
 }
+
+/* Shopify approval card (§15.5) in the chat's lighter type */
+html.embed .mode-chip {
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+html.embed .shop-mode-text,
+html.embed .shop-note {
+  font-size: 0.86rem;
+}

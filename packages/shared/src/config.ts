@@ -189,8 +189,20 @@ export function ensureOwnerKey(dataDir: string): string {
   if (existing) return existing;
   mkdirSync(dataDir, { recursive: true });
   const ownerApiKey = `ok_${randomBytes(24).toString("hex")}`;
-  writeFileSync(ownerKeyPath(dataDir), JSON.stringify({ ownerApiKey }, null, 2) + "\n", { mode: 0o600 });
-  return ownerApiKey;
+  try {
+    // "wx": fail if another service created it first (they all start at once), then use theirs.
+    writeFileSync(ownerKeyPath(dataDir), JSON.stringify({ ownerApiKey }, null, 2) + "\n", { mode: 0o600, flag: "wx" });
+    return ownerApiKey;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    for (let i = 0; i < 20; i++) {
+      const theirs = readOwnerKeyFile(dataDir);
+      if (theirs) return theirs;
+      // The other writer may still be mid-write; wait briefly (synchronously) and re-read.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+    throw new Error("owner-key.json exists but could not be read");
+  }
 }
 
 /** Headers for owner-side HTTP calls. */

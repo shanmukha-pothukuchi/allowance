@@ -495,8 +495,8 @@ describe("chat server", () => {
       expect(researcher.avatar.emoji).toBe("🔎");
       expect(worker1.avatar).toEqual(avatarFor("worker-1"));
       expect(researcher.services).toEqual([
-        { id: "acme-weather", name: "Acme Weather", icon: "🌤️", color: "#3AA0E0" },
-        { id: "acme-pizza", name: "Acme Pizza", icon: "🍕", color: "#E5527A" },
+        expect.objectContaining({ id: "acme-weather", name: "Acme Weather", icon: "🌤️", color: "#3AA0E0", maxPrice: "0.05" }),
+        expect.objectContaining({ id: "acme-pizza", name: "Acme Pizza", icon: "🍕", color: "#E5527A", maxPrice: "18.50" }),
       ]);
       expect(worker1.services).toEqual([]);
       expect(worker2.services.map((s) => s.id)).toEqual(["acme-stocks"]);
@@ -551,7 +551,7 @@ describe("chat server", () => {
       wallet.connect(w1, "acme-pizza");
       expect((await post("/api/agents/worker-1/messages", { text: "anything new?" })).status).toBe(202);
       for (let i = 0; i < 80 && !/"agent":"worker-1","wallet":\{[^}]*\},"services":\[\{"id":"acme-pizza"/.test(frames.join("")); i++) await new Promise((r) => setTimeout(r, 25));
-      expect(frames.join("")).toMatch(/event: wallet\ndata: \{"agent":"worker-1","wallet":\{.*\},"services":\[\{"id":"acme-pizza","name":"Acme Pizza","icon":"🍕","color":"#E5527A"\}\]\}/);
+      expect(frames.join("")).toMatch(/event: wallet\ndata: \{"agent":"worker-1","wallet":\{.*\},"services":\[\{"id":"acme-pizza","name":"Acme Pizza","icon":"🍕","color":"#E5527A"[^}]*\}\]\}/);
       await idle();
     } finally {
       ctrl.abort();
